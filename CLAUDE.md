@@ -7,6 +7,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Canvas2D for rendering
 - `perfect-freehand` for smooth brush strokes
 - `ag-psd` for PSD export
+- `sortablejs` for drag-and-drop layer tree
 - Vitest for tests, ESLint for linting
 
 ## Commands
@@ -30,7 +31,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `brush.ts` — smooth brush via perfect-freehand
 - `stamp-brush.ts` — textured stamp-based brushes (pencil, charcoal, airbrush)
 - `brush-textures.ts` — procedural brush tip generation (cached at fixed sizes)
-- `layers.ts` — layer management with per-layer undo history
+- `layers.ts` — tree-based layer/group management with per-layer undo history
 - `history.ts` — undo/redo stack via ImageData snapshots
 - `selection.ts` — rect/lasso selection with move/scale/rotate transform
 - `viewport.ts` — zoom/pan via CSS transform with coordinate mapping
@@ -39,7 +40,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `export-psd.ts` — PSD export with layer groups (Spine 2D compatible)
 
 ## PSD Export / Spine 2D
-- Layers with the same `group` name are placed in a PSD group folder
+- Layer groups in the tree are exported as PSD group folders
 - Layer/group names can include Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 - Layer order = draw order (bottom drawn first)
 - See: https://esotericsoftware.com/spine-import-psd

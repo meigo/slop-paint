@@ -20,11 +20,13 @@ A web-based drawing application with pressure-sensitive brushes, layers, and PSD
 - Color picker with quick-access swatches
 
 ### Layers
-- Unlimited layers with per-layer opacity and visibility
+- Tree-based layer system with groups and nesting
+- Drag-and-drop reordering via SortableJS — drag layers into/out of groups
 - Per-layer undo/redo history (50 levels)
-- Layer reordering (move up/down)
-- Double-click to rename layers
-- Group assignment for PSD export organization
+- Per-layer and per-group opacity and visibility (group opacity stacks)
+- Double-click to rename layers or groups
+- Collapsible groups
+- New layers/groups are inserted relative to the current selection
 
 ### Selection & Transform
 - **Rectangle select** — drag to select area
@@ -46,7 +48,7 @@ A web-based drawing application with pressure-sensitive brushes, layers, and PSD
 
 ### Spine 2D Integration
 PSD export is compatible with [Spine's PSD import](https://esotericsoftware.com/spine-import-psd):
-- Layers with the same group name are exported as PSD group folders
+- Layer groups are exported as PSD group folders
 - Layer/group names support Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 - Layer order matches Spine draw order (bottom layer drawn first)
 

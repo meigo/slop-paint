@@ -401,7 +401,7 @@ function renderLayerList() {
   renderNodeList(layers.tree, layerListEl);
 }
 
-function makeSortable(container: HTMLElement, _parentNodes: LayerNode[]) {
+function makeSortable(container: HTMLElement) {
   Sortable.create(container, {
     group: "layers",
     animation: 150,
@@ -409,43 +409,48 @@ function makeSortable(container: HTMLElement, _parentNodes: LayerNode[]) {
     swapThreshold: 0.65,
     handle: ".layer-drag-handle",
     onEnd: () => {
+      // Build a flat lookup of all nodes before we modify the tree
+      const lookup = new Map<number, LayerNode>();
+      for (const node of layers.flatAll()) {
+        lookup.set(node.id, node);
+      }
       // Rebuild tree from DOM order
-      syncTreeFromDom(layerListEl, layers.tree);
+      syncTreeFromDom(layerListEl, layers.tree, lookup);
       layers.composite();
     },
   });
 }
 
-function syncTreeFromDom(container: HTMLElement, targetArray: LayerNode[]) {
+function syncTreeFromDom(container: HTMLElement, targetArray: LayerNode[], lookup: Map<number, LayerNode>) {
   targetArray.length = 0;
   const items = container.children;
-  for (let i = 0; i < items.length; i++) {
+  // DOM is rendered top-to-bottom (reversed from array order), so read in reverse
+  for (let i = items.length - 1; i >= 0; i--) {
     const el = items[i] as HTMLElement;
     const id = Number(el.dataset.nodeId);
-    const node = layers.findNode(id);
+    const node = lookup.get(id);
     if (!node) continue;
     targetArray.push(node);
-    // Sync group children
     if (node.type === "group") {
-      const childContainer = el.querySelector(".layer-group-children") as HTMLElement;
+      const childContainer = el.querySelector(":scope > .layer-group-children") as HTMLElement;
       if (childContainer) {
-        syncTreeFromDom(childContainer, node.children);
+        syncTreeFromDom(childContainer, node.children, lookup);
       }
     }
   }
 }
 
 function renderNodeList(nodes: LayerNode[], container: HTMLElement) {
-  // Render top-to-bottom (reverse of array order)
+  // Render top-to-bottom (reverse of array order, since array is bottom-to-top)
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i];
     if (node.type === "group") {
       container.appendChild(renderGroupItem(node));
     } else {
-      container.appendChild(renderLayerItem(node));
+      container.appendChild(renderLayerItem(node as AppLayer));
     }
   }
-  makeSortable(container, nodes);
+  makeSortable(container);
 }
 
 function makeRenameHandler(nameEl: HTMLSpanElement, node: LayerNode) {
@@ -524,6 +529,9 @@ function renderLayerItem(layer: AppLayer): HTMLElement {
     layerListEl.querySelectorAll(".layer-item").forEach((el) => {
       el.classList.toggle("active", Number((el as HTMLElement).dataset.nodeId) === layer.id);
     });
+    layerListEl.querySelectorAll(".layer-group-header").forEach((el) => {
+      el.classList.remove("active");
+    });
   });
 
   item.appendChild(handle);
@@ -581,6 +589,21 @@ function renderGroupItem(group: LayerGroup): HTMLElement {
     layers.setOpacity(group.id, Number(opSlider.value));
   });
   opSlider.addEventListener("click", (e) => e.stopPropagation());
+
+  // Click to select group
+  header.addEventListener("click", () => {
+    layers.activeId = group.id;
+    // Update all highlights
+    layerListEl.querySelectorAll(".layer-item").forEach((el) => {
+      el.classList.remove("active");
+    });
+    layerListEl.querySelectorAll(".layer-group-header").forEach((el) => {
+      el.classList.remove("active");
+    });
+    header.classList.add("active");
+  });
+
+  header.classList.toggle("active", group.id === layers.activeId);
 
   header.appendChild(handle);
   header.appendChild(collapseBtn);

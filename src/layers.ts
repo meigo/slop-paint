@@ -156,9 +156,28 @@ export class LayerManager {
     };
   }
 
+  /** Insert a node relative to the current selection */
+  private insertAtSelection(node: LayerNode) {
+    const selected = this.findNode(this.activeId);
+    if (selected && selected.type === "group") {
+      // Selected is a group — add inside it at the top
+      selected.children.push(node);
+    } else if (selected) {
+      // Selected is a layer — add above it in the same parent
+      const loc = this.findParent(selected.id);
+      if (loc) {
+        loc.parent.splice(loc.index + 1, 0, node);
+      } else {
+        this.tree.push(node);
+      }
+    } else {
+      this.tree.push(node);
+    }
+  }
+
   addLayer(name?: string): Layer {
     const layer = this.createLayer(name);
-    this.tree.push(layer);
+    this.insertAtSelection(layer);
     this.activeId = layer.id;
     this.onChange();
     return layer;
@@ -174,7 +193,7 @@ export class LayerManager {
       children: [],
       collapsed: false,
     };
-    this.tree.push(group);
+    this.insertAtSelection(group);
     this.onChange();
     return group;
   }
@@ -182,10 +201,15 @@ export class LayerManager {
   removeNode(id: number) {
     const loc = this.findParent(id);
     if (!loc) return;
-    // Don't remove if it's the last drawable layer
-    const allLayers = this.flatLayers();
     const node = loc.parent[loc.index];
-    if (node.type === "layer" && allLayers.length <= 1) return;
+
+    // Count how many drawable layers would remain after removal
+    const allLayers = this.flatLayers();
+    const countLayers = (n: LayerNode): number => {
+      if (n.type === "layer") return 1;
+      return n.children.reduce((sum, child) => sum + countLayers(child), 0);
+    };
+    if (allLayers.length - countLayers(node) < 1) return;
 
     loc.parent.splice(loc.index, 1);
 

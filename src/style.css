@@ -345,6 +345,12 @@ body {
   background: #e4e8f0;
 }
 
+.layer-group-header.active {
+  background: #d0d8f0;
+  outline: 2px solid #6688cc;
+  outline-offset: -2px;
+}
+
 .layer-collapse-btn {
   width: 16px;
   height: 16px;
