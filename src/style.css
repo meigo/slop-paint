@@ -312,31 +312,66 @@ body {
   color: #999;
 }
 
-.layer-group-tag {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: #e0e8ff;
-  color: #446;
+.layer-drag-handle {
+  cursor: grab;
+  font-size: 16px;
+  color: #bbb;
+  padding: 0 2px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.layer-drag-handle:hover {
+  color: #666;
+}
+
+.layer-group {
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.layer-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: #eef1f7;
+  font-size: 12px;
+  color: #444;
+  font-weight: 600;
+  cursor: default;
+}
+
+.layer-group-header:hover {
+  background: #e4e8f0;
+}
+
+.layer-collapse-btn {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
   cursor: pointer;
-  white-space: nowrap;
+  font-size: 10px;
+  color: #888;
+  padding: 0;
   flex-shrink: 0;
 }
 
-.layer-group-tag.empty {
-  background: transparent;
-  color: #ccc;
-  border: 1px dashed #ddd;
-  font-size: 8px;
+.layer-group-children {
+  padding-left: 12px;
+  border-left: 2px solid #d0d4e0;
+  margin-left: 8px;
+  min-height: 4px;
 }
 
-.layer-group-tag:hover {
-  background: #d0d8f0;
+/* Sortable ghost/drag styles */
+.sortable-ghost {
+  opacity: 0.4;
+  background: #d0e0ff !important;
 }
 
-.layer-group-tag.empty:hover {
-  background: #f0f0f0;
-  color: #999;
+.sortable-chosen {
+  background: #e8eeff;
 }
 
 .layer-rename-input {

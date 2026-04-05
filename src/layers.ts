@@ -1,9 +1,9 @@
 import { History } from "./history";
 
 export interface Layer {
+  type: "layer";
   id: number;
   name: string;
-  group: string;
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   visible: boolean;
@@ -11,11 +11,24 @@ export interface Layer {
   history: History;
 }
 
+export interface LayerGroup {
+  type: "group";
+  id: number;
+  name: string;
+  visible: boolean;
+  opacity: number;
+  children: LayerNode[];
+  collapsed: boolean;
+}
+
+export type LayerNode = Layer | LayerGroup;
+
 let nextId = 1;
 
 export class LayerManager {
-  layers: Layer[] = [];
-  activeIndex = 0;
+  /** Root-level nodes (bottom to top draw order) */
+  tree: LayerNode[] = [];
+  activeId = -1;
   private cssWidth = 0;
   private cssHeight = 0;
   private dpr = 1;
@@ -32,8 +45,71 @@ export class LayerManager {
     this.onChange = onChange;
   }
 
+  /** Get the active layer (drawable leaf) */
   get active(): Layer {
-    return this.layers[this.activeIndex];
+    const layer = this.findLayer(this.activeId);
+    if (layer) return layer;
+    // Fallback to first leaf
+    const all = this.flatLayers();
+    return all[0];
+  }
+
+  /** All drawable layers in draw order (bottom to top) */
+  flatLayers(): Layer[] {
+    const result: Layer[] = [];
+    function walk(nodes: LayerNode[]) {
+      for (const node of nodes) {
+        if (node.type === "layer") {
+          result.push(node);
+        } else {
+          walk(node.children);
+        }
+      }
+    }
+    walk(this.tree);
+    return result;
+  }
+
+  /** All nodes flattened (for iteration) */
+  flatAll(): LayerNode[] {
+    const result: LayerNode[] = [];
+    function walk(nodes: LayerNode[]) {
+      for (const node of nodes) {
+        result.push(node);
+        if (node.type === "group") walk(node.children);
+      }
+    }
+    walk(this.tree);
+    return result;
+  }
+
+  findLayer(id: number): Layer | null {
+    for (const node of this.flatAll()) {
+      if (node.type === "layer" && node.id === id) return node;
+    }
+    return null;
+  }
+
+  findNode(id: number): LayerNode | null {
+    for (const node of this.flatAll()) {
+      if (node.id === id) return node;
+    }
+    return null;
+  }
+
+  /** Find the parent array and index of a node by id */
+  findParent(id: number): { parent: LayerNode[]; index: number } | null {
+    function search(nodes: LayerNode[]): { parent: LayerNode[]; index: number } | null {
+      for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].id === id) return { parent: nodes, index: i };
+        if (nodes[i].type === "group") {
+          const found = search((nodes[i] as LayerGroup).children);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+    return search(this.tree);
   }
 
   resize(cssWidth: number, cssHeight: number, dpr: number) {
@@ -44,8 +120,7 @@ export class LayerManager {
     const pxW = cssWidth * dpr;
     const pxH = cssHeight * dpr;
 
-    for (const layer of this.layers) {
-      // Preserve content
+    for (const layer of this.flatLayers()) {
       const tmp = document.createElement("canvas");
       tmp.width = layer.canvas.width;
       tmp.height = layer.canvas.height;
@@ -54,14 +129,13 @@ export class LayerManager {
       layer.canvas.width = pxW;
       layer.canvas.height = pxH;
       layer.ctx.scale(dpr, dpr);
-      // Restore
       layer.ctx.resetTransform();
       layer.ctx.drawImage(tmp, 0, 0);
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
   }
 
-  addLayer(name?: string): Layer {
+  createLayer(name?: string): Layer {
     const canvas = document.createElement("canvas");
     const pxW = this.cssWidth * this.dpr;
     const pxH = this.cssHeight * this.dpr;
@@ -70,85 +144,116 @@ export class LayerManager {
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     ctx.scale(this.dpr, this.dpr);
 
-    const layer: Layer = {
+    return {
+      type: "layer",
       id: nextId++,
-      name: name ?? `Layer ${this.layers.length + 1}`,
-      group: "",
+      name: name ?? `Layer ${this.flatLayers().length + 1}`,
       canvas,
       ctx,
       visible: true,
       opacity: 100,
       history: new History(),
     };
+  }
 
-    this.layers.push(layer);
-    this.activeIndex = this.layers.length - 1;
+  addLayer(name?: string): Layer {
+    const layer = this.createLayer(name);
+    this.tree.push(layer);
+    this.activeId = layer.id;
     this.onChange();
     return layer;
   }
 
-  removeLayer(index: number) {
-    if (this.layers.length <= 1) return;
-    this.layers.splice(index, 1);
-    if (this.activeIndex >= this.layers.length) {
-      this.activeIndex = this.layers.length - 1;
+  addGroup(name?: string): LayerGroup {
+    const group: LayerGroup = {
+      type: "group",
+      id: nextId++,
+      name: name ?? `Group ${this.flatAll().filter(n => n.type === "group").length + 1}`,
+      visible: true,
+      opacity: 100,
+      children: [],
+      collapsed: false,
+    };
+    this.tree.push(group);
+    this.onChange();
+    return group;
+  }
+
+  removeNode(id: number) {
+    const loc = this.findParent(id);
+    if (!loc) return;
+    // Don't remove if it's the last drawable layer
+    const allLayers = this.flatLayers();
+    const node = loc.parent[loc.index];
+    if (node.type === "layer" && allLayers.length <= 1) return;
+
+    loc.parent.splice(loc.index, 1);
+
+    // If active was removed, select another
+    if (this.activeId === id || !this.findLayer(this.activeId)) {
+      const remaining = this.flatLayers();
+      if (remaining.length > 0) {
+        this.activeId = remaining[remaining.length - 1].id;
+      }
     }
     this.onChange();
   }
 
-  moveLayer(from: number, to: number) {
-    if (to < 0 || to >= this.layers.length) return;
-    const [layer] = this.layers.splice(from, 1);
-    this.layers.splice(to, 0, layer);
-    this.activeIndex = to;
-    this.onChange();
+  setActive(id: number) {
+    this.activeId = id;
   }
 
-  setActive(index: number) {
-    this.activeIndex = index;
-    this.onChange();
+  toggleVisibility(id: number) {
+    const node = this.findNode(id);
+    if (node) {
+      node.visible = !node.visible;
+      this.composite();
+      this.onChange();
+    }
   }
 
-  toggleVisibility(index: number) {
-    this.layers[index].visible = !this.layers[index].visible;
-    this.composite();
-    this.onChange();
+  setOpacity(id: number, opacity: number) {
+    const node = this.findNode(id);
+    if (node) {
+      node.opacity = opacity;
+      this.composite();
+    }
   }
 
-  setLayerOpacity(index: number, opacity: number) {
-    this.layers[index].opacity = opacity;
-    this.composite();
-    this.onChange();
-  }
-
-  /** Flatten all visible layers onto the display canvas */
   composite() {
     const w = this.cssWidth;
-    const h = this.cssHeight;
     const dpr = this.dpr;
     const ctx = this.displayCtx;
 
     ctx.resetTransform();
-    ctx.clearRect(0, 0, w * dpr, h * dpr);
+    ctx.clearRect(0, 0, w * dpr, this.cssHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    for (const layer of this.layers) {
-      if (!layer.visible || layer.canvas.width === 0 || layer.canvas.height === 0) continue;
-      ctx.globalAlpha = layer.opacity / 100;
-      ctx.resetTransform();
-      ctx.drawImage(layer.canvas, 0, 0);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Walk the tree respecting group visibility/opacity
+    function drawNodes(nodes: LayerNode[], parentAlpha: number) {
+      for (const node of nodes) {
+        if (!node.visible) continue;
+        const alpha = parentAlpha * (node.opacity / 100);
+        if (node.type === "layer") {
+          if (node.canvas.width === 0 || node.canvas.height === 0) continue;
+          ctx.globalAlpha = alpha;
+          ctx.resetTransform();
+          ctx.drawImage(node.canvas, 0, 0);
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        } else {
+          drawNodes(node.children, alpha);
+        }
+      }
     }
+    drawNodes(this.tree, 1);
     ctx.globalAlpha = 1;
   }
 
-  /** Get snapshot of the active layer */
   getSnapshot(): ImageData {
     const layer = this.active;
     return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
   }
 
-  /** Restore snapshot to the active layer */
   restoreSnapshot(data: ImageData) {
     this.active.ctx.putImageData(data, 0, 0);
   }

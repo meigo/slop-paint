@@ -1,90 +1,48 @@
-import { writePsd, type Psd, type Layer } from "ag-psd";
-import type { Layer as AppLayer } from "./layers";
+import { writePsd, type Psd, type Layer as PsdLayer } from "ag-psd";
+import type { LayerNode, LayerManager } from "./layers";
 
 /**
- * Export all layers as a PSD file.
- * Layers with the same `group` are placed in a PSD group folder.
- * Group/layer names can include Spine 2D tags like [slot], [skin], [bone], [mesh], [merge].
- *
- * Spine PSD import reference: https://esotericsoftware.com/spine-import-psd
- *  - Layer order = draw order (bottom layer drawn first)
- *  - Groups with [slot] / [skin] / [bone] tags map to Spine concepts
- *  - [merge] on a group flattens it to one image
- *  - [ignore] skips the layer
- *  - Blending modes: normal, multiply, screen supported
+ * Export layer tree as a PSD file with group folders.
+ * Layer/group names can include Spine 2D tags: [slot], [skin], [bone], [mesh], [merge], [ignore]
+ * See: https://esotericsoftware.com/spine-import-psd
  */
-export function exportPsd(
-  layers: AppLayer[],
-  canvasWidth: number,
-  canvasHeight: number,
-  dpr: number
-) {
-  const w = Math.round(canvasWidth * dpr);
-  const h = Math.round(canvasHeight * dpr);
+export function exportPsd(manager: LayerManager, dpr: number) {
+  const w = Math.round(manager["cssWidth"] * dpr);
+  const h = Math.round(manager["cssHeight"] * dpr);
 
-  // Group layers by their group property
-  // Layers without a group go at the top level
-  // Layers with the same group name are placed in a PSD group folder
-  const groupMap = new Map<string, AppLayer[]>();
-  const ungrouped: AppLayer[] = [];
-
-  for (const layer of layers) {
-    if (layer.group) {
-      if (!groupMap.has(layer.group)) {
-        groupMap.set(layer.group, []);
+  function buildChildren(nodes: LayerNode[]): PsdLayer[] {
+    return nodes.map((node) => {
+      if (node.type === "group") {
+        return {
+          name: node.name,
+          opened: !node.collapsed,
+          hidden: !node.visible,
+          opacity: node.opacity / 100,
+          children: buildChildren(node.children),
+        };
+      } else {
+        const cvs = document.createElement("canvas");
+        cvs.width = w;
+        cvs.height = h;
+        cvs.getContext("2d")!.drawImage(node.canvas, 0, 0);
+        return {
+          name: node.name,
+          canvas: cvs,
+          opacity: node.opacity / 100,
+          hidden: !node.visible,
+          left: 0,
+          top: 0,
+        };
       }
-      groupMap.get(layer.group)!.push(layer);
-    } else {
-      ungrouped.push(layer);
-    }
+    });
   }
 
-  function makeLayerEntry(layer: AppLayer): Layer {
-    const cvs = document.createElement("canvas");
-    cvs.width = w;
-    cvs.height = h;
-    const ctx = cvs.getContext("2d")!;
-    ctx.drawImage(layer.canvas, 0, 0);
-
-    return {
-      name: layer.name,
-      canvas: cvs,
-      opacity: layer.opacity / 100,
-      hidden: !layer.visible,
-      left: 0,
-      top: 0,
-    };
-  }
-
-  // Build children array preserving original order
-  // Walk through layers in order; when we encounter a grouped layer,
-  // emit the whole group (if not already emitted)
-  const children: Layer[] = [];
-  const emittedGroups = new Set<string>();
-
-  for (const layer of layers) {
-    if (layer.group) {
-      if (!emittedGroups.has(layer.group)) {
-        emittedGroups.add(layer.group);
-        const groupLayers = groupMap.get(layer.group)!;
-        children.push({
-          name: layer.group,
-          opened: true,
-          children: groupLayers.map(makeLayerEntry),
-        });
-      }
-    } else {
-      children.push(makeLayerEntry(layer));
-    }
-  }
-
-  // Composite canvas for the flattened preview
+  // Composite for flattened preview
   const composite = document.createElement("canvas");
   composite.width = w;
   composite.height = h;
   const compCtx = composite.getContext("2d")!;
-
-  for (const layer of layers) {
+  for (const layer of manager.flatLayers()) {
     if (!layer.visible) continue;
     compCtx.globalAlpha = layer.opacity / 100;
     compCtx.drawImage(layer.canvas, 0, 0);
@@ -95,7 +53,7 @@ export function exportPsd(
     width: w,
     height: h,
     canvas: composite,
-    children,
+    children: buildChildren(manager.tree),
   };
 
   const buffer = writePsd(psd, {
@@ -103,7 +61,6 @@ export function exportPsd(
     trimImageData: true,
   });
 
-  // Download
   const blob = new Blob([buffer], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -f src/counter.ts)",
+      "Bash(rm -rf src/assets public/icons.svg public/favicon.svg)",
+      "WebSearch",
+      "mcp__plugin_compound-engineering_context7__resolve-library-id",
+      "mcp__plugin_compound-engineering_context7__query-docs",
+      "Bash(curl -s -L \"https://esotericsoftware.com/spine-import-psd\")"
+    ]
+  }
+}

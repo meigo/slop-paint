@@ -3,7 +3,8 @@ import { setupInput, type InputPoint } from "./input";
 import { drawStroke, type BrushSettings } from "./brush";
 import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
 import type { BrushType } from "./brush-textures";
-import { LayerManager } from "./layers";
+import { LayerManager, type LayerNode, type Layer as AppLayer, type LayerGroup } from "./layers";
+import Sortable from "sortablejs";
 import { floodFill, hexToRgba } from "./fill";
 import { PressureCurve, createCurveEditor } from "./pressure-curve";
 import { Selection, type SelectionRect, type Transform } from "./selection";
@@ -81,9 +82,8 @@ const btnSave = document.getElementById("btn-save") as HTMLButtonElement;
 
 // Layer panel buttons
 const btnAddLayer = document.getElementById("btn-add-layer") as HTMLButtonElement;
+const btnAddGroup = document.getElementById("btn-add-group") as HTMLButtonElement;
 const btnRemoveLayer = document.getElementById("btn-remove-layer") as HTMLButtonElement;
-const btnMoveUp = document.getElementById("btn-move-up") as HTMLButtonElement;
-const btnMoveDown = document.getElementById("btn-move-down") as HTMLButtonElement;
 const layerListEl = document.getElementById("layer-list")!;
 
 let currentTool: "brush" | "eraser" | "fill" | "select" | "lasso" = "brush";
@@ -376,9 +376,7 @@ btnSave.addEventListener("click", () => {
 // --- Save as PSD ---
 const btnSavePsd = document.getElementById("btn-save-psd") as HTMLButtonElement;
 btnSavePsd.addEventListener("click", () => {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  exportPsd(layers.layers, rect.width, rect.height, dpr);
+  exportPsd(layers, window.devicePixelRatio || 1);
 });
 
 // --- Layer panel ---
@@ -387,142 +385,218 @@ btnAddLayer.addEventListener("click", () => {
   renderLayerList();
 });
 
+btnAddGroup.addEventListener("click", () => {
+  layers.addGroup();
+  renderLayerList();
+});
+
 btnRemoveLayer.addEventListener("click", () => {
-  layers.removeLayer(layers.activeIndex);
-  layers.composite();
-  renderLayerList();
-});
-
-btnMoveUp.addEventListener("click", () => {
-  layers.moveLayer(layers.activeIndex, layers.activeIndex + 1);
-  layers.composite();
-  renderLayerList();
-});
-
-btnMoveDown.addEventListener("click", () => {
-  layers.moveLayer(layers.activeIndex, layers.activeIndex - 1);
+  layers.removeNode(layers.activeId);
   layers.composite();
   renderLayerList();
 });
 
 function renderLayerList() {
   layerListEl.innerHTML = "";
+  renderNodeList(layers.tree, layerListEl);
+}
 
-  // Render top-to-bottom (highest layer first)
-  for (let i = layers.layers.length - 1; i >= 0; i--) {
-    const layer = layers.layers[i];
-    const item = document.createElement("div");
-    item.className = "layer-item" + (i === layers.activeIndex ? " active" : "");
+function makeSortable(container: HTMLElement, _parentNodes: LayerNode[]) {
+  Sortable.create(container, {
+    group: "layers",
+    animation: 150,
+    fallbackOnBody: true,
+    swapThreshold: 0.65,
+    handle: ".layer-drag-handle",
+    onEnd: () => {
+      // Rebuild tree from DOM order
+      syncTreeFromDom(layerListEl, layers.tree);
+      layers.composite();
+    },
+  });
+}
 
-    // Thumbnail
-    const thumb = document.createElement("canvas");
-    thumb.className = "layer-thumb";
-    thumb.width = 28;
-    thumb.height = 28;
-    const tCtx = thumb.getContext("2d")!;
-    tCtx.drawImage(layer.canvas, 0, 0, 28, 28);
-
-    // Visibility toggle
-    const visBtn = document.createElement("button");
-    visBtn.className = "layer-visibility";
-    visBtn.textContent = layer.visible ? "\u{1F441}" : "\u2013";
-    visBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      layers.toggleVisibility(i);
-    });
-
-    // Name (double-click to rename)
-    const name = document.createElement("span");
-    name.className = "layer-name";
-    name.textContent = layer.name;
-    name.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "layer-rename-input";
-      input.value = layer.name;
-      name.replaceWith(input);
-      input.focus();
-      input.select();
-
-      const commit = () => {
-        const newName = input.value.trim() || layer.name;
-        layer.name = newName;
-        input.replaceWith(name);
-        name.textContent = newName;
-      };
-      input.addEventListener("blur", commit);
-      input.addEventListener("keydown", (ke) => {
-        if (ke.key === "Enter") { ke.preventDefault(); input.blur(); }
-        if (ke.key === "Escape") { input.value = layer.name; input.blur(); }
-        ke.stopPropagation();
-      });
-      input.addEventListener("click", (ce) => ce.stopPropagation());
-    });
-
-    // Group tag (click to edit)
-    const groupTag = document.createElement("span");
-    groupTag.className = "layer-group-tag";
-    groupTag.textContent = layer.group || "+grp";
-    groupTag.title = "Group name (for PSD export / Spine)";
-    if (!layer.group) groupTag.classList.add("empty");
-    groupTag.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "layer-rename-input";
-      input.value = layer.group;
-      input.placeholder = "group name";
-      input.style.width = "60px";
-      groupTag.replaceWith(input);
-      input.focus();
-      input.select();
-
-      const commit = () => {
-        layer.group = input.value.trim();
-        groupTag.textContent = layer.group || "+grp";
-        groupTag.classList.toggle("empty", !layer.group);
-        input.replaceWith(groupTag);
-      };
-      input.addEventListener("blur", commit);
-      input.addEventListener("keydown", (ke) => {
-        if (ke.key === "Enter") { ke.preventDefault(); input.blur(); }
-        if (ke.key === "Escape") { input.value = layer.group; input.blur(); }
-        ke.stopPropagation();
-      });
-      input.addEventListener("click", (ce) => ce.stopPropagation());
-    });
-
-    // Opacity slider
-    const opSlider = document.createElement("input");
-    opSlider.type = "range";
-    opSlider.className = "layer-opacity-slider";
-    opSlider.min = "0";
-    opSlider.max = "100";
-    opSlider.value = String(layer.opacity);
-    opSlider.addEventListener("input", (e) => {
-      e.stopPropagation();
-      layers.setLayerOpacity(i, Number(opSlider.value));
-    });
-    opSlider.addEventListener("click", (e) => e.stopPropagation());
-
-    // Click to select (update highlight without full re-render)
-    item.addEventListener("click", () => {
-      layers.activeIndex = i;
-      layerListEl.querySelectorAll(".layer-item").forEach((el, idx) => {
-        // Items are rendered top-to-bottom (reversed), so map index
-        const layerIdx = layers.layers.length - 1 - idx;
-        el.classList.toggle("active", layerIdx === i);
-      });
-    });
-
-    item.appendChild(visBtn);
-    item.appendChild(thumb);
-    item.appendChild(name);
-    item.appendChild(groupTag);
-    item.appendChild(opSlider);
-    layerListEl.appendChild(item);
+function syncTreeFromDom(container: HTMLElement, targetArray: LayerNode[]) {
+  targetArray.length = 0;
+  const items = container.children;
+  for (let i = 0; i < items.length; i++) {
+    const el = items[i] as HTMLElement;
+    const id = Number(el.dataset.nodeId);
+    const node = layers.findNode(id);
+    if (!node) continue;
+    targetArray.push(node);
+    // Sync group children
+    if (node.type === "group") {
+      const childContainer = el.querySelector(".layer-group-children") as HTMLElement;
+      if (childContainer) {
+        syncTreeFromDom(childContainer, node.children);
+      }
+    }
   }
+}
+
+function renderNodeList(nodes: LayerNode[], container: HTMLElement) {
+  // Render top-to-bottom (reverse of array order)
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i];
+    if (node.type === "group") {
+      container.appendChild(renderGroupItem(node));
+    } else {
+      container.appendChild(renderLayerItem(node));
+    }
+  }
+  makeSortable(container, nodes);
+}
+
+function makeRenameHandler(nameEl: HTMLSpanElement, node: LayerNode) {
+  nameEl.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "layer-rename-input";
+    input.value = node.name;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = () => {
+      node.name = input.value.trim() || node.name;
+      input.replaceWith(nameEl);
+      nameEl.textContent = node.name;
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", (ke) => {
+      if (ke.key === "Enter") { ke.preventDefault(); input.blur(); }
+      if (ke.key === "Escape") { input.value = node.name; input.blur(); }
+      ke.stopPropagation();
+    });
+    input.addEventListener("click", (ce) => ce.stopPropagation());
+  });
+}
+
+function renderLayerItem(layer: AppLayer): HTMLElement {
+  const item = document.createElement("div");
+  item.className = "layer-item" + (layer.id === layers.activeId ? " active" : "");
+  item.dataset.nodeId = String(layer.id);
+
+  // Drag handle
+  const handle = document.createElement("span");
+  handle.className = "layer-drag-handle";
+  handle.textContent = "\u2261";
+
+  // Visibility
+  const visBtn = document.createElement("button");
+  visBtn.className = "layer-visibility";
+  visBtn.textContent = layer.visible ? "\u{1F441}" : "\u2013";
+  visBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    layers.toggleVisibility(layer.id);
+  });
+
+  // Thumbnail
+  const thumb = document.createElement("canvas");
+  thumb.className = "layer-thumb";
+  thumb.width = 28;
+  thumb.height = 28;
+  thumb.getContext("2d")!.drawImage(layer.canvas, 0, 0, 28, 28);
+
+  // Name
+  const nameEl = document.createElement("span");
+  nameEl.className = "layer-name";
+  nameEl.textContent = layer.name;
+  makeRenameHandler(nameEl, layer);
+
+  // Opacity
+  const opSlider = document.createElement("input");
+  opSlider.type = "range";
+  opSlider.className = "layer-opacity-slider";
+  opSlider.min = "0";
+  opSlider.max = "100";
+  opSlider.value = String(layer.opacity);
+  opSlider.addEventListener("input", (e) => {
+    e.stopPropagation();
+    layers.setOpacity(layer.id, Number(opSlider.value));
+  });
+  opSlider.addEventListener("click", (e) => e.stopPropagation());
+
+  // Click to select
+  item.addEventListener("click", () => {
+    layers.setActive(layer.id);
+    layerListEl.querySelectorAll(".layer-item").forEach((el) => {
+      el.classList.toggle("active", Number((el as HTMLElement).dataset.nodeId) === layer.id);
+    });
+  });
+
+  item.appendChild(handle);
+  item.appendChild(visBtn);
+  item.appendChild(thumb);
+  item.appendChild(nameEl);
+  item.appendChild(opSlider);
+  return item;
+}
+
+function renderGroupItem(group: LayerGroup): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "layer-group";
+  wrapper.dataset.nodeId = String(group.id);
+
+  // Group header
+  const header = document.createElement("div");
+  header.className = "layer-group-header";
+
+  const handle = document.createElement("span");
+  handle.className = "layer-drag-handle";
+  handle.textContent = "\u2261";
+
+  const collapseBtn = document.createElement("button");
+  collapseBtn.className = "layer-collapse-btn";
+  collapseBtn.textContent = group.collapsed ? "\u25B6" : "\u25BC";
+  collapseBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    group.collapsed = !group.collapsed;
+    collapseBtn.textContent = group.collapsed ? "\u25B6" : "\u25BC";
+    childContainer.style.display = group.collapsed ? "none" : "block";
+  });
+
+  const visBtn = document.createElement("button");
+  visBtn.className = "layer-visibility";
+  visBtn.textContent = group.visible ? "\u{1F441}" : "\u2013";
+  visBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    layers.toggleVisibility(group.id);
+  });
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "layer-name";
+  nameEl.textContent = group.name;
+  makeRenameHandler(nameEl, group);
+
+  const opSlider = document.createElement("input");
+  opSlider.type = "range";
+  opSlider.className = "layer-opacity-slider";
+  opSlider.min = "0";
+  opSlider.max = "100";
+  opSlider.value = String(group.opacity);
+  opSlider.addEventListener("input", (e) => {
+    e.stopPropagation();
+    layers.setOpacity(group.id, Number(opSlider.value));
+  });
+  opSlider.addEventListener("click", (e) => e.stopPropagation());
+
+  header.appendChild(handle);
+  header.appendChild(collapseBtn);
+  header.appendChild(visBtn);
+  header.appendChild(nameEl);
+  header.appendChild(opSlider);
+  wrapper.appendChild(header);
+
+  // Children container
+  const childContainer = document.createElement("div");
+  childContainer.className = "layer-group-children";
+  childContainer.style.display = group.collapsed ? "none" : "block";
+  renderNodeList(group.children, childContainer);
+  wrapper.appendChild(childContainer);
+
+  return wrapper;
 }
 
 // --- Persist UI settings ---
