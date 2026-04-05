@@ -506,9 +506,14 @@ function renderLayerList() {
     });
     opSlider.addEventListener("click", (e) => e.stopPropagation());
 
-    // Click to select
+    // Click to select (update highlight without full re-render)
     item.addEventListener("click", () => {
-      layers.setActive(i);
+      layers.activeIndex = i;
+      layerListEl.querySelectorAll(".layer-item").forEach((el, idx) => {
+        // Items are rendered top-to-bottom (reversed), so map index
+        const layerIdx = layers.layers.length - 1 - idx;
+        el.classList.toggle("active", layerIdx === i);
+      });
     });
 
     item.appendChild(visBtn);

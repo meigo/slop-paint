@@ -188,8 +188,8 @@ body {
 
 /* Layer panel */
 #layer-panel {
-  width: 200px;
-  min-width: 200px;
+  width: 280px;
+  min-width: 280px;
   background: #fff;
   border-left: 1px solid #e0e0e0;
   display: flex;
