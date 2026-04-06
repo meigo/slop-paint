@@ -61,6 +61,10 @@ export function drawStampStrokeIncremental(
   ctx.save();
   if (settings.isEraser) {
     ctx.globalCompositeOperation = "destination-out";
+  } else if (settings.alphaLock) {
+    ctx.globalCompositeOperation = "source-atop";
+  } else if (settings.drawBehind) {
+    ctx.globalCompositeOperation = "destination-over";
   } else {
     ctx.globalCompositeOperation = "source-over";
   }

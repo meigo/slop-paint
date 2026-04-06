@@ -1,14 +1,15 @@
 import "./style.css";
 import { setupInput, type InputPoint } from "./input";
-import { drawStroke, type BrushSettings } from "./brush";
+import type { BrushSettings } from "./brush";
 import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
 import type { BrushType } from "./brush-textures";
 import { LayerManager, type LayerNode, type Layer as AppLayer, type LayerGroup } from "./layers";
 import Sortable from "sortablejs";
-import { floodFill, hexToRgba } from "./fill";
+import { floodFill, hexToRgba, type FillOptions } from "./fill";
 import { PressureCurve, createCurveEditor } from "./pressure-curve";
 import { Selection, type SelectionRect, type Transform } from "./selection";
 import { Viewport } from "./viewport";
+import { setupTouchGestures } from "./touch-gestures";
 import { exportPsd, savePsd, loadPsd } from "./export-psd";
 
 // --- Display canvas setup ---
@@ -19,10 +20,6 @@ const selectionOverlay = document.getElementById("selection-overlay") as HTMLCan
 
 // --- Viewport (zoom/pan) ---
 const viewport = new Viewport(canvasContainer);
-
-// Offscreen canvas for compositing live brush strokes
-const liveCanvas = document.createElement("canvas");
-const liveCtx = liveCanvas.getContext("2d")!;
 
 // --- Layer manager ---
 const layers = new LayerManager(canvas, ctx, () => renderLayerList());
@@ -37,10 +34,6 @@ function resizeCanvas() {
   canvas.height = h * dpr;
   selectionOverlay.width = w;
   selectionOverlay.height = h;
-  liveCanvas.width = canvas.width;
-  liveCanvas.height = canvas.height;
-  liveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
   layers.resize(w, h, dpr);
   layers.composite();
 }
@@ -53,8 +46,9 @@ const settings: BrushSettings = {
   color: "#1a1a1a",
   opacity: 100,
   smoothing: 50,
-  taper: true,
   isEraser: false,
+  drawBehind: false,
+  alphaLock: false,
 };
 
 // --- UI Bindings ---
@@ -70,7 +64,6 @@ const brushOpacityInput = document.getElementById("brush-opacity") as HTMLInputE
 const opacityValue = document.getElementById("opacity-value")!;
 const colorPicker = document.getElementById("color-picker") as HTMLInputElement;
 const smoothingInput = document.getElementById("smoothing") as HTMLInputElement;
-const taperInput = document.getElementById("taper") as HTMLInputElement;
 const sizeRangeInput = document.getElementById("size-range") as HTMLInputElement;
 const sizeRangeValue = document.getElementById("size-range-value")!;
 const btnCurve = document.getElementById("btn-curve") as HTMLButtonElement;
@@ -99,8 +92,33 @@ function setTool(tool: "brush" | "eraser" | "fill" | "select" | "lasso") {
   if (tool === "select") selection.mode = "rect";
   if (tool === "lasso") selection.mode = "lasso";
   canvas.style.cursor = (tool === "select" || tool === "lasso") ? "crosshair" : tool === "fill" ? "crosshair" : tool === "eraser" ? "cell" : "crosshair";
+  // Show/hide fill options
+  const fillOpts = document.getElementById("fill-options")!;
+  fillOpts.style.display = tool === "fill" ? "flex" : "none";
   debouncedSave();
 }
+
+// Fill tool settings
+const fillSettings: FillOptions = {
+  tolerance: 32,
+  alphaThreshold: 0,
+  expand: 0,
+};
+const fillThresholdInput = document.getElementById("fill-threshold") as HTMLInputElement;
+const fillThresholdValue = document.getElementById("fill-threshold-value")!;
+const fillExpandInput = document.getElementById("fill-expand") as HTMLInputElement;
+const fillExpandValue = document.getElementById("fill-expand-value")!;
+
+fillThresholdInput.addEventListener("input", () => {
+  fillSettings.alphaThreshold = Number(fillThresholdInput.value);
+  fillThresholdValue.textContent = fillThresholdInput.value;
+  debouncedSave();
+});
+fillExpandInput.addEventListener("input", () => {
+  fillSettings.expand = Number(fillExpandInput.value);
+  fillExpandValue.textContent = fillExpandInput.value + "px";
+  debouncedSave();
+});
 
 let brushType: BrushType = "smooth";
 
@@ -132,8 +150,10 @@ smoothingInput.addEventListener("input", () => {
   settings.smoothing = Number(smoothingInput.value);
 });
 
-taperInput.addEventListener("change", () => {
-  settings.taper = taperInput.checked;
+const drawBehindInput = document.getElementById("draw-behind") as HTMLInputElement;
+drawBehindInput.addEventListener("change", () => {
+  settings.drawBehind = drawBehindInput.checked;
+  debouncedSave();
 });
 
 // Size range multiplier
@@ -223,6 +243,9 @@ function handleStroke(rawPoints: InputPoint[], done: boolean) {
   const layer = layers.active;
   const dpr = window.devicePixelRatio || 1;
 
+  // Locked layer: block drawing and fill (but allow selection tools)
+  if (layer.locked && currentTool !== "select" && currentTool !== "lasso") return;
+
   // Selection tool (rect or lasso)
   if (currentTool === "select" || currentTool === "lasso") {
     const p = points[points.length - 1];
@@ -275,7 +298,7 @@ function handleStroke(rawPoints: InputPoint[], done: boolean) {
       const snapshot = layers.getSnapshot();
       layer.history.push(snapshot);
       const color = hexToRgba(settings.color, settings.opacity);
-      floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color);
+      floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, fillSettings);
       layers.composite();
       renderLayerList();
     }
@@ -285,35 +308,11 @@ function handleStroke(rawPoints: InputPoint[], done: boolean) {
   // Save state before first point of stroke
   if (points.length <= 1 && !done) {
     preStrokeSnapshot = layers.getSnapshot();
-    if (brushType !== "smooth") {
-      resetStampState();
-    }
+    resetStampState();
   }
 
-  const rect = canvas.getBoundingClientRect();
-
-  const useStamp = brushType !== "smooth" && !settings.isEraser;
-
-  if (settings.isEraser) {
-    if (preStrokeSnapshot) {
-      layers.restoreSnapshot(preStrokeSnapshot);
-    }
-    drawStroke(layer.ctx, points, settings, done, sizeRange);
-  } else if (useStamp) {
-    // Textured brush: stamp incrementally directly on layer
-    drawStampStrokeIncremental(layer.ctx, points, { ...settings, brushType }, sizeRange);
-  } else {
-    // Smooth brush: vector path via perfect-freehand
-    liveCtx.clearRect(0, 0, rect.width, rect.height);
-    drawStroke(liveCtx, points, settings, done, sizeRange);
-
-    if (preStrokeSnapshot) {
-      layers.restoreSnapshot(preStrokeSnapshot);
-    }
-    layer.ctx.resetTransform();
-    layer.ctx.drawImage(liveCanvas, 0, 0);
-    layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
+  // All brush types (including smooth) use the stamp engine
+  drawStampStrokeIncremental(layer.ctx, points, { ...settings, brushType, alphaLock: layer.alphaLock }, sizeRange);
 
   // Recomposite all layers onto display
   layers.composite();
@@ -323,12 +322,26 @@ function handleStroke(rawPoints: InputPoint[], done: boolean) {
       layer.history.push(preStrokeSnapshot);
       preStrokeSnapshot = null;
     }
-    liveCtx.clearRect(0, 0, rect.width, rect.height);
     renderLayerList(); // update thumbnails
   }
 }
 
-setupInput(canvas, handleStroke, (sx, sy) => viewport.screenToCanvas(sx, sy));
+// Pencil double-tap: toggle between current tool and eraser
+let toolBeforePencilToggle: "brush" | "eraser" | "fill" | "select" | "lasso" | null = null;
+
+setupInput(canvas, handleStroke, (sx, sy) => viewport.screenToCanvas(sx, sy), {
+  onPencilDoubleTap: () => {
+    if (currentTool === "eraser") {
+      // Switch back to previous tool
+      setTool(toolBeforePencilToggle ?? "brush");
+      toolBeforePencilToggle = null;
+    } else {
+      // Switch to eraser, remember current tool
+      toolBeforePencilToggle = currentTool;
+      setTool("eraser");
+    }
+  },
+});
 
 // --- Undo / Redo (per-layer) ---
 function undo() {
@@ -420,6 +433,18 @@ btnAddGroup.addEventListener("click", () => {
 
 btnRemoveLayer.addEventListener("click", () => {
   layers.removeNode(layers.activeId);
+  layers.composite();
+  renderLayerList();
+});
+
+document.getElementById("btn-duplicate-layer")!.addEventListener("click", () => {
+  layers.duplicateLayer(layers.activeId);
+  layers.composite();
+  renderLayerList();
+});
+
+document.getElementById("btn-merge-down")!.addEventListener("click", () => {
+  layers.mergeDown(layers.activeId);
   layers.composite();
   renderLayerList();
 });
@@ -538,6 +563,28 @@ function renderLayerItem(layer: AppLayer): HTMLElement {
   nameEl.textContent = layer.name;
   makeRenameHandler(nameEl, layer);
 
+  // Lock
+  const lockBtn = document.createElement("button");
+  lockBtn.className = "layer-lock-btn" + (layer.locked ? " on" : "");
+  lockBtn.textContent = "\u{1F512}";
+  lockBtn.title = "Lock layer";
+  lockBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    layer.locked = !layer.locked;
+    lockBtn.classList.toggle("on", layer.locked);
+  });
+
+  // Alpha lock
+  const alphaBtn = document.createElement("button");
+  alphaBtn.className = "layer-lock-btn" + (layer.alphaLock ? " on" : "");
+  alphaBtn.textContent = "\u{1F3C1}";
+  alphaBtn.title = "Alpha lock (paint only on existing pixels)";
+  alphaBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    layer.alphaLock = !layer.alphaLock;
+    alphaBtn.classList.toggle("on", layer.alphaLock);
+  });
+
   // Opacity
   const opSlider = document.createElement("input");
   opSlider.type = "range";
@@ -566,6 +613,8 @@ function renderLayerItem(layer: AppLayer): HTMLElement {
   item.appendChild(visBtn);
   item.appendChild(thumb);
   item.appendChild(nameEl);
+  item.appendChild(lockBtn);
+  item.appendChild(alphaBtn);
   item.appendChild(opSlider);
   return item;
 }
@@ -659,11 +708,13 @@ interface SavedSettings {
   size: number;
   opacity: number;
   smoothing: number;
-  taper: boolean;
   color: string;
   sizeRange: number;
   curveCp1: { x: number; y: number };
   curveCp2: { x: number; y: number };
+  drawBehind?: boolean;
+  fillAlphaThreshold?: number;
+  fillExpand?: number;
 }
 
 function saveSettings() {
@@ -673,11 +724,13 @@ function saveSettings() {
     size: settings.size,
     opacity: settings.opacity,
     smoothing: settings.smoothing,
-    taper: settings.taper,
     color: settings.color,
     sizeRange,
     curveCp1: { ...pressureCurve.cp1 },
     curveCp2: { ...pressureCurve.cp2 },
+    drawBehind: settings.drawBehind,
+    fillAlphaThreshold: fillSettings.alphaThreshold,
+    fillExpand: fillSettings.expand,
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -719,12 +772,6 @@ function loadSettings() {
       smoothingInput.value = String(data.smoothing);
     }
 
-    // Taper
-    if (data.taper != null) {
-      settings.taper = data.taper;
-      taperInput.checked = data.taper;
-    }
-
     // Color
     if (data.color) {
       settings.color = data.color;
@@ -736,6 +783,24 @@ function loadSettings() {
       sizeRange = data.sizeRange;
       sizeRangeInput.value = String(Math.round(data.sizeRange * 100));
       sizeRangeValue.textContent = data.sizeRange.toFixed(1) + "x";
+    }
+
+    // Draw behind
+    if (data.drawBehind != null) {
+      settings.drawBehind = data.drawBehind;
+      drawBehindInput.checked = data.drawBehind;
+    }
+
+    // Fill settings
+    if (data.fillAlphaThreshold != null) {
+      fillSettings.alphaThreshold = data.fillAlphaThreshold;
+      fillThresholdInput.value = String(data.fillAlphaThreshold);
+      fillThresholdValue.textContent = String(data.fillAlphaThreshold);
+    }
+    if (data.fillExpand != null) {
+      fillSettings.expand = data.fillExpand;
+      fillExpandInput.value = String(data.fillExpand);
+      fillExpandValue.textContent = data.fillExpand + "px";
     }
 
     // Pressure curve
@@ -761,7 +826,6 @@ brushSizeInput.addEventListener("input", debouncedSave);
 brushOpacityInput.addEventListener("input", debouncedSave);
 colorPicker.addEventListener("input", debouncedSave);
 smoothingInput.addEventListener("input", debouncedSave);
-taperInput.addEventListener("change", debouncedSave);
 sizeRangeInput.addEventListener("input", debouncedSave);
 
 // --- Init: resize first so layers get proper dimensions ---
@@ -812,6 +876,13 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "s") setTool("select");
   if (e.key === "l") setTool("lasso");
   if (e.key === "g") setTool("fill");
+
+  // Rotate canvas: R = clockwise 15°, Shift+R = counter-clockwise 15°
+  if (e.key === "r" || e.key === "R") {
+    const step = (15 * Math.PI) / 180;
+    viewport.rotateAroundCenter(e.shiftKey ? -step : step);
+    updateZoomDisplay();
+  }
 
   if (e.key === "[") {
     settings.size = Math.max(1, settings.size - 2);
@@ -916,8 +987,25 @@ canvas.addEventListener("pointerup", (e) => {
   }
 }, { capture: true });
 
-// --- Zoom display ---
+// --- Touch gestures (iPad: pinch-zoom, finger pan, two-finger undo, three-finger redo) ---
+const canvasClip = document.getElementById("canvas-clip")!;
+setupTouchGestures(canvasClip, viewport, {
+  onUndo: undo,
+  onRedo: redo,
+  onViewportChange: () => updateZoomDisplay(),
+});
+
+// --- Reset view button ---
+document.getElementById("btn-reset-view")!.addEventListener("click", () => {
+  viewport.resetView();
+  updateZoomDisplay();
+});
+
+// --- Zoom / rotation display ---
 function updateZoomDisplay() {
   const el = document.getElementById("zoom-level");
-  if (el) el.textContent = Math.round(viewport.zoom * 100) + "%";
+  if (!el) return;
+  const zoomText = Math.round(viewport.zoom * 100) + "%";
+  const deg = Math.round(viewport.rotation * (180 / Math.PI));
+  el.textContent = deg !== 0 ? `${zoomText} ${deg}°` : zoomText;
 }

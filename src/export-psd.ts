@@ -191,6 +191,8 @@ export function loadPsd(
         ctx,
         visible: !psdLayer.hidden,
         opacity: Math.round((psdLayer.opacity ?? 1) * 100),
+        locked: false,
+        alphaLock: false,
         history: new History(),
       };
       return layer;

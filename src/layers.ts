@@ -8,6 +8,8 @@ export interface Layer {
   ctx: CanvasRenderingContext2D;
   visible: boolean;
   opacity: number;
+  locked: boolean;
+  alphaLock: boolean;
   history: History;
 }
 
@@ -152,6 +154,8 @@ export class LayerManager {
       ctx,
       visible: true,
       opacity: 100,
+      locked: false,
+      alphaLock: false,
       history: new History(),
     };
   }
@@ -225,6 +229,59 @@ export class LayerManager {
 
   setActive(id: number) {
     this.activeId = id;
+  }
+
+  duplicateLayer(id: number): Layer | null {
+    const src = this.findLayer(id);
+    if (!src) return null;
+    const loc = this.findParent(id);
+    if (!loc) return null;
+
+    const dup = this.createLayer(src.name + " copy");
+    dup.opacity = src.opacity;
+    dup.visible = src.visible;
+    dup.locked = src.locked;
+    dup.alphaLock = src.alphaLock;
+    dup.ctx.resetTransform();
+    dup.ctx.drawImage(src.canvas, 0, 0);
+    dup.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    // Insert above the source
+    loc.parent.splice(loc.index + 1, 0, dup);
+    this.activeId = dup.id;
+    this.onChange();
+    return dup;
+  }
+
+  /** Merge the given layer down onto the layer below it */
+  mergeDown(id: number): boolean {
+    const loc = this.findParent(id);
+    if (!loc) return false;
+    const src = loc.parent[loc.index];
+    if (src.type !== "layer") return false;
+    if (loc.index === 0) return false; // nothing below
+
+    // Find the layer below (must be a layer, not a group)
+    const below = loc.parent[loc.index - 1];
+    if (below.type !== "layer") return false;
+
+    // Save undo snapshot on the target
+    below.history.push(
+      below.ctx.getImageData(0, 0, below.canvas.width, below.canvas.height)
+    );
+
+    // Draw src onto below
+    below.ctx.save();
+    below.ctx.resetTransform();
+    below.ctx.globalAlpha = src.opacity / 100;
+    below.ctx.drawImage(src.canvas, 0, 0);
+    below.ctx.restore();
+
+    // Remove the source layer
+    loc.parent.splice(loc.index, 1);
+    this.activeId = below.id;
+    this.onChange();
+    return true;
   }
 
   toggleVisibility(id: number) {

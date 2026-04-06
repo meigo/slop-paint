@@ -6,8 +6,9 @@ export interface BrushSettings {
   color: string;
   opacity: number;
   smoothing: number;
-  taper: boolean;
   isEraser: boolean;
+  drawBehind: boolean;
+  alphaLock: boolean;
 }
 
 /**
@@ -40,9 +41,8 @@ export function drawStroke(
     thinning: 1,
     smoothing: settings.smoothing / 100,
     streamline: 0.3,
-    // Only taper when stroke is finished so the line stays stable while drawing
-    start: { taper: done && settings.taper, cap: true },
-    end: { taper: done && settings.taper, cap: true },
+    start: { taper: false, cap: true },
+    end: { taper: false, cap: true },
     last: done,
     simulatePressure: points[0].pressure === 0.5,
   });

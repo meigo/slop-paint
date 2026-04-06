@@ -19,6 +19,19 @@ function getCachedTip(key: string, generator: (ctx: CanvasRenderingContext2D, s:
   return cvs;
 }
 
+/** Hard round brush — clean circle with slight antialiased edge */
+function hardRoundTip(): HTMLCanvasElement {
+  return getCachedTip("hard", (ctx, s) => {
+    const r = s / 2;
+    const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, "rgba(0,0,0,1)");
+    grad.addColorStop(0.85, "rgba(0,0,0,1)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, s, s);
+  });
+}
+
 /** Soft round brush */
 function softRoundTip(): HTMLCanvasElement {
   return getCachedTip("soft", (ctx, s) => {
@@ -114,6 +127,7 @@ export type BrushType = "smooth" | "pencil" | "charcoal" | "airbrush";
 
 export function getTip(type: BrushType): HTMLCanvasElement {
   switch (type) {
+    case "smooth": return hardRoundTip();
     case "pencil": return pencilTip();
     case "charcoal": return charcoalTip();
     case "airbrush": return airbrushTip();

@@ -8,13 +8,34 @@ export interface InputPoint {
 export type StrokeHandler = (points: InputPoint[], done: boolean) => void;
 export type CoordTransform = (screenX: number, screenY: number) => { x: number; y: number };
 
+export interface InputOptions {
+  onStroke: StrokeHandler;
+  transformCoords?: CoordTransform;
+  /** Called when a pencil double-tap is detected (two quick taps with minimal movement) */
+  onPencilDoubleTap?: () => void;
+}
+
+const DOUBLE_TAP_INTERVAL = 300; // ms between taps
+const TAP_MAX_DURATION = 200; // ms — a tap must be shorter than this
+const TAP_MAX_DISTANCE = 8; // px — must not move more than this
+/** Max distance (canvas px) between consecutive points before we interpolate */
+const INTERPOLATION_THRESHOLD = 4;
+
 export function setupInput(
   canvas: HTMLCanvasElement,
   onStroke: StrokeHandler,
-  transformCoords?: CoordTransform
+  transformCoords?: CoordTransform,
+  options?: Omit<InputOptions, "onStroke" | "transformCoords">
 ) {
   let isDrawing = false;
   let currentPoints: InputPoint[] = [];
+
+  // Pencil double-tap detection
+  let lastPenTapTime = 0;
+  let penDownTime = 0;
+  let penDownX = 0;
+  let penDownY = 0;
+  let penMoved = false;
 
   function getPoint(e: PointerEvent): InputPoint {
     let x: number, y: number;
@@ -35,22 +56,67 @@ export function setupInput(
     };
   }
 
+  // On touch devices, only pen (Apple Pencil) and mouse draw.
+  // Finger touches are handled by touch-gestures.ts for pan/zoom/undo.
+  function shouldDraw(e: PointerEvent): boolean {
+    return e.pointerType === "mouse" || e.pointerType === "pen";
+  }
+
   function onPointerDown(e: PointerEvent) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !shouldDraw(e)) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     isDrawing = true;
     currentPoints = [getPoint(e)];
     onStroke(currentPoints, false);
+
+    // Track pen tap start
+    if (e.pointerType === "pen") {
+      penDownTime = e.timeStamp;
+      penDownX = e.clientX;
+      penDownY = e.clientY;
+      penMoved = false;
+    }
   }
 
   function onPointerMove(e: PointerEvent) {
     if (!isDrawing) return;
     e.preventDefault();
 
-    const coalesced = e.getCoalescedEvents?.() ?? [e];
-    for (const ce of coalesced) {
-      currentPoints.push(getPoint(ce));
+    // Track pen movement for tap detection
+    if (e.pointerType === "pen" && !penMoved) {
+      const dx = e.clientX - penDownX;
+      const dy = e.clientY - penDownY;
+      if (Math.abs(dx) > TAP_MAX_DISTANCE || Math.abs(dy) > TAP_MAX_DISTANCE) {
+        penMoved = true;
+      }
+    }
+
+    // Collect coalesced events (Safari may return empty array — fall back to event itself)
+    const coalesced = e.getCoalescedEvents?.();
+    const events = coalesced && coalesced.length > 0 ? coalesced : [e];
+    for (const ce of events) {
+      const pt = getPoint(ce);
+      // Interpolate if gap between consecutive points is too large (iPad sparse events)
+      if (currentPoints.length > 0) {
+        const prev = currentPoints[currentPoints.length - 1];
+        const dx = pt.x - prev.x;
+        const dy = pt.y - prev.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > INTERPOLATION_THRESHOLD) {
+          const steps = Math.ceil(dist / INTERPOLATION_THRESHOLD);
+          for (let i = 1; i < steps; i++) {
+            const t = i / steps;
+            currentPoints.push({
+              x: prev.x + dx * t,
+              y: prev.y + dy * t,
+              pressure: prev.pressure + (pt.pressure - prev.pressure) * t,
+              timestamp: prev.timestamp + (pt.timestamp - prev.timestamp) * t,
+            });
+          }
+        }
+      }
+      currentPoints.push(pt);
     }
     onStroke(currentPoints, false);
   }
@@ -62,6 +128,20 @@ export function setupInput(
     currentPoints.push(getPoint(e));
     onStroke(currentPoints, true);
     currentPoints = [];
+
+    // Detect pencil double-tap
+    if (e.pointerType === "pen" && !penMoved && options?.onPencilDoubleTap) {
+      const duration = e.timeStamp - penDownTime;
+      if (duration < TAP_MAX_DURATION) {
+        // This was a quick tap — check if it's a double-tap
+        if (penDownTime - lastPenTapTime < DOUBLE_TAP_INTERVAL) {
+          options.onPencilDoubleTap();
+          lastPenTapTime = 0; // reset so triple-tap doesn't fire again
+        } else {
+          lastPenTapTime = e.timeStamp;
+        }
+      }
+    }
   }
 
   canvas.addEventListener("pointerdown", onPointerDown);
