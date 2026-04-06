@@ -42,9 +42,13 @@ A web-based drawing application with pressure-sensitive brushes, layers, and PSD
 - Space+drag or middle mouse button to pan
 - Zoom level indicator in toolbar
 
+### Save / Load
+- **Save Project** (Ctrl+S) — saves as PSD with full layer tree, no trimming for round-tripping
+- **Open Project** (Ctrl+O) — opens any PSD file (from this app, Photoshop, GIMP, etc.) and rebuilds layer tree
+
 ### Export
 - **PNG** — flattened composite with transparency
-- **PSD** — Photoshop format with all layers preserved, supports layer groups
+- **PSD** — Photoshop format with all layers preserved, supports layer groups (trimmed for smaller files)
 
 ### Spine 2D Integration
 PSD export is compatible with [Spine's PSD import](https://esotericsoftware.com/spine-import-psd):
@@ -55,6 +59,8 @@ PSD export is compatible with [Spine's PSD import](https://esotericsoftware.com/
 ### Keyboard Shortcuts
 | Key | Action |
 |-----|--------|
+| Ctrl+S | Save project (PSD) |
+| Ctrl+O | Open project (PSD) |
 | B | Brush tool |
 | E | Eraser tool |
 | G | Paint bucket |

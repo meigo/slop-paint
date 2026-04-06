@@ -37,13 +37,18 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `viewport.ts` — zoom/pan via CSS transform with coordinate mapping
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT
 - `fill.ts` — scanline flood fill
-- `export-psd.ts` — PSD export with layer groups (Spine 2D compatible)
+- `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible)
 
 ## PSD Export / Spine 2D
 - Layer groups in the tree are exported as PSD group folders
 - Layer/group names can include Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 - Layer order = draw order (bottom drawn first)
 - See: https://esotericsoftware.com/spine-import-psd
+
+## Project Save/Load
+- PSD is the project format — Ctrl+S to save, Ctrl+O to open
+- Round-trips layer tree, names, opacity, visibility, groups
+- Interoperable with Photoshop, GIMP, Spine, etc.
 
 ## Settings Persistence
 - UI settings saved to localStorage (debounced)

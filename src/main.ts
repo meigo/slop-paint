@@ -9,7 +9,7 @@ import { floodFill, hexToRgba } from "./fill";
 import { PressureCurve, createCurveEditor } from "./pressure-curve";
 import { Selection, type SelectionRect, type Transform } from "./selection";
 import { Viewport } from "./viewport";
-import { exportPsd } from "./export-psd";
+import { exportPsd, savePsd, loadPsd } from "./export-psd";
 
 // --- Display canvas setup ---
 const canvasContainer = document.getElementById("canvas-container") as HTMLElement;
@@ -379,6 +379,34 @@ btnSavePsd.addEventListener("click", () => {
   exportPsd(layers, window.devicePixelRatio || 1);
 });
 
+// --- Save / Load project ---
+const btnSaveProject = document.getElementById("btn-save-project") as HTMLButtonElement;
+const btnLoadProject = document.getElementById("btn-load-project") as HTMLButtonElement;
+const fileInput = document.getElementById("file-input") as HTMLInputElement;
+
+btnSaveProject.addEventListener("click", () => {
+  savePsd(layers, window.devicePixelRatio || 1);
+});
+
+btnLoadProject.addEventListener("click", () => {
+  fileInput.click();
+});
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const buffer = reader.result as ArrayBuffer;
+    const dpr = window.devicePixelRatio || 1;
+    loadPsd(buffer, layers, dpr);
+    layers.composite();
+    renderLayerList();
+  };
+  reader.readAsArrayBuffer(file);
+  fileInput.value = ""; // reset so same file can be loaded again
+});
+
 // --- Layer panel ---
 btnAddLayer.addEventListener("click", () => {
   layers.addLayer();
@@ -744,6 +772,18 @@ loadSettings();
 // --- Keyboard shortcuts ---
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
+
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    e.preventDefault();
+    savePsd(layers, window.devicePixelRatio || 1);
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.key === "o") {
+    e.preventDefault();
+    fileInput.click();
+    return;
+  }
 
   if ((e.ctrlKey || e.metaKey) && e.key === "z") {
     e.preventDefault();
