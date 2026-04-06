@@ -3,31 +3,45 @@
 Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (Spine 2D compatible).
 
 ## Tech Stack
-- TypeScript + Vite
+- Svelte 5 + TypeScript + Vite
+- Tailwind CSS v4 for styling (light/dark mode via `.dark` class on `<html>`)
+- `@lucide/svelte` for icons
 - Canvas2D for rendering
 - Stamp-based brush engine for all brush types (smooth, pencil, charcoal, airbrush)
 - `ag-psd` for PSD export
 - `sortablejs` for drag-and-drop layer tree
-- Vitest for tests, ESLint for linting
+- Vitest for tests, ESLint for linting, `svelte-check` for Svelte type checking
 
 ## Commands
 - `npm run dev` — start dev server
 - `npm run dev:lan` — start dev server exposed on local network (for iPad testing)
-- `npm run build` — production build
+- `npm run build` — production build (runs svelte-check + tsc + vite build)
 - `npm run test` — run tests once
 - `npm run test:watch` — run tests in watch mode
 - `npm run lint` — run ESLint
+- `npm run check` — run svelte-check
 
 ## Testing Guidelines
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
 - Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba)
-- **Don't test**: Canvas rendering, pointer events, DOM manipulation — these need visual verification
+- **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
-- Run `npx tsc --noEmit` to type-check
+- Run `npm run check` to verify Svelte components
+- Run `npx tsc --noEmit` to type-check non-Svelte TypeScript
 
 ## Architecture
-- `main.ts` — wires everything together, UI bindings, event handling
+
+### Svelte UI Layer
+- `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
+- `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
+- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, theme, layer version counter
+- `lib/Toolbar.svelte` — tool buttons, brush/fill options, color picker, zoom display, action buttons
+- `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename
+- `lib/ThemeToggle.svelte` — light/dark mode toggle (persists to localStorage)
+- `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
+
+### Canvas Engine (pure TypeScript, no Svelte)
 - `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input
 - `brush.ts` — BrushSettings interface (legacy perfect-freehand code, no longer used for rendering)
 - `stamp-brush.ts` — stamp-based brush engine for all brush types, supports eraser/draw-behind/alpha-lock compositing
@@ -40,6 +54,18 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content)
 - `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible)
+
+### State Management
+- UI state uses Svelte 5 runes (`$state`, `$derived`) in `appState.svelte.ts`
+- Canvas engine objects (LayerManager, Viewport, Selection) are imperative instances, NOT wrapped in `$state`
+- `layerVersion` counter bridges imperative mutations to Svelte reactivity — bump it to trigger re-renders
+- Settings persist to localStorage via debounced `$effect` in App.svelte
+
+### Styling
+- Tailwind CSS v4 with `@theme` for custom color tokens
+- Monochrome color scheme: `surface`, `border`, `text`, `accent` tokens
+- Dark mode via `.dark` class on `<html>`, overrides CSS custom properties
+- `app.css` contains Tailwind import + theme tokens + non-utility CSS (checkerboard, sortable, curve popup)
 
 ## iPad / Touch Support
 - Apple Pencil draws; finger touch navigates (pan/zoom/rotate)
@@ -86,3 +112,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 - UI settings saved to localStorage (debounced)
 - Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings
+- Theme preference saved separately to localStorage

@@ -1,0 +1,179 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #ffffff;
+  --color-surface-hover: #f5f5f5;
+  --color-surface-active: #ebebeb;
+  --color-surface-raised: #ffffff;
+  --color-border: #e0e0e0;
+  --color-border-light: #f0f0f0;
+  --color-text: #222222;
+  --color-text-secondary: #666666;
+  --color-text-muted: #999999;
+  --color-canvas-bg: #f5f5f5;
+  --color-accent: #222222;
+  --color-accent-text: #ffffff;
+  --color-group-bg: #f0f2f5;
+  --color-group-hover: #e8eaef;
+  --color-group-active: #dde0e8;
+  --color-selection: #6688cc;
+}
+
+.dark {
+  --color-surface: #1e1e1e;
+  --color-surface-hover: #282828;
+  --color-surface-active: #333333;
+  --color-surface-raised: #252525;
+  --color-border: #383838;
+  --color-border-light: #2a2a2a;
+  --color-text: #e0e0e0;
+  --color-text-secondary: #999999;
+  --color-text-muted: #666666;
+  --color-canvas-bg: #121212;
+  --color-accent: #e0e0e0;
+  --color-accent-text: #1e1e1e;
+  --color-group-bg: #252830;
+  --color-group-hover: #2d3040;
+  --color-group-active: #3a4060;
+  --color-selection: #6688cc;
+}
+
+/* Base resets */
+body {
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Canvas checkerboard pattern */
+.canvas-checkerboard {
+  background-image:
+    linear-gradient(45deg, #e0e0e0 25%, transparent 25%),
+    linear-gradient(-45deg, #e0e0e0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e0e0e0 75%),
+    linear-gradient(-45deg, transparent 75%, #e0e0e0 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-color: #fff;
+}
+
+.dark .canvas-checkerboard {
+  background-image:
+    linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
+  background-color: #1a1a1a;
+}
+
+/* Thumbnail checkerboard (smaller) */
+.thumb-checkerboard {
+  background-image:
+    linear-gradient(45deg, #ddd 25%, transparent 25%),
+    linear-gradient(-45deg, #ddd 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ddd 75%),
+    linear-gradient(-45deg, transparent 75%, #ddd 75%);
+  background-size: 6px 6px;
+  background-position: 0 0, 0 3px, 3px -3px, -3px 0;
+  background-color: #fff;
+}
+
+.dark .thumb-checkerboard {
+  background-image:
+    linear-gradient(45deg, #333 25%, transparent 25%),
+    linear-gradient(-45deg, #333 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #333 75%),
+    linear-gradient(-45deg, transparent 75%, #333 75%);
+  background-color: #222;
+}
+
+/* SortableJS styles */
+.sortable-ghost {
+  opacity: 0.4;
+  background: var(--color-surface-active) !important;
+}
+
+.sortable-chosen {
+  background: var(--color-surface-hover);
+}
+
+/* Pressure curve popup */
+.curve-popup {
+  position: absolute;
+  top: 52px;
+  z-index: 20;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: none;
+}
+
+.curve-popup.open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.curve-popup canvas {
+  border-radius: 4px;
+}
+
+/* Range input styling */
+input[type="range"] {
+  accent-color: var(--color-accent);
+}
+
+/* Color picker sizing */
+input[type="color"] {
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 2px;
+  background: var(--color-surface);
+}
+
+/* Layer rename input */
+.layer-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid var(--color-selection);
+  border-radius: 3px;
+  outline: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Responsive: mobile layer panel */
+@media (max-width: 700px) {
+  .workspace-layout {
+    flex-direction: column !important;
+  }
+
+  .layer-panel {
+    width: 100% !important;
+    min-width: unset !important;
+    max-height: 150px !important;
+    border-left: none !important;
+    border-top: 1px solid var(--color-border) !important;
+  }
+
+  .layer-list {
+    display: flex !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  .layer-item {
+    flex-shrink: 0;
+    border-bottom: none !important;
+    border-right: 1px solid var(--color-border-light) !important;
+  }
+}
