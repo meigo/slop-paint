@@ -92,9 +92,19 @@ function setTool(tool: "brush" | "eraser" | "fill" | "select" | "lasso") {
   if (tool === "select") selection.mode = "rect";
   if (tool === "lasso") selection.mode = "lasso";
   canvas.style.cursor = (tool === "select" || tool === "lasso") ? "crosshair" : tool === "fill" ? "crosshair" : tool === "eraser" ? "cell" : "crosshair";
-  // Show/hide fill options
-  const fillOpts = document.getElementById("fill-options")!;
-  fillOpts.style.display = tool === "fill" ? "flex" : "none";
+  // Show/hide tool-specific options
+  const showBrush = tool === "brush" || tool === "eraser";
+  const showFill = tool === "fill";
+  document.querySelectorAll<HTMLElement>(".opts-brush").forEach(el => {
+    el.style.display = showBrush ? "" : "none";
+  });
+  document.querySelectorAll<HTMLElement>(".opts-fill").forEach(el => {
+    el.style.display = showFill ? "" : "none";
+  });
+  // Elements with both classes show for either tool
+  document.querySelectorAll<HTMLElement>(".opts-brush.opts-fill").forEach(el => {
+    el.style.display = (showBrush || showFill) ? "" : "none";
+  });
   debouncedSave();
 }
 

@@ -46,7 +46,8 @@
           </button>
         </div>
 
-        <div class="tool-group">
+        <!-- Brush/eraser options -->
+        <div class="tool-group opts-brush">
           <select id="brush-type" title="Brush Type">
             <option value="smooth">Smooth</option>
             <option value="pencil">Pencil</option>
@@ -55,7 +56,55 @@
           </select>
         </div>
 
-        <div class="tool-group" id="fill-options" style="display:none">
+        <div class="tool-group opts-brush">
+          <label class="tool-label">
+            Size
+            <input type="range" id="brush-size" min="1" max="80" value="4" step="0.5" />
+            <span id="size-value">4</span>
+          </label>
+        </div>
+
+        <div class="tool-group opts-brush opts-fill">
+          <label class="tool-label">
+            Opacity
+            <input type="range" id="brush-opacity" min="1" max="100" value="100" />
+            <span id="opacity-value">100%</span>
+          </label>
+        </div>
+
+        <div class="tool-group opts-brush">
+          <label class="tool-label">
+            Smoothing
+            <input type="range" id="smoothing" min="0" max="100" value="50" />
+          </label>
+        </div>
+
+        <div class="tool-group opts-brush">
+          <label class="tool-label">
+            <input type="checkbox" id="draw-behind" />
+            Behind
+          </label>
+        </div>
+
+        <div class="tool-group opts-brush">
+          <label class="tool-label">
+            Size range
+            <input type="range" id="size-range" min="100" max="5000" value="100" />
+            <span id="size-range-value">1x</span>
+          </label>
+        </div>
+
+        <div class="tool-group opts-brush" style="position:relative">
+          <button id="btn-curve" class="tool-btn" title="Pressure Curve">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 20 C 8 20, 8 4, 21 4"/>
+            </svg>
+          </button>
+          <div id="curve-popup"></div>
+        </div>
+
+        <!-- Fill options -->
+        <div class="tool-group opts-fill">
           <label class="tool-label">
             Gap close
             <input type="range" id="fill-threshold" min="0" max="200" value="0" />
@@ -68,23 +117,8 @@
           </label>
         </div>
 
-        <div class="tool-group">
-          <label class="tool-label">
-            Size
-            <input type="range" id="brush-size" min="1" max="80" value="4" step="0.5" />
-            <span id="size-value">4</span>
-          </label>
-        </div>
-
-        <div class="tool-group">
-          <label class="tool-label">
-            Opacity
-            <input type="range" id="brush-opacity" min="1" max="100" value="100" />
-            <span id="opacity-value">100%</span>
-          </label>
-        </div>
-
-        <div class="tool-group">
+        <!-- Color (shared by brush/eraser/fill) -->
+        <div class="tool-group opts-brush opts-fill">
           <input type="color" id="color-picker" value="#1a1a1a" title="Color" />
           <div id="swatches">
             <button class="swatch" data-color="#1a1a1a" style="background:#1a1a1a" title="Black"></button>
@@ -96,38 +130,6 @@
             <button class="swatch" data-color="#8b5cf6" style="background:#8b5cf6" title="Purple"></button>
             <button class="swatch" data-color="#ec4899" style="background:#ec4899" title="Pink"></button>
           </div>
-        </div>
-
-        <div class="tool-group">
-          <label class="tool-label">
-            Smoothing
-            <input type="range" id="smoothing" min="0" max="100" value="50" />
-          </label>
-        </div>
-
-
-        <div class="tool-group">
-          <label class="tool-label">
-            <input type="checkbox" id="draw-behind" />
-            Behind
-          </label>
-        </div>
-
-        <div class="tool-group">
-          <label class="tool-label">
-            Size range
-            <input type="range" id="size-range" min="100" max="2000" value="100" />
-            <span id="size-range-value">1x</span>
-          </label>
-        </div>
-
-        <div class="tool-group" style="position:relative">
-          <button id="btn-curve" class="tool-btn" title="Pressure Curve">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 20 C 8 20, 8 4, 21 4"/>
-            </svg>
-          </button>
-          <div id="curve-popup"></div>
         </div>
 
         <div class="tool-group">
