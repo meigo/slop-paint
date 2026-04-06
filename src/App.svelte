@@ -29,6 +29,17 @@
   // --- Expose layers for child components ---
   let layersReady = $state(false);
 
+  // --- Batched composite: coalesce multiple composite calls per frame ---
+  let compositeScheduled = false;
+  function scheduleComposite() {
+    if (compositeScheduled) return;
+    compositeScheduled = true;
+    requestAnimationFrame(() => {
+      compositeScheduled = false;
+      layers?.composite();
+    });
+  }
+
   // --- Selection state ---
   let preSelectionSnapshot: ImageData | null = null;
   let selectionMode: "create" | "drag" | null = null;
@@ -283,9 +294,11 @@
     }
 
     drawStampStrokeIncremental(layer.ctx, points, { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock }, app.sizeRange);
-    layers.composite();
+    scheduleComposite();
 
     if (done) {
+      // Final composite must be immediate so the finished stroke is visible
+      layers.composite();
       if (preStrokeSnapshot) {
         layer.history.push(preStrokeSnapshot);
         preStrokeSnapshot = null;
@@ -450,7 +463,7 @@
     };
 
     selection.onChange = () => {
-      layers.composite();
+      scheduleComposite();
     };
 
     // First resize: set canvas dimensions so layer canvases get valid sizes
