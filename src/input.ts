@@ -11,6 +11,8 @@ export type CoordTransform = (screenX: number, screenY: number) => { x: number; 
 export interface InputOptions {
   onStroke: StrokeHandler;
   transformCoords?: CoordTransform;
+  /** Streamline factor 0-1, or a getter for dynamic values. Smooths input points (0 = none, 1 = max) */
+  streamline?: number | (() => number);
   /** Called when a pencil double-tap is detected (two quick taps with minimal movement) */
   onPencilDoubleTap?: () => void;
 }
@@ -29,6 +31,15 @@ export function setupInput(
 ) {
   let isDrawing = false;
   let currentPoints: InputPoint[] = [];
+
+  // Streamline: interpolate toward raw input with factor t.
+  // streamline=0 → t=1 (no smoothing), streamline=1 → t≈0.12 (heavy smoothing)
+  const streamlineOpt = options?.streamline;
+  function getStreamlineT(): number {
+    const v = typeof streamlineOpt === "function" ? streamlineOpt() : (streamlineOpt ?? 0);
+    return 1 - v * 0.88;
+  }
+  let lastStreamlined: InputPoint | null = null;
 
   // Pencil double-tap detection
   let lastPenTapTime = 0;
@@ -67,7 +78,9 @@ export function setupInput(
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     isDrawing = true;
-    currentPoints = [getPoint(e)];
+    const first = getPoint(e);
+    lastStreamlined = first;
+    currentPoints = [first];
     onStroke(currentPoints, false);
 
     // Track pen tap start
@@ -96,7 +109,23 @@ export function setupInput(
     const coalesced = e.getCoalescedEvents?.();
     const events = coalesced && coalesced.length > 0 ? coalesced : [e];
     for (const ce of events) {
-      const pt = getPoint(ce);
+      const raw = getPoint(ce);
+
+      // Streamline: lerp toward raw input to smooth jitter
+      let pt: InputPoint;
+      const sT = getStreamlineT();
+      if (lastStreamlined && sT < 1) {
+        pt = {
+          x: lastStreamlined.x + (raw.x - lastStreamlined.x) * sT,
+          y: lastStreamlined.y + (raw.y - lastStreamlined.y) * sT,
+          pressure: lastStreamlined.pressure + (raw.pressure - lastStreamlined.pressure) * sT,
+          timestamp: raw.timestamp,
+        };
+      } else {
+        pt = raw;
+      }
+      lastStreamlined = pt;
+
       // Interpolate if gap between consecutive points is too large (iPad sparse events)
       if (currentPoints.length > 0) {
         const prev = currentPoints[currentPoints.length - 1];
@@ -125,6 +154,7 @@ export function setupInput(
     if (!isDrawing) return;
     e.preventDefault();
     isDrawing = false;
+    lastStreamlined = null;
     currentPoints.push(getPoint(e));
     onStroke(currentPoints, true);
     currentPoints = [];

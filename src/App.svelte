@@ -2,6 +2,7 @@
   import Toolbar from "./lib/Toolbar.svelte";
   import LayerPanel from "./lib/LayerPanel.svelte";
   import { setupInput, type InputPoint } from "./input";
+  import { drawStroke } from "./brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
   import { floodFill, hexToRgba } from "./fill";
@@ -46,6 +47,31 @@
 
   // --- Drawing state ---
   let preStrokeSnapshot: ImageData | null = null;
+  // Fast canvas backup for smooth brush (GPU-accelerated drawImage vs slow putImageData)
+  let preStrokeCanvas: HTMLCanvasElement | null = null;
+  // Batched smooth brush rendering — only redraw once per frame
+  let smoothDrawScheduled = false;
+
+  function saveLayerToCanvas(layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }): HTMLCanvasElement {
+    if (!preStrokeCanvas || preStrokeCanvas.width !== layer.canvas.width || preStrokeCanvas.height !== layer.canvas.height) {
+      preStrokeCanvas = document.createElement("canvas");
+      preStrokeCanvas.width = layer.canvas.width;
+      preStrokeCanvas.height = layer.canvas.height;
+    }
+    const ctx = preStrokeCanvas.getContext("2d")!;
+    ctx.clearRect(0, 0, preStrokeCanvas.width, preStrokeCanvas.height);
+    ctx.drawImage(layer.canvas, 0, 0);
+    return preStrokeCanvas;
+  }
+
+  function restoreLayerFromCanvas(layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }) {
+    if (!preStrokeCanvas) return;
+    layer.ctx.save();
+    layer.ctx.resetTransform();
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.drawImage(preStrokeCanvas, 0, 0);
+    layer.ctx.restore();
+  }
 
   // --- Panning state ---
   let spaceHeld = false;
@@ -65,6 +91,7 @@
     smoothing: number;
     color: string;
     sizeRange: number;
+    streamline?: number;
     curveCp1: { x: number; y: number };
     curveCp2: { x: number; y: number };
     drawBehind?: boolean;
@@ -81,6 +108,7 @@
       smoothing: app.brushSettings.smoothing,
       color: app.brushSettings.color,
       sizeRange: app.sizeRange,
+      streamline: app.streamline,
       curveCp1: { ...pressureCurve.cp1 },
       curveCp2: { ...pressureCurve.cp2 },
       drawBehind: app.brushSettings.drawBehind,
@@ -113,6 +141,7 @@
       if (data.smoothing != null) app.brushSettings.smoothing = data.smoothing;
       if (data.color) app.brushSettings.color = data.color;
       if (data.sizeRange != null) app.sizeRange = data.sizeRange;
+      if (data.streamline != null) app.streamline = data.streamline;
       if (data.drawBehind != null) app.brushSettings.drawBehind = data.drawBehind;
       if (data.fillAlphaThreshold != null) app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
@@ -290,20 +319,49 @@
     // Brush stroke
     if (points.length <= 1 && !done) {
       preStrokeSnapshot = layers.getSnapshot();
+      if (app.brushType === "smooth") {
+        saveLayerToCanvas(layer);
+      }
       resetStampState();
     }
 
-    drawStampStrokeIncremental(layer.ctx, points, { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock }, app.sizeRange);
-    scheduleComposite();
-
-    if (done) {
-      // Final composite must be immediate so the finished stroke is visible
-      layers.composite();
-      if (preStrokeSnapshot) {
-        layer.history.push(preStrokeSnapshot);
-        preStrokeSnapshot = null;
+    if (app.brushType === "smooth") {
+      // Perfect-freehand: redraws entire stroke each frame (not incremental).
+      // Batch restore+draw+composite to once per frame — Apple Pencil fires at
+      // 240Hz but screen refreshes at 60-120Hz, so most events are wasted work.
+      if (done) {
+        smoothDrawScheduled = false;
+        restoreLayerFromCanvas(layer);
+        drawStroke(layer.ctx, points, { ...app.brushSettings, alphaLock: layer.alphaLock }, true, app.sizeRange);
+        layers.composite();
+        if (preStrokeSnapshot) {
+          layer.history.push(preStrokeSnapshot);
+          preStrokeSnapshot = null;
+        }
+        bumpLayerVersion();
+      } else if (!smoothDrawScheduled) {
+        smoothDrawScheduled = true;
+        requestAnimationFrame(() => {
+          smoothDrawScheduled = false;
+          if (!layers) return;
+          restoreLayerFromCanvas(layers.active);
+          drawStroke(layers.active.ctx, points, { ...app.brushSettings, alphaLock: layers.active.alphaLock }, false, app.sizeRange);
+          layers.composite();
+        });
       }
-      bumpLayerVersion();
+    } else {
+      // Stamp engine: incremental, only draws new points
+      drawStampStrokeIncremental(layer.ctx, points, { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock }, app.sizeRange);
+      scheduleComposite();
+
+      if (done) {
+        layers.composite();
+        if (preStrokeSnapshot) {
+          layer.history.push(preStrokeSnapshot);
+          preStrokeSnapshot = null;
+        }
+        bumpLayerVersion();
+      }
     }
   }
 
@@ -478,6 +536,7 @@
 
     // Input handling
     const cleanupInput = setupInput(canvasEl, handleStroke, (sx, sy) => viewport.screenToCanvas(sx, sy), {
+      streamline: () => app.streamline / 100,
       onPencilDoubleTap: () => {
         if (app.currentTool === "eraser") {
           setTool(toolBeforePencilToggle ?? "brush");

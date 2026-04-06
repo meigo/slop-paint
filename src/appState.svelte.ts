@@ -9,6 +9,7 @@ interface AppStateShape {
   currentTool: Tool;
   brushType: BrushType;
   sizeRange: number;
+  streamline: number;
   brushSettings: BrushSettings;
   fillSettings: FillOptions;
   theme: "light" | "dark";
@@ -20,6 +21,7 @@ export const app: AppStateShape = $state({
   currentTool: "brush",
   brushType: "smooth",
   sizeRange: 1.0,
+  streamline: 50,
   brushSettings: {
     size: 4,
     color: "#1a1a1a",

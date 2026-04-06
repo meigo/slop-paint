@@ -169,6 +169,11 @@
     </label>
 
     <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+      Streamline
+      <input type="range" min="0" max="100" class="w-20" bind:value={app.streamline} oninput={onSettingsChange} />
+    </label>
+
+    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
       <input type="checkbox" bind:checked={app.brushSettings.drawBehind} onchange={onSettingsChange} />
       Behind
     </label>
