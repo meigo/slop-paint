@@ -54,6 +54,12 @@ export function drawStroke(
   if (settings.isEraser) {
     ctx.globalCompositeOperation = "destination-out";
     ctx.globalAlpha = 1;
+  } else if (settings.alphaLock) {
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.globalAlpha = settings.opacity / 100;
+  } else if (settings.drawBehind) {
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.globalAlpha = settings.opacity / 100;
   } else {
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = settings.opacity / 100;
