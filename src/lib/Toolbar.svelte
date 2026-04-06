@@ -54,6 +54,31 @@
   let showBrush = $derived(activeTool === "brush" || activeTool === "eraser");
   let showFill = $derived(activeTool === "fill");
 
+  // Size editing
+  let editingSize = $state(false);
+  let sizeInputValue = $state("");
+
+  function startEditSize() {
+    sizeInputValue = String(app.brushSettings.size);
+    editingSize = true;
+  }
+
+  function commitSize() {
+    const v = parseFloat(sizeInputValue);
+    if (!isNaN(v) && v >= 1 && v <= 80) {
+      app.brushSettings.size = Math.round(v * 2) / 2; // snap to 0.5
+      onSettingsChange();
+    }
+    editingSize = false;
+  }
+
+  function setSize(s: number) {
+    app.brushSettings.size = s;
+    onSettingsChange();
+  }
+
+  const sizePresets = [1, 2, 3, 5, 8, 12, 20, 40, 80];
+
   // Pressure curve popup
   let curvePopupEl = $state<HTMLDivElement | null>(null);
   let curveOpen = $state(false);
@@ -147,11 +172,41 @@
       </select>
     </div>
 
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <div class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
       Size
       <input type="range" min="1" max="80" step="0.5" class="w-20" bind:value={app.brushSettings.size} oninput={onSettingsChange} />
-      <span class="text-[11px] min-w-7 text-text-muted">{sizeDisplay}</span>
-    </label>
+      {#if editingSize}
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="w-10 text-[11px] text-center bg-surface border border-border rounded px-1 py-0.5 text-text"
+          type="text"
+          inputmode="decimal"
+          bind:value={sizeInputValue}
+          autofocus
+          onblur={commitSize}
+          onkeydown={(e: KeyboardEvent) => {
+            if (e.key === "Enter") { e.preventDefault(); commitSize(); }
+            if (e.key === "Escape") { editingSize = false; }
+            e.stopPropagation();
+          }}
+        />
+      {:else}
+        <button
+          class="text-[11px] min-w-7 text-text-muted hover:text-text hover:bg-surface-hover rounded px-1 py-0.5 cursor-text"
+          onclick={startEditSize}
+          title="Click to type exact size"
+        >{sizeDisplay}</button>
+      {/if}
+      <div class="flex gap-px">
+        {#each sizePresets as s}
+          <button
+            class="text-[10px] px-1 py-0.5 rounded transition-colors
+                   {app.brushSettings.size === s ? 'bg-accent text-accent-text' : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+            onclick={() => setSize(s)}
+          >{s}</button>
+        {/each}
+      </div>
+    </div>
   {/if}
 
   {#if showBrush || showFill}

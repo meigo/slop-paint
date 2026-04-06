@@ -36,7 +36,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
 - `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, theme, layer version counter
-- `lib/Toolbar.svelte` — tool buttons, brush/fill options, color picker, zoom display, action buttons
+- `lib/Toolbar.svelte` — tool buttons, brush/fill options (size presets, click-to-edit size), color picker, zoom display, action buttons
 - `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename
 - `lib/ThemeToggle.svelte` — light/dark mode toggle (persists to localStorage)
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
