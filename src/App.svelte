@@ -1,6 +1,8 @@
 <script lang="ts">
   import Toolbar from "./lib/Toolbar.svelte";
   import LayerPanel from "./lib/LayerPanel.svelte";
+  import NewDocDialog from "./lib/NewDocDialog.svelte";
+  import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { drawStroke } from "./brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
@@ -29,6 +31,8 @@
 
   // --- Expose layers for child components ---
   let layersReady = $state(false);
+  let showNewDocDialog = $state(false);
+  let showResizeDialog = $state(false);
 
   // --- Batched composite: coalesce multiple composite calls per frame ---
   let compositeScheduled = false;
@@ -71,6 +75,60 @@
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.drawImage(preStrokeCanvas, 0, 0);
     layer.ctx.restore();
+  }
+
+  // --- Brush cursor ---
+  let brushCursorEl: HTMLDivElement;
+  let brushCursorVisible = false;
+  let isDrawing = false;
+
+  function updateBrushCursor(screenX: number, screenY: number) {
+    if (!brushCursorEl || !canvasClipEl || !viewport) return;
+    const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+    const shouldShow = isBrushTool && !spaceHeld && !viewport.panning && !isDrawing;
+    if (!shouldShow) {
+      if (brushCursorVisible) {
+        brushCursorEl.style.display = "none";
+        brushCursorVisible = false;
+      }
+      return;
+    }
+    // Check if pointer is over the document area
+    const canvasPos = viewport.screenToCanvas(screenX, screenY);
+    const overCanvas = canvasPos.x >= 0 && canvasPos.x <= app.docWidth && canvasPos.y >= 0 && canvasPos.y <= app.docHeight;
+    if (!overCanvas) {
+      if (brushCursorVisible) {
+        brushCursorEl.style.display = "none";
+        brushCursorVisible = false;
+      }
+      return;
+    }
+    const rect = canvasClipEl.getBoundingClientRect();
+    const x = screenX - rect.left;
+    const y = screenY - rect.top;
+    const diameter = app.brushSettings.size * viewport.zoom;
+    if (diameter < 4) {
+      if (brushCursorVisible) {
+        brushCursorEl.style.display = "none";
+        brushCursorVisible = false;
+      }
+      canvasEl.style.cursor = "crosshair";
+      return;
+    }
+    brushCursorEl.style.display = "block";
+    brushCursorEl.style.width = diameter + "px";
+    brushCursorEl.style.height = diameter + "px";
+    brushCursorEl.style.left = x - diameter / 2 + "px";
+    brushCursorEl.style.top = y - diameter / 2 + "px";
+    canvasEl.style.cursor = "none";
+    brushCursorVisible = true;
+  }
+
+  function hideBrushCursor() {
+    if (brushCursorEl && brushCursorVisible) {
+      brushCursorEl.style.display = "none";
+      brushCursorVisible = false;
+    }
   }
 
   // --- Panning state ---
@@ -190,10 +248,21 @@
   }
 
   function saveImage() {
-    if (!canvasEl) return;
+    if (!layers) return;
+    const w = app.docWidth;
+    const h = app.docHeight;
+    const tmp = document.createElement("canvas");
+    tmp.width = w;
+    tmp.height = h;
+    const ctx = tmp.getContext("2d")!;
+    for (const layer of layers.flatLayers()) {
+      if (!layer.visible) continue;
+      ctx.globalAlpha = layer.opacity / 100;
+      ctx.drawImage(layer.canvas, 0, 0, w, h);
+    }
     const link = document.createElement("a");
     link.download = "drawing.png";
-    link.href = canvasEl.toDataURL("image/png");
+    link.href = tmp.toDataURL("image/png");
     link.click();
   }
 
@@ -207,6 +276,38 @@
     savePsd(layers, window.devicePixelRatio || 1);
   }
 
+  function newDocument(width: number, height: number) {
+    if (!layers) return;
+    app.docWidth = width;
+    app.docHeight = height;
+    layers.tree.length = 0;
+    layers.setDocumentSize(width, height);
+    resizeCanvas();
+    // White background layer
+    const bg = layers.addLayer("Background");
+    bg.ctx.fillStyle = "#ffffff";
+    bg.ctx.fillRect(0, 0, width, height);
+    bg.history.push(bg.ctx.getImageData(0, 0, bg.canvas.width, bg.canvas.height));
+    layers.addLayer("Layer 1");
+    layers.composite();
+    bumpLayerVersion();
+    fitDocumentInView();
+    showNewDocDialog = false;
+  }
+
+  function resizeDocument(width: number, height: number, anchorX: number, anchorY: number) {
+    if (!layers) return;
+    app.docWidth = width;
+    app.docHeight = height;
+    layers.setDocumentSize(width, height, anchorX, anchorY);
+    for (const layer of layers.flatLayers()) layer.history.clear();
+    resizeCanvas();
+    layers.composite();
+    bumpLayerVersion();
+    fitDocumentInView();
+    showResizeDialog = false;
+  }
+
   function doOpenPsd() {
     fileInputEl?.click();
   }
@@ -218,9 +319,16 @@
     reader.onload = () => {
       const buffer = reader.result as ArrayBuffer;
       const dpr = window.devicePixelRatio || 1;
-      loadPsd(buffer, layers, dpr);
+      const { width, height } = loadPsd(buffer, layers, dpr);
+      // Update document size from PSD dimensions
+      app.docWidth = width;
+      app.docHeight = height;
+      layers.docWidth = width;
+      layers.docHeight = height;
+      resizeCanvas();
       layers.composite();
       bumpLayerVersion();
+      fitDocumentInView();
     };
     reader.readAsArrayBuffer(file);
     fileInputEl.value = "";
@@ -228,7 +336,21 @@
 
   function resetView() {
     if (!viewport) return;
+    fitDocumentInView();
+  }
+
+  function fitDocumentInView() {
+    if (!viewport || !canvasClipEl) return;
     viewport.resetView();
+    const clipRect = canvasClipEl.getBoundingClientRect();
+    const padding = 40;
+    const scaleX = (clipRect.width - padding * 2) / app.docWidth;
+    const scaleY = (clipRect.height - padding * 2) / app.docHeight;
+    const zoom = Math.min(scaleX, scaleY, 1); // don't zoom past 100%
+    viewport.zoom = zoom;
+    viewport.panX = (clipRect.width - app.docWidth * zoom) / 2;
+    viewport.panY = (clipRect.height - app.docHeight * zoom) / 2;
+    viewport.applyTransformPublic();
     updateZoomDisplay();
   }
 
@@ -241,21 +363,34 @@
 
   function resizeCanvas() {
     if (!canvasEl || !selectionOverlayEl || !layers) return;
-    const rect = canvasEl.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    const w = rect.width;
-    const h = rect.height;
-    canvasEl.width = w * dpr;
-    canvasEl.height = h * dpr;
-    selectionOverlayEl.width = w;
-    selectionOverlayEl.height = h;
-    layers.resize(w, h, dpr);
+    const docW = app.docWidth;
+    const docH = app.docHeight;
+    // Display canvas = document size (CSS transform handles zoom/pan)
+    canvasEl.width = docW * dpr;
+    canvasEl.height = docH * dpr;
+    canvasEl.style.width = docW + "px";
+    canvasEl.style.height = docH + "px";
+    selectionOverlayEl.width = docW;
+    selectionOverlayEl.height = docH;
+    selectionOverlayEl.style.width = docW + "px";
+    selectionOverlayEl.style.height = docH + "px";
+    // Size the transform container to the document
+    canvasContainerEl.style.width = docW + "px";
+    canvasContainerEl.style.height = docH + "px";
+    layers.setDpr(dpr);
     layers.composite();
   }
 
   // --- Stroke handler ---
   function handleStroke(rawPoints: InputPoint[], done: boolean) {
     if (rawPoints.length === 0 || !layers) return;
+    isDrawing = !done;
+    if (!done) hideBrushCursor();
+    else if (done) {
+      // Restore cursor after stroke ends — use last point's screen position
+      // (will be updated on next mousemove anyway)
+    }
 
     const points = rawPoints.map((p) => ({
       ...p,
@@ -377,12 +512,12 @@
 
   function updateCursor() {
     if (!canvasEl) return;
-    if (app.currentTool === "select" || app.currentTool === "lasso" || app.currentTool === "fill") {
-      canvasEl.style.cursor = "crosshair";
-    } else if (app.currentTool === "eraser") {
-      canvasEl.style.cursor = "cell";
+    const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+    if (isBrushTool) {
+      canvasEl.style.cursor = "none";
     } else {
       canvasEl.style.cursor = "crosshair";
+      hideBrushCursor();
     }
   }
 
@@ -398,6 +533,11 @@
     if ((e.ctrlKey || e.metaKey) && e.key === "o") {
       e.preventDefault();
       doOpenPsd();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+      e.preventDefault();
+      showNewDocDialog = true;
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "z") {
@@ -463,6 +603,7 @@
     if (e.code === "Space" && !spaceHeld) {
       spaceHeld = true;
       if (canvasEl) canvasEl.style.cursor = "grab";
+      hideBrushCursor();
     }
   }
 
@@ -524,15 +665,23 @@
       scheduleComposite();
     };
 
-    // First resize: set canvas dimensions so layer canvases get valid sizes
+    // Set document size on layers and resize canvas
+    layers.setDocumentSize(app.docWidth, app.docHeight);
     resizeCanvas();
+    // White background layer
+    const bg = layers.addLayer("Background");
+    bg.ctx.fillStyle = "#ffffff";
+    bg.ctx.fillRect(0, 0, app.docWidth, app.docHeight);
+    bg.history.push(bg.ctx.getImageData(0, 0, bg.canvas.width, bg.canvas.height));
     layers.addLayer("Layer 1");
     loadSettings();
     updateCursor();
     layersReady = true;
-    // Second resize after next frame: Toolbar/LayerPanel are now rendered,
-    // flex layout has settled, so re-measure to get correct canvas dimensions
-    requestAnimationFrame(() => resizeCanvas());
+    // After layout settles, center the document in the viewport
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      fitDocumentInView();
+    });
 
     // Input handling
     const cleanupInput = setupInput(canvasEl, handleStroke, (sx, sy) => viewport.screenToCanvas(sx, sy), {
@@ -560,6 +709,7 @@
       e.preventDefault();
       viewport.zoomAt(e.clientX, e.clientY, e.deltaY);
       updateZoomDisplay();
+      updateBrushCursor(e.clientX, e.clientY);
     }
     workspaceEl.addEventListener("wheel", handleWheel, { passive: false });
 
@@ -571,6 +721,7 @@
         viewport.startPan(e.clientX, e.clientY);
         canvasEl.setPointerCapture(e.pointerId);
         canvasEl.style.cursor = "grabbing";
+        hideBrushCursor();
       }
     }
     function handlePanMove(e: PointerEvent) {
@@ -585,12 +736,26 @@
         e.preventDefault();
         e.stopPropagation();
         viewport.endPan();
-        canvasEl.style.cursor = spaceHeld ? "grab" : "crosshair";
+        const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+        canvasEl.style.cursor = spaceHeld ? "grab" : (isBrushTool ? "none" : "crosshair");
+        if (!spaceHeld) updateBrushCursor(e.clientX, e.clientY);
       }
     }
     canvasEl.addEventListener("pointerdown", handlePanDown, { capture: true });
     canvasEl.addEventListener("pointermove", handlePanMove, { capture: true });
     canvasEl.addEventListener("pointerup", handlePanUp, { capture: true });
+
+    // Brush cursor tracking
+    function handleCursorMove(e: PointerEvent) {
+      if (e.pointerType === "touch") return;
+      updateBrushCursor(e.clientX, e.clientY);
+    }
+    function handleCursorLeave(e: PointerEvent) {
+      if (e.pointerType === "touch") return;
+      hideBrushCursor();
+    }
+    canvasClipEl.addEventListener("pointermove", handleCursorMove);
+    canvasClipEl.addEventListener("pointerleave", handleCursorLeave);
 
     return () => {
       cleanupInput();
@@ -599,6 +764,8 @@
       canvasEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
       canvasEl.removeEventListener("pointermove", handlePanMove, { capture: true });
       canvasEl.removeEventListener("pointerup", handlePanUp, { capture: true });
+      canvasClipEl.removeEventListener("pointermove", handleCursorMove);
+      canvasClipEl.removeEventListener("pointerleave", handleCursorLeave);
     };
   }
 </script>
@@ -616,23 +783,30 @@
       exportPsd={doExportPsd}
       savePsd={doSavePsd}
       openPsd={doOpenPsd}
+      newDoc={() => { showNewDocDialog = true; }}
+      resizeDoc={() => { showResizeDialog = true; }}
       {resetView}
       onSettingsChange={debouncedSave}
     />
   {/if}
 
   <div class="workspace-layout flex flex-1 overflow-hidden" bind:this={workspaceEl}>
-    <div class="flex-1 min-w-0 min-h-0 overflow-hidden relative touch-none" bind:this={canvasClipEl}>
-      <div class="w-full h-full absolute will-change-transform touch-none" bind:this={canvasContainerEl}>
+    <div class="flex-1 min-w-0 min-h-0 overflow-hidden relative touch-none bg-neutral-500/30" bind:this={canvasClipEl}>
+      <div class="absolute will-change-transform touch-none" bind:this={canvasContainerEl}>
         <canvas
           bind:this={canvasEl}
-          class="w-full h-full cursor-crosshair touch-none canvas-checkerboard"
+          class="block touch-none canvas-checkerboard"
         ></canvas>
         <canvas
           bind:this={selectionOverlayEl}
-          class="absolute inset-0 w-full h-full pointer-events-none touch-none"
+          class="absolute inset-0 pointer-events-none touch-none"
         ></canvas>
       </div>
+      <div
+        bind:this={brushCursorEl}
+        class="absolute rounded-full border pointer-events-none"
+        style="display: none; border-color: rgba(0,0,0,0.5); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); mix-blend-mode: difference;"
+      ></div>
     </div>
 
     {#if layersReady}
@@ -646,5 +820,17 @@
     class="hidden"
     bind:this={fileInputEl}
     onchange={handleFileLoad}
+  />
+
+  <NewDocDialog
+    open={showNewDocDialog}
+    onConfirm={newDocument}
+    onCancel={() => { showNewDocDialog = false; }}
+  />
+
+  <ResizeDocDialog
+    open={showResizeDialog}
+    onConfirm={resizeDocument}
+    onCancel={() => { showResizeDialog = false; }}
   />
 </div>

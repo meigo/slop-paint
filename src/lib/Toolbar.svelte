@@ -14,6 +14,7 @@
     RotateCcw,
     Spline,
     FileDown,
+    FilePlus,
   } from "@lucide/svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
   import { app, pressureCurve, type Tool } from "../appState.svelte.js";
@@ -29,6 +30,8 @@
     exportPsd,
     savePsd,
     openPsd,
+    newDoc,
+    resizeDoc,
     resetView,
     onSettingsChange,
   }: {
@@ -40,6 +43,8 @@
     exportPsd: () => void;
     savePsd: () => void;
     openPsd: () => void;
+    newDoc: () => void;
+    resizeDoc: () => void;
     resetView: () => void;
     onSettingsChange: () => void;
   } = $props();
@@ -292,11 +297,19 @@
     </button>
   </div>
 
+  <!-- Doc size (click to resize) -->
+  <button
+    class="text-[11px] text-text-muted hover:text-text hover:bg-surface-hover rounded px-1 py-0.5 whitespace-nowrap"
+    onclick={resizeDoc}
+    title="Resize Canvas"
+  >{app.docWidth} x {app.docHeight}</button>
+
   <!-- Actions -->
   <div class="flex items-center gap-1 ml-auto">
     <button class={actionBtnClass} onclick={undo} title="Undo (Ctrl+Z)"><Undo2 size={20} /></button>
     <button class={actionBtnClass} onclick={redo} title="Redo (Ctrl+Shift+Z)"><Redo2 size={20} /></button>
     <button class={actionBtnClass} onclick={clearLayer} title="Clear Layer"><Trash2 size={20} /></button>
+    <button class={actionBtnClass} onclick={newDoc} title="New Document"><FilePlus size={20} /></button>
     <button class={actionBtnClass} onclick={saveImage} title="Save as PNG"><Download size={20} /></button>
     <button class={actionBtnClass} onclick={exportPsd} title="Export as PSD"><FileDown size={20} /></button>
     <button class={actionBtnClass} onclick={savePsd} title="Save Project (Ctrl+S)"><Save size={20} /></button>

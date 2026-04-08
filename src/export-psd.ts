@@ -8,8 +8,8 @@ let importIdCounter = 1000;
  * Export layer tree as a PSD file with group folders.
  */
 export function exportPsd(manager: LayerManager, dpr: number) {
-  const w = Math.round(manager["cssWidth"] * dpr);
-  const h = Math.round(manager["cssHeight"] * dpr);
+  const w = manager.docWidth;
+  const h = manager.docHeight;
 
   function buildChildren(nodes: LayerNode[]): PsdLayer[] {
     return nodes.map((node) => {
@@ -74,8 +74,8 @@ export function exportPsd(manager: LayerManager, dpr: number) {
  * Save the current project as a PSD file (same as export but named "save").
  */
 export function savePsd(manager: LayerManager, dpr: number, filename: string = "project.psd") {
-  const w = Math.round(manager["cssWidth"] * dpr);
-  const h = Math.round(manager["cssHeight"] * dpr);
+  const w = manager.docWidth;
+  const h = manager.docHeight;
 
   function buildChildren(nodes: LayerNode[]): PsdLayer[] {
     return nodes.map((node) => {
@@ -176,12 +176,16 @@ export function loadPsd(
       canvas.height = Math.round(h * dpr);
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-      // Draw the PSD layer's canvas at its position
+      // Draw the PSD layer's canvas scaled up by dpr to fill the internal canvas
       if (psdLayer.canvas) {
         const left = psdLayer.left ?? 0;
         const top = psdLayer.top ?? 0;
+        ctx.scale(dpr, dpr);
         ctx.drawImage(psdLayer.canvas, left, top);
+        ctx.resetTransform();
       }
+      // Set dpr transform for future CSS-coord operations
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       const layer: Layer = {
         type: "layer",

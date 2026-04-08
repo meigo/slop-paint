@@ -98,7 +98,11 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Alpha threshold ("gap close"): treats semi-transparent pixels as walls to prevent leaking through antialiased stroke edges
 - Expand: dilates fill by N pixels, drawn behind existing content to eliminate seams between fill and outlines
 
+## New Document
+- Creates a white-filled "Background" layer at the bottom and an empty "Layer 1" on top
+
 ## PSD Export / Spine 2D
+- All exports (PNG, PSD) use CSS pixel dimensions (not physical/dpr-scaled pixels)
 - Layer groups in the tree are exported as PSD group folders
 - Layer/group names can include Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 - Layer order = draw order (bottom drawn first)

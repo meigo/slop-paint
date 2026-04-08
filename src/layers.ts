@@ -31,9 +31,10 @@ export class LayerManager {
   /** Root-level nodes (bottom to top draw order) */
   tree: LayerNode[] = [];
   activeId = -1;
-  private cssWidth = 0;
-  private cssHeight = 0;
   private dpr = 1;
+  /** Document (canvas) dimensions in CSS pixels */
+  docWidth = 1920;
+  docHeight = 1080;
 
   displayCtx: CanvasRenderingContext2D;
   onChange: () => void;
@@ -114,13 +115,26 @@ export class LayerManager {
     return search(this.tree);
   }
 
-  resize(cssWidth: number, cssHeight: number, dpr: number) {
-    this.cssWidth = cssWidth;
-    this.cssHeight = cssHeight;
+  /** Update display pixel ratio */
+  setDpr(dpr: number) {
     this.dpr = dpr;
+  }
 
-    const pxW = cssWidth * dpr;
-    const pxH = cssHeight * dpr;
+  /**
+   * Set document size and resize all layer canvases to match.
+   * anchorX/anchorY: 0=left/top, 0.5=center, 1=right/bottom
+   */
+  setDocumentSize(docW: number, docH: number, anchorX = 0, anchorY = 0) {
+    const oldW = this.docWidth;
+    const oldH = this.docHeight;
+    this.docWidth = docW;
+    this.docHeight = docH;
+    const dpr = this.dpr;
+    const pxW = docW * dpr;
+    const pxH = docH * dpr;
+    // Offset to place old content at anchor position
+    const offsetX = Math.round((docW - oldW) * anchorX * dpr);
+    const offsetY = Math.round((docH - oldH) * anchorY * dpr);
 
     for (const layer of this.flatLayers()) {
       const tmp = document.createElement("canvas");
@@ -130,17 +144,16 @@ export class LayerManager {
 
       layer.canvas.width = pxW;
       layer.canvas.height = pxH;
-      layer.ctx.scale(dpr, dpr);
       layer.ctx.resetTransform();
-      layer.ctx.drawImage(tmp, 0, 0);
+      layer.ctx.drawImage(tmp, offsetX, offsetY);
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
   }
 
   createLayer(name?: string): Layer {
     const canvas = document.createElement("canvas");
-    const pxW = this.cssWidth * this.dpr;
-    const pxH = this.cssHeight * this.dpr;
+    const pxW = this.docWidth * this.dpr;
+    const pxH = this.docHeight * this.dpr;
     canvas.width = pxW;
     canvas.height = pxH;
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
@@ -302,12 +315,13 @@ export class LayerManager {
   }
 
   composite() {
-    const w = this.cssWidth;
     const dpr = this.dpr;
     const ctx = this.displayCtx;
+    const docPxW = this.docWidth * dpr;
+    const docPxH = this.docHeight * dpr;
 
     ctx.resetTransform();
-    ctx.clearRect(0, 0, w * dpr, this.cssHeight * dpr);
+    ctx.clearRect(0, 0, docPxW, docPxH);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Walk the tree respecting group visibility/opacity

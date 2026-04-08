@@ -15,6 +15,8 @@ interface AppStateShape {
   theme: "light" | "dark";
   zoomText: string;
   layerVersion: number;
+  docWidth: number;
+  docHeight: number;
 }
 
 export const app: AppStateShape = $state({
@@ -39,6 +41,8 @@ export const app: AppStateShape = $state({
   theme: "light",
   zoomText: "100%",
   layerVersion: 0,
+  docWidth: 1920,
+  docHeight: 1080,
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget
