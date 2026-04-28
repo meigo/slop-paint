@@ -33,6 +33,7 @@
     newDoc,
     resizeDoc,
     resetView,
+    reset100,
     onSettingsChange,
   }: {
     setTool: (tool: Tool) => void;
@@ -46,6 +47,7 @@
     newDoc: () => void;
     resizeDoc: () => void;
     resetView: () => void;
+    reset100: () => void;
     onSettingsChange: () => void;
   } = $props();
 
@@ -292,8 +294,15 @@
   <!-- Zoom + reset -->
   <div class="flex items-center gap-1">
     <span class="text-[11px] text-text-muted min-w-9 text-center cursor-default">{app.zoomText}</span>
-    <button class={actionBtnClass} onclick={resetView} title="Reset View (Ctrl+0)">
+    <button class={actionBtnClass} onclick={resetView} title="Fit to View (Ctrl+0)">
       <RotateCcw size={20} />
+    </button>
+    <button
+      class="h-9 px-2 rounded-md border border-border bg-surface text-text-secondary text-[11px] font-mono hover:bg-surface-hover transition-colors"
+      onclick={reset100}
+      title="Actual Size — 100% (Ctrl+1)"
+    >
+      1:1
     </button>
   </div>
 

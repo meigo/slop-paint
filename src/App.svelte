@@ -409,6 +409,18 @@
     updateZoomDisplay();
   }
 
+  /** Reset to 1:1 (100%) zoom, centered, rotation cleared. */
+  function resetTo100Percent() {
+    if (!viewport || !canvasClipEl) return;
+    viewport.resetView();
+    const clipRect = canvasClipEl.getBoundingClientRect();
+    viewport.zoom = 1;
+    viewport.panX = (clipRect.width - app.docWidth) / 2;
+    viewport.panY = (clipRect.height - app.docHeight) / 2;
+    viewport.applyTransformPublic();
+    updateZoomDisplay();
+  }
+
   function updateZoomDisplay() {
     if (!viewport) return;
     const zt = Math.round(viewport.zoom * 100) + "%";
@@ -691,8 +703,11 @@
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "0") {
       e.preventDefault();
-      viewport.resetView();
-      updateZoomDisplay();
+      resetView();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "1") {
+      e.preventDefault();
+      resetTo100Percent();
     }
 
     // Hold X for temporary eraser
@@ -894,6 +909,7 @@
       newDoc={() => { showNewDocDialog = true; }}
       resizeDoc={() => { showResizeDialog = true; }}
       {resetView}
+      reset100={resetTo100Percent}
       onSettingsChange={debouncedSave}
     />
   {/if}
