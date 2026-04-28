@@ -868,9 +868,27 @@
     canvasEl.addEventListener("pointermove", handlePanMove, { capture: true });
     canvasEl.addEventListener("pointerup", handlePanUp, { capture: true });
 
-    // Brush cursor tracking
+    // Brush + selection-handle hover cursor tracking
     function handleCursorMove(e: PointerEvent) {
       if (e.pointerType === "touch") return;
+      if (viewport.panning || isDrawing || spaceHeld) return; // other handlers own the cursor
+
+      const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+
+      // Non-brush tools manage their own cursor here (brush tools delegate to updateBrushCursor).
+      // When a selection / transform / warp is live, hit-test for the right handle cursor.
+      if (!isBrushTool) {
+        if (selection?.active) {
+          const p = viewport.screenToCanvas(e.clientX, e.clientY);
+          const handle = selection.hitTest(p.x, p.y);
+          canvasEl.style.cursor = handle ? selection.getCursor(handle) : "crosshair";
+        } else {
+          canvasEl.style.cursor = "crosshair";
+        }
+        hideBrushCursor();
+        return;
+      }
+
       updateBrushCursor(e.clientX, e.clientY);
     }
     function handleCursorLeave(e: PointerEvent) {

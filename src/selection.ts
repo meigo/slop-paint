@@ -37,6 +37,16 @@ const ROTATE_OFFSET = 20;
 /** Minimum hit half-width in screen pixels — hit areas grow at low zoom so handles stay grabbable. */
 const MIN_HIT_PX = 12;
 
+/** Rotation cursor (CSS has no built-in 'rotate'). White halo + black stroke for legibility on any background. Hot-spot at center. */
+const ROTATE_CURSOR_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" stroke="white" stroke-width="4"/>' +
+  '<path d="M21 3v5h-5" stroke="white" stroke-width="4"/>' +
+  '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" stroke="black" stroke-width="2"/>' +
+  '<path d="M21 3v5h-5" stroke="black" stroke-width="2"/>' +
+  "</svg>";
+const ROTATE_CURSOR = `url("data:image/svg+xml;utf8,${encodeURIComponent(ROTATE_CURSOR_SVG)}") 12 12, crosshair`;
+
 const IDENTITY: Mat = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 
 function identity(): Mat {
@@ -571,7 +581,7 @@ export class Selection {
   getCursor(handle: Handle): string {
     switch (handle) {
       case "move": return "move";
-      case "rotate": return "crosshair";
+      case "rotate": return ROTATE_CURSOR;
       case "tl": case "br": return "nwse-resize";
       case "tr": case "bl": return "nesw-resize";
       case "l": case "r": return "ew-resize";
