@@ -8,7 +8,7 @@
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
   import { floodFill, hexToRgba } from "./fill";
-  import { Selection, type SelectionRect, type Transform } from "./selection";
+  import { Selection } from "./selection";
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd } from "./export-psd";
@@ -216,6 +216,10 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
+    if (selection?.hasFloating) {
+      selection.cancel();
+      return;
+    }
     const layer = layers.active;
     const current = layers.getSnapshot();
     const prev = layer.history.undo(current);
@@ -228,6 +232,10 @@
 
   function redo() {
     if (!layers) return;
+    if (selection?.hasFloating) {
+      selection.cancel();
+      return;
+    }
     const layer = layers.active;
     const current = layers.getSnapshot();
     const next = layer.history.redo(current);
@@ -235,6 +243,24 @@
       layers.restoreSnapshot(next);
       layers.composite();
       bumpLayerVersion();
+    }
+  }
+
+  /** Enter 4-corner warp mode. From 'selected', lifts pixels first. */
+  function enterWarp() {
+    if (!selection || !layers) return;
+    if (selection.state === "selected") {
+      const layer = layers.active;
+      if (layer.locked) return;
+      const dpr = window.devicePixelRatio || 1;
+      preSelectionSnapshot = layers.getSnapshot();
+      const lifted = selection.liftPixels(layer.ctx, dpr);
+      if (!lifted) return;
+      selection.beginTransform(lifted);
+      layers.composite();
+    }
+    if (selection.state === "transforming") {
+      selection.beginWarp();
     }
   }
 
@@ -408,28 +434,31 @@
 
       if (points.length === 1 && !done) {
         const handle = selection.hitTest(p.x, p.y);
-        if (handle) {
+        if (selection.state === "selected" && handle === "move") {
+          // First drag inside a fresh selection: lift pixels and enter transform mode.
+          preSelectionSnapshot = layers.getSnapshot();
+          const lifted = selection.liftPixels(layer.ctx, dpr);
+          if (lifted) {
+            selection.beginTransform(lifted);
+            layers.composite();
+            selectionMode = "drag";
+            selection.startDrag("move", p.x, p.y);
+          }
+        } else if (selection.state === "transforming" && handle) {
           selectionMode = "drag";
           selection.startDrag(handle, p.x, p.y);
         } else {
+          // Outside any selection (or idle) → start a new one.
           if (selection.hasFloating) selection.commit();
+          else if (selection.active) selection.cancel();
           selectionMode = "create";
-          preSelectionSnapshot = layers.getSnapshot();
           selection.startCreate(p.x, p.y);
         }
       } else if (!done) {
         if (selectionMode === "create") selection.updateCreate(p.x, p.y);
         else if (selectionMode === "drag") selection.updateDrag(p.x, p.y);
       } else {
-        if (selectionMode === "create" && selection.rect && selection.rect.w > 3 && selection.rect.h > 3) {
-          selection.endCreate();
-          layer.history.push(layers.getSnapshot());
-          selection.liftPixels(layer.ctx, dpr);
-          layers.composite();
-          selection.drawOverlay();
-        } else if (selectionMode === "create") {
-          selection.endCreate();
-        }
+        if (selectionMode === "create") selection.endCreate();
         selection.endDrag();
         selectionMode = null;
       }
@@ -502,6 +531,12 @@
 
   // --- Set tool ---
   function setTool(tool: Tool) {
+    // Switching tools resolves any active selection: commit a transform-in-progress,
+    // cancel a plain marquee.
+    if (selection?.active && tool !== app.currentTool) {
+      if (selection.hasFloating) selection.commit();
+      else selection.cancel();
+    }
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";
     if (tool === "select") selection.mode = "rect";
@@ -555,6 +590,13 @@
     if (e.key === "Escape" && selection?.active) {
       e.preventDefault();
       selection.cancel();
+      return;
+    }
+
+    // Distort/Warp: enter 4-corner warp from a selected or transforming selection.
+    if ((e.key === "w" || e.key === "W") && selection?.active) {
+      e.preventDefault();
+      enterWarp();
       return;
     }
 
@@ -637,17 +679,13 @@
     selection = new Selection(selectionOverlayEl);
 
     // Selection callbacks
-    selection.onCommit = (pixels: HTMLCanvasElement, rect: SelectionRect, transform: Transform) => {
+    selection.onCommit = () => {
       const layer = layers.active;
-      const cx = rect.x + rect.w / 2 + transform.tx;
-      const cy = rect.y + rect.h / 2 + transform.ty;
-      const hw = (rect.w / 2) * transform.sx;
-      const hh = (rect.h / 2) * transform.sy;
-      layer.ctx.save();
-      layer.ctx.translate(cx, cy);
-      layer.ctx.rotate(transform.rotation);
-      layer.ctx.drawImage(pixels, -hw, -hh, hw * 2, hh * 2);
-      layer.ctx.restore();
+      if (preSelectionSnapshot) {
+        layer.history.push(preSelectionSnapshot);
+        preSelectionSnapshot = null;
+      }
+      selection.renderFloatingTo(layer.ctx);
       layers.composite();
       bumpLayerVersion();
     };
