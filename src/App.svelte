@@ -473,7 +473,24 @@
         const snapshot = layers.getSnapshot();
         layer.history.push(snapshot);
         const color = hexToRgba(app.brushSettings.color, app.brushSettings.opacity);
-        floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, app.fillSettings);
+        if (selection?.state === "selected") {
+          // Run flood fill on a temp canvas (1:1 with layer's physical pixels),
+          // then composite back through the selection clip.
+          const tmp = document.createElement("canvas");
+          tmp.width = layer.canvas.width;
+          tmp.height = layer.canvas.height;
+          const tmpCtx = tmp.getContext("2d", { willReadFrequently: true })!;
+          tmpCtx.drawImage(layer.canvas, 0, 0);
+          floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, app.fillSettings);
+          layer.ctx.save();
+          selection.applyClip(layer.ctx);
+          // tmp has physical pixel dimensions; layer.ctx has dpr scaling, so draw
+          // tmp at its CSS-pixel size to land 1:1 in physical pixels.
+          layer.ctx.drawImage(tmp, 0, 0, tmp.width / dpr, tmp.height / dpr);
+          layer.ctx.restore();
+        } else {
+          floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, app.fillSettings);
+        }
         layers.composite();
         bumpLayerVersion();
       }
@@ -496,7 +513,10 @@
       if (done) {
         smoothDrawScheduled = false;
         restoreLayerFromCanvas(layer);
+        layer.ctx.save();
+        selection?.applyClip(layer.ctx);
         drawStroke(layer.ctx, points, { ...app.brushSettings, alphaLock: layer.alphaLock }, true, app.sizeRange);
+        layer.ctx.restore();
         layers.composite();
         if (preStrokeSnapshot) {
           layer.history.push(preStrokeSnapshot);
@@ -508,14 +528,21 @@
         requestAnimationFrame(() => {
           smoothDrawScheduled = false;
           if (!layers) return;
-          restoreLayerFromCanvas(layers.active);
-          drawStroke(layers.active.ctx, points, { ...app.brushSettings, alphaLock: layers.active.alphaLock }, false, app.sizeRange);
+          const active = layers.active;
+          restoreLayerFromCanvas(active);
+          active.ctx.save();
+          selection?.applyClip(active.ctx);
+          drawStroke(active.ctx, points, { ...app.brushSettings, alphaLock: active.alphaLock }, false, app.sizeRange);
+          active.ctx.restore();
           layers.composite();
         });
       }
     } else {
       // Stamp engine: incremental, only draws new points
+      layer.ctx.save();
+      selection?.applyClip(layer.ctx);
       drawStampStrokeIncremental(layer.ctx, points, { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock }, app.sizeRange);
+      layer.ctx.restore();
       scheduleComposite();
 
       if (done) {
@@ -531,11 +558,10 @@
 
   // --- Set tool ---
   function setTool(tool: Tool) {
-    // Switching tools resolves any active selection: commit a transform-in-progress,
-    // cancel a plain marquee.
-    if (selection?.active && tool !== app.currentTool) {
-      if (selection.hasFloating) selection.commit();
-      else selection.cancel();
+    // A floating transform/warp must resolve before switching tools (it has uncommitted
+    // pixels). A plain marquee survives — brush/fill/eraser will clip to it.
+    if (selection?.hasFloating && tool !== app.currentTool) {
+      selection.commit();
     }
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";

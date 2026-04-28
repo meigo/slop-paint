@@ -458,6 +458,23 @@ export class Selection {
     this.clear();
   }
 
+  /**
+   * Apply a clip path matching the current selection (rect or lasso) to the given context.
+   * Coords are CSS pixels — caller's ctx must already have its dpr transform set.
+   * Only meaningful in 'selected' state; returns true if a clip was applied.
+   */
+  applyClip(ctx: CanvasRenderingContext2D): boolean {
+    if (this.state !== "selected" || !this.rect) return false;
+    if (this.mode === "lasso" && this.lassoPath) {
+      ctx.clip(this.lassoPath);
+    } else {
+      ctx.beginPath();
+      ctx.rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+      ctx.clip();
+    }
+    return true;
+  }
+
   /** Render the floating pixels into the given context, applying the current transform/warp. */
   renderFloatingTo(ctx: CanvasRenderingContext2D) {
     if (!this.floatingPixels || !this.rect) return;
