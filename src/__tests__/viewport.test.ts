@@ -90,6 +90,19 @@ describe("Viewport", () => {
     expect(after.y).toBeCloseTo(before.y, 0);
   });
 
+  it("canvasToScreen is the inverse of screenToCanvas", () => {
+    vp.setZoom(1.7);
+    vp.panX = 30;
+    vp.panY = -45;
+    vp.rotation = 0.6;
+    for (const [sx, sy] of [[0, 0], [123, 456], [800, 600], [-50, 200]]) {
+      const c = vp.screenToCanvas(sx, sy);
+      const s = vp.canvasToScreen(c.x, c.y);
+      expect(s.x).toBeCloseTo(sx, 6);
+      expect(s.y).toBeCloseTo(sy, 6);
+    }
+  });
+
   it("pan start/update/end works", () => {
     vp.startPan(100, 100);
     expect(vp.panning).toBe(true);

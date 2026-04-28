@@ -130,6 +130,38 @@ export class Selection {
     return (this.state === "transforming" || this.state === "warping") && this.floatingPixels !== null;
   }
 
+  get isDragging(): boolean {
+    return this.dragging !== null;
+  }
+
+  get creating(): boolean {
+    return this.isCreating;
+  }
+
+  /**
+   * Doc-space points outlining the current selection bounds for the floating
+   * action panel. Returns null when there is no anchorable bbox (idle, or
+   * mid-creation when the bbox is still degenerate).
+   */
+  getScreenBounds(): { x: number; y: number }[] | null {
+    if (!this.rect || this.state === "idle" || this.isCreating) return null;
+    if (this.state === "warping" && this.warpGrid.length === this.warpRows) {
+      return outerPerimeter(this.warpGrid, this.warpRows, this.warpCols);
+    }
+    if (this.state === "transforming") {
+      const c = this.transformedCorners();
+      return [c.tl, c.tr, c.br, c.bl];
+    }
+    // 'selected' — rect or lasso, both use this.rect's AABB.
+    const r = this.rect;
+    return [
+      { x: r.x, y: r.y },
+      { x: r.x + r.w, y: r.y },
+      { x: r.x + r.w, y: r.y + r.h },
+      { x: r.x, y: r.y + r.h },
+    ];
+  }
+
   /** Begin creating a new selection (clears any existing one). */
   startCreate(x: number, y: number) {
     this.cancel();

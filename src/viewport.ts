@@ -50,6 +50,20 @@ export class Viewport {
     return { x: urx / this.zoom, y: ury / this.zoom };
   }
 
+  /** Convert canvas (logical) coords to screen (client) coords. Inverse of screenToCanvas. */
+  canvasToScreen(cx: number, cy: number): { x: number; y: number } {
+    const rect = this.parent.getBoundingClientRect();
+    const cos = Math.cos(this.rotation);
+    const sin = Math.sin(this.rotation);
+    const sx = cx * this.zoom;
+    const sy = cy * this.zoom;
+    // Apply: rotate then translate (pan), plus parent offset
+    return {
+      x: rect.left + this.panX + sx * cos - sy * sin,
+      y: rect.top + this.panY + sx * sin + sy * cos,
+    };
+  }
+
   /** Zoom toward a screen point, keeping that point fixed */
   zoomAt(screenX: number, screenY: number, delta: number) {
     const rect = this.parent.getBoundingClientRect();

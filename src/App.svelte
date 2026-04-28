@@ -2,6 +2,7 @@
   import Toolbar from "./lib/Toolbar.svelte";
   import LayerPanel from "./lib/LayerPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
+  import SelectionActions from "./lib/SelectionActions.svelte";
   import NewDocDialog from "./lib/NewDocDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
@@ -890,6 +891,21 @@
         class="absolute rounded-full border pointer-events-none"
         style="display: none; border-color: rgba(0,0,0,0.5); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); mix-blend-mode: difference;"
       ></div>
+      {#if layersReady}
+        <SelectionActions
+          {selection}
+          {viewport}
+          containerEl={canvasClipEl}
+          isActionable={() => {
+            const layer = layers?.active;
+            return !!layer && !layer.locked && layer.visible;
+          }}
+          onDistort={() => enterWarp(2, 2)}
+          onMesh={() => enterWarp(3, 3)}
+          onCommit={() => selection.commit()}
+          onCancel={() => selection.cancel()}
+        />
+      {/if}
     </div>
 
     {#if layersReady}
