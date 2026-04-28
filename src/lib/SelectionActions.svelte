@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { SquareDashed, Grid3x3, Check, X } from "@lucide/svelte";
+  import { SquareDashed, Grid3x3, Check, X, Move } from "@lucide/svelte";
   import type { Selection } from "../selection";
   import type { Viewport } from "../viewport";
   import { computeAnchor } from "../selection-anchor";
@@ -10,6 +10,7 @@
     viewport,
     containerEl,
     isActionable,
+    onTransform,
     onDistort,
     onMesh,
     onCommit,
@@ -20,6 +21,7 @@
     /** Positioned ancestor: panel is positioned relative to this element and clamps to its size. */
     containerEl: HTMLElement;
     isActionable: () => boolean;
+    onTransform: () => void;
     onDistort: () => void;
     onMesh: () => void;
     onCommit: () => void;
@@ -90,6 +92,15 @@
   class="absolute z-30 flex items-center gap-1 p-1 rounded-lg bg-surface border border-border shadow-md transition-opacity"
   style="left: {pos.x}px; top: {pos.y}px; opacity: {visible ? 1 : 0}; pointer-events: {visible ? 'auto' : 'none'}; touch-action: none;"
 >
+  {#if mode === "selected"}
+    <button
+      class="w-11 h-11 rounded-md border border-border bg-surface text-text-secondary flex items-center justify-center transition-colors"
+      onpointerdown={tap(onTransform)}
+      title="Free transform — show scale/rotate handles"
+    >
+      <Move size={20} />
+    </button>
+  {/if}
   <button
     class="w-11 h-11 rounded-md border flex items-center justify-center transition-colors"
     class:bg-accent={distortActive}

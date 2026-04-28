@@ -251,6 +251,24 @@
   }
 
   /**
+   * Enter free transform mode (scale/rotate/skew handles). From 'selected',
+   * lifts pixels into a floating canvas. No-op if already transforming/warping
+   * or if there's nothing to transform.
+   */
+  function enterFreeTransform() {
+    if (!selection || !layers) return;
+    if (selection.state !== "selected") return;
+    const layer = layers.active;
+    if (layer.locked) return;
+    const dpr = window.devicePixelRatio || 1;
+    preSelectionSnapshot = layers.getSnapshot();
+    const lifted = selection.liftPixels(layer.ctx, dpr);
+    if (!lifted) return;
+    selection.beginTransform(lifted);
+    layers.composite();
+  }
+
+  /**
    * Enter warp/mesh mode at the requested grid resolution.
    * - From 'selected', lifts pixels and goes straight to warping.
    * - From 'transforming', initializes the grid from the current matrix.
@@ -749,6 +767,12 @@
       bumpSelectionVersion();
     };
 
+    // Keep selection's hit areas at a constant screen size by feeding it the viewport zoom.
+    selection.screenScale = viewport.zoom;
+    viewport.onChange = () => {
+      selection.screenScale = viewport.zoom;
+    };
+
     // Set document size on layers and resize canvas
     layers.setDocumentSize(app.docWidth, app.docHeight);
     resizeCanvas();
@@ -900,6 +924,7 @@
             const layer = layers?.active;
             return !!layer && !layer.locked && layer.visible;
           }}
+          onTransform={enterFreeTransform}
           onDistort={() => enterWarp(2, 2)}
           onMesh={() => enterWarp(3, 3)}
           onCommit={() => selection.commit()}

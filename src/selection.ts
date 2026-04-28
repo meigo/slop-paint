@@ -34,6 +34,8 @@ type Handle = "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r" | "rotate" | "mo
 
 const HANDLE_SIZE = 8;
 const ROTATE_OFFSET = 20;
+/** Minimum hit half-width in screen pixels — hit areas grow at low zoom so handles stay grabbable. */
+const MIN_HIT_PX = 12;
 
 const IDENTITY: Mat = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 
@@ -110,6 +112,9 @@ export class Selection {
 
   private overlayCanvas: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
+
+  /** Current viewport zoom — used to keep handle hit areas at a constant screen-pixel size. */
+  screenScale = 1;
 
   onCommit: (() => void) | null = null;
   onCancel: (() => void) | null = null;
@@ -311,6 +316,11 @@ export class Selection {
     this.onStateChange?.();
   }
 
+  /** Hit half-width in document px — at least MIN_HIT_PX in screen px, regardless of zoom. */
+  private hitTolerance(): number {
+    return Math.max(HANDLE_SIZE + 2, MIN_HIT_PX / this.screenScale);
+  }
+
   hitTest(x: number, y: number): Handle {
     if (!this.rect) return null;
 
@@ -323,12 +333,14 @@ export class Selection {
       return (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) ? "move" : null;
     }
 
+    const tol = this.hitTolerance();
+
     if (this.state === "warping") {
       // Hit-test every grid control point.
       for (let r = 0; r < this.warpRows; r++) {
         for (let c = 0; c < this.warpCols; c++) {
           const p = this.warpGrid[r][c];
-          if (Math.abs(x - p.x) < HANDLE_SIZE + 2 && Math.abs(y - p.y) < HANDLE_SIZE + 2) {
+          if (Math.abs(x - p.x) < tol && Math.abs(y - p.y) < tol) {
             this.hitGridIdx = { row: r, col: c };
             return "grid";
           }
@@ -346,7 +358,8 @@ export class Selection {
     const sides = this.transformedSides(corners);
     const rotateHandle = this.rotateHandlePos(corners);
 
-    if ((x - rotateHandle.x) ** 2 + (y - rotateHandle.y) ** 2 < (HANDLE_SIZE + 4) ** 2) return "rotate";
+    const rotR = tol + 2;
+    if ((x - rotateHandle.x) ** 2 + (y - rotateHandle.y) ** 2 < rotR * rotR) return "rotate";
 
     const cornerHandles: { handle: Handle; p: { x: number; y: number } }[] = [
       { handle: "tl", p: corners.tl },
@@ -355,7 +368,7 @@ export class Selection {
       { handle: "br", p: corners.br },
     ];
     for (const c of cornerHandles) {
-      if (Math.abs(x - c.p.x) < HANDLE_SIZE + 2 && Math.abs(y - c.p.y) < HANDLE_SIZE + 2) {
+      if (Math.abs(x - c.p.x) < tol && Math.abs(y - c.p.y) < tol) {
         return c.handle;
       }
     }
@@ -367,7 +380,7 @@ export class Selection {
       { handle: "r", p: sides.r },
     ];
     for (const s of sideHandles) {
-      if (Math.abs(x - s.p.x) < HANDLE_SIZE + 2 && Math.abs(y - s.p.y) < HANDLE_SIZE + 2) {
+      if (Math.abs(x - s.p.x) < tol && Math.abs(y - s.p.y) < tol) {
         return s.handle;
       }
     }
