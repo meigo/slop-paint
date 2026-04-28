@@ -444,7 +444,7 @@
             selectionMode = "drag";
             selection.startDrag("move", p.x, p.y);
           }
-        } else if (selection.state === "transforming" && handle) {
+        } else if ((selection.state === "transforming" || selection.state === "warping") && handle) {
           selectionMode = "drag";
           selection.startDrag(handle, p.x, p.y);
         } else {
