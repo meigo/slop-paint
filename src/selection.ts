@@ -139,10 +139,6 @@ export class Selection {
     return this.dragging !== null;
   }
 
-  get creating(): boolean {
-    return this.isCreating;
-  }
-
   /**
    * Doc-space points outlining the current selection bounds for the floating
    * action panel. Returns null when there is no anchorable bbox (idle, or

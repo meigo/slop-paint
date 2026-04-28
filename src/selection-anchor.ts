@@ -22,7 +22,6 @@ export interface AnchorInput {
 export interface AnchorResult {
   x: number;
   y: number;
-  side: "above" | "below";
 }
 
 export function computeAnchor(input: AnchorInput): AnchorResult {
@@ -44,11 +43,9 @@ export function computeAnchor(input: AnchorInput): AnchorResult {
   const aboveY = minY - margin - panelSize.h;
   const belowY = maxY + margin;
 
-  let side: "above" | "below" = "above";
   let y = aboveY;
   if (aboveY < margin) {
     if (belowY + panelSize.h <= viewport.h - margin) {
-      side = "below";
       y = belowY;
     } else {
       // Neither side fits — clamp to top margin.
@@ -56,5 +53,5 @@ export function computeAnchor(input: AnchorInput): AnchorResult {
     }
   }
 
-  return { x, y, side };
+  return { x, y };
 }

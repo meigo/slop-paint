@@ -89,7 +89,7 @@
 
 <div
   bind:this={panelEl}
-  class="absolute z-30 flex items-center gap-1 p-1 rounded-lg bg-surface border border-border shadow-md transition-opacity"
+  class="selection-actions-panel absolute z-30 flex items-center gap-1 p-1 rounded-lg bg-surface border border-border shadow-md transition-opacity"
   style="left: {pos.x}px; top: {pos.y}px; opacity: {visible ? 1 : 0}; pointer-events: {visible ? 'auto' : 'none'}; touch-action: none;"
 >
   {#if mode === "selected"}

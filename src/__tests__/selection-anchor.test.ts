@@ -22,10 +22,9 @@ function baseInput(overrides: Partial<AnchorInput> = {}): AnchorInput {
 describe("computeAnchor", () => {
   it("centers above the bbox when there is room", () => {
     const r = computeAnchor(baseInput());
-    expect(r.side).toBe("above");
     // bbox center x = 300, panel width 200 → x = 300 - 100 = 200
     expect(r.x).toBe(200);
-    // bbox top = 200, margin = 12, panel h = 40 → y = 200 - 12 - 40 = 148
+    // bbox top = 200, margin = 12, panel h = 40 → y = 200 - 12 - 40 = 148 (above)
     expect(r.y).toBe(148);
   });
 
@@ -40,8 +39,7 @@ describe("computeAnchor", () => {
         ],
       }),
     );
-    expect(r.side).toBe("below");
-    // bbox bottom = 100, margin = 12 → y = 112
+    // bbox bottom = 100, margin = 12 → y = 112 (below)
     expect(r.y).toBe(112);
   });
 
@@ -103,8 +101,18 @@ describe("computeAnchor", () => {
     // Center x ≈ 400, panel w 200 → x ≈ 300
     expect(r.x).toBeCloseTo(300, 1);
     // minY = 100; would place above at y = 100 - 12 - 40 = 48 (still positive) → above
-    expect(r.side).toBe("above");
     expect(r.y).toBe(48);
+  });
+
+  it("clamps x at margin even when the panel is wider than the viewport", () => {
+    const r = computeAnchor(
+      baseInput({
+        panelSize: { w: 1000, h: 40 },
+        viewport: { w: 800, h: 600 },
+      }),
+    );
+    // viewport.w - panel.w - margin = 800 - 1000 - 12 = -212; outer max() guard wins
+    expect(r.x).toBe(12);
   });
 
   it("clamps to top margin when both above and below would be off-screen", () => {

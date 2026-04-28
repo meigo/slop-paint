@@ -169,9 +169,10 @@ export class Viewport {
     return this.isPanning;
   }
 
-  /** Public wrapper for touch gesture system to apply transform after direct pan/zoom/rotation changes */
+  /** Public wrapper for code that mutates pan/zoom/rotation directly. Fires onChange so subscribers (e.g. selection hit-tolerance) stay in sync. */
   applyTransformPublic() {
     this.applyTransform();
+    this.onChange?.();
   }
 
   private applyTransform() {

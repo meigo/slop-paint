@@ -125,11 +125,13 @@
   const TAG_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>`;
 
   let openPopoverEl: HTMLDivElement | null = null;
+  let openPopoverNodeId: number | null = null;
 
   function closePopover() {
     if (openPopoverEl) {
       openPopoverEl.remove();
       openPopoverEl = null;
+      openPopoverNodeId = null;
       document.removeEventListener("pointerdown", onDocPointerDown, true);
     }
   }
@@ -144,6 +146,7 @@
     closePopover();
     const popover = document.createElement("div");
     openPopoverEl = popover;
+    openPopoverNodeId = node.id;
     popover.className = "fixed z-50 bg-surface border border-border rounded-md shadow-lg p-1 text-xs flex flex-col gap-0.5 min-w-[180px]";
     const valid = tagsForNodeType(node.type);
     function refresh() {
@@ -193,8 +196,13 @@
     if (popRect.right > window.innerWidth - 8) {
       popover.style.left = (window.innerWidth - popRect.width - 8) + "px";
     }
-    // Defer the outside-click listener so the click that opened us doesn't immediately close
-    setTimeout(() => document.addEventListener("pointerdown", onDocPointerDown, true), 0);
+    // Defer the outside-click listener so the click that opened us doesn't immediately close.
+    // Guard against the popover being closed in between (e.g. by a deletion-triggered $effect).
+    setTimeout(() => {
+      if (openPopoverEl === popover) {
+        document.addEventListener("pointerdown", onDocPointerDown, true);
+      }
+    }, 0);
   }
 
   function makeTagButton(node: LayerNode): HTMLButtonElement {
@@ -435,6 +443,12 @@
   // Re-render layer list when layerVersion changes
   $effect(() => {
     void app.layerVersion;
+    // If the popover was anchored to a node that no longer exists (deleted),
+    // close it. Otherwise leave it open so multi-toggle keeps working.
+    if (openPopoverNodeId !== null) {
+      const stillExists = layers.flatAll().some((n) => n.id === openPopoverNodeId);
+      if (!stillExists) closePopover();
+    }
     renderLayerList();
   });
 </script>

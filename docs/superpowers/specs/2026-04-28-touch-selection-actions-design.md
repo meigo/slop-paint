@@ -24,10 +24,18 @@ keyboard shortcuts.
 
 | Selection state | Buttons shown |
 |---|---|
-| `selected` | Distort, Mesh |
+| `selected` | Free Transform, Distort, Mesh |
 | `transforming` | Distort, Mesh, Commit, Cancel |
 | `warping` | Distort, Mesh, Commit, Cancel |
 | `idle` / mid-creation / mid-drag / locked-or-hidden layer | (panel hidden) |
+
+**Note on Free Transform.** Originally not in the spec. On desktop, "drag inside
+the selection" already lifts pixels and enters `transforming`, but on iPad
+that gesture is indistinguishable from a stray finger pan, so without an
+explicit button there's no reliable way to enter free transform without
+keyboard shortcuts. The button is the touch equivalent of the existing
+drag-to-lift behavior — same code path (`liftPixels` + `beginTransform`),
+just triggered explicitly.
 
 In `transforming`/`warping`, tapping Distort/Mesh routes through the existing
 `enterWarp(rows, cols)` helper, which already handles "lift then warp",
