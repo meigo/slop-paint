@@ -114,6 +114,8 @@ export class Selection {
   onCommit: (() => void) | null = null;
   onCancel: (() => void) | null = null;
   onChange: (() => void) | null = null;
+  /** Fires when state, mode, or warp grid resolution changes — for UI reactivity. */
+  onStateChange: (() => void) | null = null;
 
   constructor(overlayCanvas: HTMLCanvasElement) {
     this.overlayCanvas = overlayCanvas;
@@ -137,6 +139,7 @@ export class Selection {
     this.lassoPoints = [{ x, y }];
     this.lassoPath = null;
     this.state = "selected";
+    this.onStateChange?.();
   }
 
   updateCreate(x: number, y: number) {
@@ -242,6 +245,7 @@ export class Selection {
     this.matrix = identity();
     this.state = "transforming";
     this.drawOverlay();
+    this.onStateChange?.();
   }
 
   /**
@@ -257,6 +261,7 @@ export class Selection {
     this.warpCols = cols;
     this.state = "warping";
     this.drawOverlay();
+    this.onStateChange?.();
   }
 
   /**
@@ -271,6 +276,7 @@ export class Selection {
     this.warpRows = rows;
     this.warpCols = cols;
     this.drawOverlay();
+    this.onStateChange?.();
   }
 
   hitTest(x: number, y: number): Handle {
@@ -501,6 +507,7 @@ export class Selection {
   }
 
   private clear() {
+    const wasActive = this.state !== "idle";
     this.rect = null;
     this.floatingPixels = null;
     this.lassoPoints = [];
@@ -517,6 +524,7 @@ export class Selection {
     this.state = "idle";
     cancelAnimationFrame(this.animFrame);
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+    if (wasActive) this.onStateChange?.();
   }
 
   getCursor(handle: Handle): string {

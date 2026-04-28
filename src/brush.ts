@@ -44,7 +44,10 @@ export function drawStroke(
     start: { taper: false, cap: true },
     end: { taper: false, cap: true },
     last: done,
-    simulatePressure: points[0].pressure === 0.5,
+    // Always use our supplied (mapped) pressure. perfect-freehand's simulatePressure
+    // is velocity-based and would override our size mapping, leaving the cursor
+    // (which reflects the envelope) out of sync with the rendered stroke.
+    simulatePressure: false,
   });
 
   if (strokePoints.length < 2) return;

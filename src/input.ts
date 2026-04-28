@@ -62,7 +62,11 @@ export function setupInput(
     return {
       x,
       y,
-      pressure: e.pointerType === "mouse" ? 0.5 : e.pressure,
+      // Mouse has no pressure sensor; report 0 so the size mapping in brush.ts/stamp-brush.ts
+      // resolves to minSize = settings.size. This matches the user's mental model where the
+      // size slider value IS the stroke width, with sizeRange only widening pen strokes
+      // *up* from there at higher pressure.
+      pressure: e.pointerType === "mouse" ? 0 : e.pressure,
       timestamp: e.timeStamp,
     };
   }

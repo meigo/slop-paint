@@ -1,6 +1,7 @@
 <script lang="ts">
   import Toolbar from "./lib/Toolbar.svelte";
   import LayerPanel from "./lib/LayerPanel.svelte";
+  import StatusBar from "./lib/StatusBar.svelte";
   import NewDocDialog from "./lib/NewDocDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
@@ -13,7 +14,7 @@
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd } from "./export-psd";
   import { untrack } from "svelte";
-  import { app, pressureCurve, bumpLayerVersion, initTheme, type Tool } from "./appState.svelte.js";
+  import { app, pressureCurve, bumpLayerVersion, bumpSelectionVersion, initTheme, type Tool } from "./appState.svelte.js";
   import type { BrushType } from "./brush-textures";
 
   // --- Canvas refs ---
@@ -106,6 +107,8 @@
     const rect = canvasClipEl.getBoundingClientRect();
     const x = screenX - rect.left;
     const y = screenY - rect.top;
+    // Cursor matches the slider's nominal size — equal to mouse stroke width (which renders
+    // at minSize = settings.size). Pen at higher pressure can exceed this up to sizeRange×.
     const diameter = app.brushSettings.size * viewport.zoom;
     if (diameter < 4) {
       if (brushCursorVisible) {
@@ -301,12 +304,12 @@
 
   function doExportPsd() {
     if (!layers) return;
-    exportPsd(layers, window.devicePixelRatio || 1);
+    exportPsd(layers);
   }
 
   function doSavePsd() {
     if (!layers) return;
-    savePsd(layers, window.devicePixelRatio || 1);
+    savePsd(layers);
   }
 
   function newDocument(width: number, height: number) {
@@ -741,6 +744,10 @@
       scheduleComposite();
     };
 
+    selection.onStateChange = () => {
+      bumpSelectionVersion();
+    };
+
     // Set document size on layers and resize canvas
     layers.setDocumentSize(app.docWidth, app.docHeight);
     resizeCanvas();
@@ -889,6 +896,10 @@
       <LayerPanel {layers} />
     {/if}
   </div>
+
+  {#if layersReady}
+    <StatusBar {selection} />
+  {/if}
 
   <input
     type="file"

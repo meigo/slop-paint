@@ -15,6 +15,7 @@ interface AppStateShape {
   theme: "light" | "dark";
   zoomText: string;
   layerVersion: number;
+  selectionVersion: number;
   docWidth: number;
   docHeight: number;
 }
@@ -41,6 +42,7 @@ export const app: AppStateShape = $state({
   theme: "light",
   zoomText: "100%",
   layerVersion: 0,
+  selectionVersion: 0,
   docWidth: 1920,
   docHeight: 1080,
 });
@@ -50,6 +52,10 @@ export const pressureCurve = new PressureCurve();
 
 export function bumpLayerVersion() {
   app.layerVersion++;
+}
+
+export function bumpSelectionVersion() {
+  app.selectionVersion++;
 }
 
 export function initTheme() {
