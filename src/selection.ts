@@ -30,10 +30,7 @@ export interface Mat {
 export type SelectionMode = "rect" | "lasso";
 export type SelectionState = "idle" | "selected" | "transforming" | "warping";
 
-type Handle = "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r" | "rotate" | "move" | null;
-
-/** Corner indices for warpCorners[]: TL, TR, BR, BL. */
-type CornerIdx = 0 | 1 | 2 | 3;
+type Handle = "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r" | "rotate" | "move" | "grid" | null;
 
 const HANDLE_SIZE = 8;
 const ROTATE_OFFSET = 20;
@@ -87,8 +84,11 @@ export class Selection {
   rect: SelectionRect | null = null;
   mode: SelectionMode = "rect";
   matrix: Mat = identity();
-  /** Warp control points in CSS coords: [TL, TR, BR, BL]. Only meaningful in 'warping' state. */
-  warpCorners: { x: number; y: number }[] = [];
+  /** Warp control points in CSS coords, indexed [row][col]. Only meaningful in 'warping' state.
+   *  warpGrid[0][0] = TL, warpGrid[0][cols-1] = TR, warpGrid[rows-1][cols-1] = BR, warpGrid[rows-1][0] = BL. */
+  warpGrid: { x: number; y: number }[][] = [];
+  warpRows = 2;
+  warpCols = 2;
   floatingPixels: HTMLCanvasElement | null = null;
 
   /** Lasso path points (CSS coords) */
@@ -97,10 +97,12 @@ export class Selection {
   private lassoPath: Path2D | null = null;
 
   private dragging: Handle = null;
-  private dragCornerIdx: CornerIdx | null = null;
+  private dragGridIdx: { row: number; col: number } | null = null;
+  /** Set transiently by hitTest() so startDrag() can pick up the right grid cell. */
+  private hitGridIdx: { row: number; col: number } | null = null;
   private dragStart = { x: 0, y: 0 };
   private matrixStart: Mat = identity();
-  private warpCornersStart: { x: number; y: number }[] = [];
+  private warpGridStart: { x: number; y: number }[][] = [];
   private isCreating = false;
   private createStart = { x: 0, y: 0 };
   private marchOffset = 0;
@@ -243,19 +245,31 @@ export class Selection {
   }
 
   /**
-   * Switch to free-corner warp (4-corner distort). Initializes warp corners
-   * from the current matrix-transformed rect corners. Requires lifted pixels.
+   * Enter warp/distort mode with a `rows × cols` grid of control points (≥ 2 each).
+   * 2×2 = 4-corner distort; 3×3 = 2-segment mesh; etc. Initializes the grid by
+   * sampling matrix-transformed rect coords uniformly. Requires lifted pixels.
    */
-  beginWarp() {
+  beginWarp(rows = 2, cols = 2) {
     if (!this.rect || !this.floatingPixels) return;
-    const r = this.rect;
-    this.warpCorners = [
-      applyPoint(this.matrix, r.x, r.y),
-      applyPoint(this.matrix, r.x + r.w, r.y),
-      applyPoint(this.matrix, r.x + r.w, r.y + r.h),
-      applyPoint(this.matrix, r.x, r.y + r.h),
-    ];
+    if (rows < 2 || cols < 2) return;
+    this.warpGrid = sampleGrid(this.rect, this.matrix, rows, cols);
+    this.warpRows = rows;
+    this.warpCols = cols;
     this.state = "warping";
+    this.drawOverlay();
+  }
+
+  /**
+   * Resample the current warp grid to a new resolution via bilinear interpolation
+   * over each existing cell. Preserves user edits when increasing density.
+   */
+  densifyWarp(rows: number, cols: number) {
+    if (this.state !== "warping") return;
+    if (rows < 2 || cols < 2) return;
+    if (rows === this.warpRows && cols === this.warpCols) return;
+    this.warpGrid = resampleGrid(this.warpGrid, this.warpRows, this.warpCols, rows, cols);
+    this.warpRows = rows;
+    this.warpCols = cols;
     this.drawOverlay();
   }
 
@@ -272,19 +286,20 @@ export class Selection {
     }
 
     if (this.state === "warping") {
-      const wc = this.warpCorners;
-      const cornerHandles: { handle: Handle; p: { x: number; y: number } }[] = [
-        { handle: "tl", p: wc[0] },
-        { handle: "tr", p: wc[1] },
-        { handle: "br", p: wc[2] },
-        { handle: "bl", p: wc[3] },
-      ];
-      for (const c of cornerHandles) {
-        if (Math.abs(x - c.p.x) < HANDLE_SIZE + 2 && Math.abs(y - c.p.y) < HANDLE_SIZE + 2) {
-          return c.handle;
+      // Hit-test every grid control point.
+      for (let r = 0; r < this.warpRows; r++) {
+        for (let c = 0; c < this.warpCols; c++) {
+          const p = this.warpGrid[r][c];
+          if (Math.abs(x - p.x) < HANDLE_SIZE + 2 && Math.abs(y - p.y) < HANDLE_SIZE + 2) {
+            this.hitGridIdx = { row: r, col: c };
+            return "grid";
+          }
         }
       }
-      return this.pointInsideQuad(x, y, wc) ? "move" : null;
+      this.hitGridIdx = null;
+      // Inside the outer perimeter → drag-to-move-all.
+      const perim = outerPerimeter(this.warpGrid, this.warpRows, this.warpCols);
+      return this.pointInsideQuad(x, y, perim) ? "move" : null;
     }
 
     if (this.state !== "transforming") return null;
@@ -327,12 +342,8 @@ export class Selection {
     this.dragging = handle;
     this.dragStart = { x, y };
     this.matrixStart = { ...this.matrix };
-    this.warpCornersStart = this.warpCorners.map((p) => ({ ...p }));
-    this.dragCornerIdx =
-      handle === "tl" ? 0 :
-      handle === "tr" ? 1 :
-      handle === "br" ? 2 :
-      handle === "bl" ? 3 : null;
+    this.warpGridStart = this.warpGrid.map((row) => row.map((p) => ({ ...p })));
+    this.dragGridIdx = handle === "grid" ? this.hitGridIdx : null;
   }
 
   updateDrag(x: number, y: number) {
@@ -342,11 +353,11 @@ export class Selection {
 
     if (this.state === "warping") {
       if (this.dragging === "move") {
-        this.warpCorners = this.warpCornersStart.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-      } else if (this.dragCornerIdx !== null) {
-        const idx = this.dragCornerIdx;
-        this.warpCorners = this.warpCornersStart.map((p, i) =>
-          i === idx ? { x: p.x + dx, y: p.y + dy } : { ...p }
+        this.warpGrid = this.warpGridStart.map((row) => row.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+      } else if (this.dragging === "grid" && this.dragGridIdx) {
+        const { row, col } = this.dragGridIdx;
+        this.warpGrid = this.warpGridStart.map((rArr, r) =>
+          rArr.map((p, c) => (r === row && c === col ? { x: p.x + dx, y: p.y + dy } : { ...p })),
         );
       }
       this.drawOverlay();
@@ -485,7 +496,7 @@ export class Selection {
       ctx.drawImage(this.floatingPixels, this.rect.x, this.rect.y, this.rect.w, this.rect.h);
       ctx.restore();
     } else if (this.state === "warping") {
-      drawWarpedQuad(ctx, this.floatingPixels, this.rect, this.warpCorners);
+      drawWarpedMesh(ctx, this.floatingPixels, this.rect, this.warpGrid, this.warpRows, this.warpCols);
     }
   }
 
@@ -495,9 +506,12 @@ export class Selection {
     this.lassoPoints = [];
     this.lassoPath = null;
     this.matrix = identity();
-    this.warpCorners = [];
-    this.warpCornersStart = [];
-    this.dragCornerIdx = null;
+    this.warpGrid = [];
+    this.warpGridStart = [];
+    this.warpRows = 2;
+    this.warpCols = 2;
+    this.dragGridIdx = null;
+    this.hitGridIdx = null;
     this.isCreating = false;
     this.dragging = null;
     this.state = "idle";
@@ -513,6 +527,7 @@ export class Selection {
       case "tr": case "bl": return "nesw-resize";
       case "l": case "r": return "ew-resize";
       case "t": case "b": return "ns-resize";
+      case "grid": return "grab";
       default: return "crosshair";
     }
   }
@@ -594,29 +609,44 @@ export class Selection {
       return;
     }
 
-    // 'warping' state: tessellated render + 4 corner handles + quad outline.
-    if (this.state === "warping") {
-      const wc = this.warpCorners;
-      if (this.floatingPixels && wc.length === 4) {
-        drawWarpedQuad(ctx, this.floatingPixels, this.rect, wc);
+    // 'warping' state: tessellated render + grid lines + handles + outer perimeter.
+    if (this.state === "warping" && this.warpGrid.length === this.warpRows) {
+      const grid = this.warpGrid;
+      if (this.floatingPixels) {
+        drawWarpedMesh(ctx, this.floatingPixels, this.rect, grid, this.warpRows, this.warpCols);
       }
-      ctx.beginPath();
-      ctx.moveTo(wc[0].x, wc[0].y);
-      ctx.lineTo(wc[1].x, wc[1].y);
-      ctx.lineTo(wc[2].x, wc[2].y);
-      ctx.lineTo(wc[3].x, wc[3].y);
-      ctx.closePath();
-      this.strokeMarchingAnts(ctx);
-      // Optional diagonal hint (where the triangle seam lies).
+      // Internal grid lines (between adjacent control points).
       ctx.save();
+      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(wc[0].x, wc[0].y);
-      ctx.lineTo(wc[2].x, wc[2].y);
-      ctx.strokeStyle = "rgba(0,0,0,0.25)";
-      ctx.setLineDash([2, 3]);
+      for (let r = 0; r < this.warpRows; r++) {
+        for (let c = 0; c < this.warpCols - 1; c++) {
+          ctx.moveTo(grid[r][c].x, grid[r][c].y);
+          ctx.lineTo(grid[r][c + 1].x, grid[r][c + 1].y);
+        }
+      }
+      for (let c = 0; c < this.warpCols; c++) {
+        for (let r = 0; r < this.warpRows - 1; r++) {
+          ctx.moveTo(grid[r][c].x, grid[r][c].y);
+          ctx.lineTo(grid[r + 1][c].x, grid[r + 1][c].y);
+        }
+      }
       ctx.stroke();
       ctx.restore();
-      for (const p of wc) this.drawHandle(ctx, p.x, p.y, "square");
+      // Outer perimeter with marching ants.
+      const perim = outerPerimeter(grid, this.warpRows, this.warpCols);
+      ctx.beginPath();
+      ctx.moveTo(perim[0].x, perim[0].y);
+      for (let i = 1; i < perim.length; i++) ctx.lineTo(perim[i].x, perim[i].y);
+      ctx.closePath();
+      this.strokeMarchingAnts(ctx);
+      // Handles at every grid intersection.
+      for (let r = 0; r < this.warpRows; r++) {
+        for (let c = 0; c < this.warpCols; c++) {
+          this.drawHandle(ctx, grid[r][c].x, grid[r][c].y, "square");
+        }
+      }
       return;
     }
 
@@ -702,26 +732,94 @@ export class Selection {
 type Pt = { x: number; y: number };
 
 /**
- * Draw a bitmap warped to fit a 4-corner quad by tessellating the source rect
- * into two triangles (split along the TL→BR diagonal) and applying a per-triangle
- * affine. A faint crease may show along the diagonal when corners are far from
- * coplanar — acceptable trade-off for sketching.
- *
- * `corners` order: TL, TR, BR, BL.
+ * Draw a bitmap warped through an N×M control-point grid by splitting each cell
+ * into two triangles (along the cell's TL→BR diagonal) and rendering each with
+ * a per-triangle affine. A faint crease may show along cell diagonals; cells
+ * scale with grid density. 2×2 = 4-corner distort.
  */
-function drawWarpedQuad(
+function drawWarpedMesh(
   ctx: CanvasRenderingContext2D,
   img: HTMLCanvasElement,
   rect: SelectionRect,
-  corners: Pt[],
+  grid: Pt[][],
+  rows: number,
+  cols: number,
 ) {
-  const tlSrc: Pt = { x: rect.x, y: rect.y };
-  const trSrc: Pt = { x: rect.x + rect.w, y: rect.y };
-  const brSrc: Pt = { x: rect.x + rect.w, y: rect.y + rect.h };
-  const blSrc: Pt = { x: rect.x, y: rect.y + rect.h };
-  const [tl, tr, br, bl] = corners;
-  drawTriangle(ctx, img, rect, [tlSrc, trSrc, brSrc], [tl, tr, br]);
-  drawTriangle(ctx, img, rect, [tlSrc, brSrc, blSrc], [tl, br, bl]);
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols - 1; c++) {
+      const u0 = c / (cols - 1);
+      const u1 = (c + 1) / (cols - 1);
+      const v0 = r / (rows - 1);
+      const v1 = (r + 1) / (rows - 1);
+      const tlSrc: Pt = { x: rect.x + u0 * rect.w, y: rect.y + v0 * rect.h };
+      const trSrc: Pt = { x: rect.x + u1 * rect.w, y: rect.y + v0 * rect.h };
+      const brSrc: Pt = { x: rect.x + u1 * rect.w, y: rect.y + v1 * rect.h };
+      const blSrc: Pt = { x: rect.x + u0 * rect.w, y: rect.y + v1 * rect.h };
+      const tl = grid[r][c];
+      const tr = grid[r][c + 1];
+      const br = grid[r + 1][c + 1];
+      const bl = grid[r + 1][c];
+      drawTriangle(ctx, img, rect, [tlSrc, trSrc, brSrc], [tl, tr, br]);
+      drawTriangle(ctx, img, rect, [tlSrc, brSrc, blSrc], [tl, br, bl]);
+    }
+  }
+}
+
+/** Build a fresh rows×cols grid by uniformly sampling the matrix-transformed rect. */
+function sampleGrid(rect: SelectionRect, m: Mat, rows: number, cols: number): Pt[][] {
+  const grid: Pt[][] = [];
+  for (let i = 0; i < rows; i++) {
+    const row: Pt[] = [];
+    const v = i / (rows - 1);
+    for (let j = 0; j < cols; j++) {
+      const u = j / (cols - 1);
+      row.push(applyPoint(m, rect.x + u * rect.w, rect.y + v * rect.h));
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
+/** Resample a control grid to a new resolution via piecewise bilinear interp over the existing cells. */
+function resampleGrid(grid: Pt[][], oldRows: number, oldCols: number, newRows: number, newCols: number): Pt[][] {
+  const out: Pt[][] = [];
+  for (let i = 0; i < newRows; i++) {
+    const row: Pt[] = [];
+    const v = i / (newRows - 1);
+    for (let j = 0; j < newCols; j++) {
+      const u = j / (newCols - 1);
+      row.push(bilinearSample(grid, oldRows, oldCols, u, v));
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function bilinearSample(grid: Pt[][], rows: number, cols: number, u: number, v: number): Pt {
+  const fx = u * (cols - 1);
+  const fy = v * (rows - 1);
+  const x0 = Math.min(Math.floor(fx), cols - 2);
+  const y0 = Math.min(Math.floor(fy), rows - 2);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const a = grid[y0][x0];
+  const b = grid[y0][x0 + 1];
+  const c = grid[y0 + 1][x0];
+  const d = grid[y0 + 1][x0 + 1];
+  return {
+    x: (1 - tx) * (1 - ty) * a.x + tx * (1 - ty) * b.x + (1 - tx) * ty * c.x + tx * ty * d.x,
+    y: (1 - tx) * (1 - ty) * a.y + tx * (1 - ty) * b.y + (1 - tx) * ty * c.y + tx * ty * d.y,
+  };
+}
+
+/** Walk the outer ring of a control grid clockwise starting from TL. */
+function outerPerimeter(grid: Pt[][], rows: number, cols: number): Pt[] {
+  const ring: Pt[] = [];
+  for (let c = 0; c < cols; c++) ring.push(grid[0][c]);
+  for (let r = 1; r < rows; r++) ring.push(grid[r][cols - 1]);
+  for (let c = cols - 2; c >= 0; c--) ring.push(grid[rows - 1][c]);
+  for (let r = rows - 2; r >= 1; r--) ring.push(grid[r][0]);
+  return ring;
 }
 
 function drawTriangle(

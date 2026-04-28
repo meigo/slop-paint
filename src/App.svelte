@@ -246,8 +246,13 @@
     }
   }
 
-  /** Enter 4-corner warp mode. From 'selected', lifts pixels first. */
-  function enterWarp() {
+  /**
+   * Enter warp/mesh mode at the requested grid resolution.
+   * - From 'selected', lifts pixels and goes straight to warping.
+   * - From 'transforming', initializes the grid from the current matrix.
+   * - From 'warping' at a different density, resamples (preserves edits via bilinear).
+   */
+  function enterWarp(rows: number, cols: number) {
     if (!selection || !layers) return;
     if (selection.state === "selected") {
       const layer = layers.active;
@@ -260,7 +265,9 @@
       layers.composite();
     }
     if (selection.state === "transforming") {
-      selection.beginWarp();
+      selection.beginWarp(rows, cols);
+    } else if (selection.state === "warping") {
+      selection.densifyWarp(rows, cols);
     }
   }
 
@@ -619,10 +626,15 @@
       return;
     }
 
-    // Distort/Warp: enter 4-corner warp from a selected or transforming selection.
+    // Distort/Warp: W = 4-corner distort (2×2 grid). M = mesh warp (3×3 grid).
     if ((e.key === "w" || e.key === "W") && selection?.active) {
       e.preventDefault();
-      enterWarp();
+      enterWarp(2, 2);
+      return;
+    }
+    if ((e.key === "m" || e.key === "M") && selection?.active) {
+      e.preventDefault();
+      enterWarp(3, 3);
       return;
     }
 
