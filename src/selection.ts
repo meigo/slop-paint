@@ -240,12 +240,9 @@ export class Selection {
     this.drawOverlay();
   }
 
-  /**
-   * Lift pixels from source canvas into a new canvas (using lasso clip if available).
-   * The source canvas is cleared in the lifted region. Returns the lifted canvas.
-   * Caller is responsible for passing the result to beginTransform().
-   */
-  liftPixels(srcCtx: CanvasRenderingContext2D, dpr: number): HTMLCanvasElement | null {
+  /** Copy the selected pixels (lasso-clipped if a lasso) into a new canvas at the source's
+   *  physical resolution. The source is left untouched. */
+  copyPixels(srcCtx: CanvasRenderingContext2D, dpr: number): HTMLCanvasElement | null {
     if (!this.rect) return null;
     const r = this.rect;
     const px = Math.round(r.x * dpr);
@@ -272,7 +269,17 @@ export class Selection {
       ctx.clip(clipPath);
       ctx.drawImage(srcCtx.canvas, px, py, pw, ph, 0, 0, pw, ph);
       ctx.restore();
+    } else {
+      ctx.drawImage(srcCtx.canvas, px, py, pw, ph, 0, 0, pw, ph);
+    }
+    return cvs;
+  }
 
+  /** Clear the selected region (rect or lasso-clipped) from the source. */
+  clearRegion(srcCtx: CanvasRenderingContext2D, dpr: number): void {
+    if (!this.rect) return;
+    const r = this.rect;
+    if (this.lassoPath) {
       srcCtx.save();
       const srcClip = new Path2D();
       for (let i = 0; i < this.lassoPoints.length; i++) {
@@ -288,10 +295,19 @@ export class Selection {
       srcCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       srcCtx.restore();
     } else {
-      ctx.drawImage(srcCtx.canvas, px, py, pw, ph, 0, 0, pw, ph);
       srcCtx.clearRect(r.x, r.y, r.w, r.h);
     }
+  }
 
+  /**
+   * Lift pixels from source canvas into a new canvas (using lasso clip if available).
+   * The source canvas is cleared in the lifted region. Returns the lifted canvas.
+   * Caller is responsible for passing the result to beginTransform().
+   */
+  liftPixels(srcCtx: CanvasRenderingContext2D, dpr: number): HTMLCanvasElement | null {
+    const cvs = this.copyPixels(srcCtx, dpr);
+    if (!cvs) return null;
+    this.clearRegion(srcCtx, dpr);
     return cvs;
   }
 
@@ -302,6 +318,15 @@ export class Selection {
     this.state = "transforming";
     this.drawOverlay();
     this.onStateChange?.();
+  }
+
+  /** Start a floating transform from external pixels (paste), drawn into `rect` (doc units). */
+  pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): void {
+    this.rect = { ...rect };
+    this.mode = "rect";
+    this.lassoPath = null;
+    this.lassoPoints = [];
+    this.beginTransform(pixels);
   }
 
   /**

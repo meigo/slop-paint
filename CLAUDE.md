@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `selection.ts` (floorScale), `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `selection.ts` (floorScale), `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -56,13 +56,14 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
 - `layers.ts` — tree-based layer/group management with per-layer undo history, lock, alpha lock, duplicate, merge down
 - `history.ts` — undo/redo stack via ImageData snapshots
-- `selection.ts` — rect/lasso selection with move/scale/rotate transform; the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
+- `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT
 - `tool-settings.ts` — brush/eraser stroke-setting slots (size, opacity, smoothing, streamline, size range, brush type); the active tool's values live in `app`, the other tool's in a slot, swapped in `setTool`
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content)
 - `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible)
+- `paste.ts` — where pasted pixels land (`placeInternalPaste`: copied spot + 8px, kept on the page; `placeExternalImage`: centred, 1 image px = 1 doc px, scaled down to fit)
 
 ### State Management
 
@@ -97,6 +98,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Ctrl+=/- — zoom in/out
 - [ / ] — decrease/increase brush size
 - Ctrl+Z / Ctrl+Shift+Z — undo/redo
+- Ctrl+C / Ctrl+X / Ctrl+V — copy / cut / paste selection; Delete or Backspace — clear selection
 - Ctrl+S / Ctrl+O — save/open project (PSD)
 - Space+drag or middle mouse — pan
 
@@ -120,6 +122,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Samples the composited document (ignores layer lock); transparent pixels pick nothing
 - Drag to aim (a swatch follows above-left of the point), release to pick; then returns to the previous tool
 - Sets the shared color, which the brush and the fill tool both use
+
+## Clipboard
+
+- Copy keeps the selection's pixels in memory (layer resolution + source rect) and also writes a PNG at document resolution to the system clipboard (best effort; the ClipboardItem must be built synchronously with a Blob promise for Safari)
+- Paste goes through the window `paste` event: an image on the system clipboard floats centred (scaled down to fit); if its size equals the internal copy's, the internal copy is used instead so it keeps its position. Pasted pixels float on the active layer with transform handles (Enter applies, Esc cancels); the paste is one undo step
+- Edit menu Paste (for iPad without a keyboard) tries `navigator.clipboard.read()` and falls back to the internal copy
+- Delete/cut are one undo step and skip the step if nothing changed
 
 ## Fill Tool
 

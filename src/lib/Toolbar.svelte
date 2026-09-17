@@ -21,6 +21,10 @@
     undo,
     redo,
     clearLayer,
+    copy,
+    cut,
+    paste,
+    deleteSelection,
     saveImage,
     exportPsd,
     savePsd,
@@ -35,6 +39,10 @@
     undo: () => void;
     redo: () => void;
     clearLayer: () => void;
+    copy: () => void;
+    cut: () => void;
+    paste: () => void;
+    deleteSelection: () => void;
     saveImage: () => void;
     exportPsd: () => void;
     savePsd: () => void;
@@ -204,6 +212,39 @@
     </ToolbarMenu>
     <ToolbarMenu label="Edit">
       {#snippet children(close)}
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            cut();
+            close();
+          }}>Cut <span class={kbd}>Ctrl+X</span></button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            copy();
+            close();
+          }}>Copy <span class={kbd}>Ctrl+C</span></button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            paste();
+            close();
+          }}>Paste <span class={kbd}>Ctrl+V</span></button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            deleteSelection();
+            close();
+          }}>Delete selection <span class={kbd}>Del</span></button
+        >
+        <div class="my-1 h-px bg-border"></div>
         <button
           class={menuItem}
           role="menuitem"

@@ -10,7 +10,8 @@
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
   import { floodFill, hexToRgba, rgbToHex, sameImageData } from "./fill";
-  import { Selection } from "./selection";
+  import { Selection, type SelectionRect } from "./selection";
+  import { placeExternalImage, placeInternalPaste } from "./paste";
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd } from "./export-psd";
@@ -787,6 +788,24 @@
       return;
     }
 
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+      if (selection?.state === "selected") e.preventDefault();
+      copySelection();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x") {
+      if (selection?.state === "selected") e.preventDefault();
+      cutSelection();
+      return;
+    }
+    // Ctrl/Cmd+V is handled by the `paste` event (it carries the system clipboard's image).
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") return;
+    if ((e.key === "Delete" || e.key === "Backspace") && selection?.state === "selected") {
+      e.preventDefault();
+      deleteSelection();
+      return;
+    }
+
     if (e.key === "Enter" && selection?.active) {
       e.preventDefault();
       selection.commit();
@@ -891,6 +910,133 @@
     // without untrack, this would trigger other effects and exceed max update depth.
     return untrack(() => init());
   });
+
+  // --- Clipboard ---
+  // Pixels at the layer's physical resolution, plus where they were copied from (doc units).
+  let pixelClipboard: { canvas: HTMLCanvasElement; rect: SelectionRect } | null = null;
+
+  /** The selection's pixels, scaled to document (CSS) pixels like the PNG export. */
+  function toDocResolution(pixels: HTMLCanvasElement, rect: SelectionRect): HTMLCanvasElement {
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.round(rect.w));
+    out.height = Math.max(1, Math.round(rect.h));
+    out.getContext("2d")!.drawImage(pixels, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  /**
+   * Also put the copy on the SYSTEM clipboard as a PNG, so it can be pasted into other apps.
+   * Best effort: the internal copy already worked. Safari needs the ClipboardItem built
+   * synchronously inside the gesture with a Blob PROMISE (from slop-animator).
+   */
+  function copyToSystemClipboard(canvas: HTMLCanvasElement) {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+    const png = new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),
+    );
+    void navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).catch(() => {});
+  }
+
+  function copySelection() {
+    if (!selection || selection.state !== "selected" || !selection.rect || !layers) return;
+    const dpr = window.devicePixelRatio || 1;
+    const pixels = selection.copyPixels(layers.active.ctx, dpr);
+    if (!pixels) return;
+    pixelClipboard = { canvas: pixels, rect: { ...selection.rect } };
+    copyToSystemClipboard(toDocResolution(pixels, selection.rect));
+  }
+
+  function deleteSelection() {
+    if (!selection || selection.state !== "selected" || !layers) return;
+    const layer = layers.active;
+    if (layer.locked) return;
+    const dpr = window.devicePixelRatio || 1;
+    const before = layers.getSnapshot();
+    selection.clearRegion(layer.ctx, dpr);
+    selection.cancel(); // drop the marquee
+    if (sameImageData(before, layers.getSnapshot())) return;
+    layer.history.push(before);
+    layers.composite();
+    bumpLayerVersion();
+  }
+
+  function cutSelection() {
+    copySelection();
+    deleteSelection();
+  }
+
+  /** Float `pixels` at `rect` on the active layer with transform handles; Enter/Esc resolves it. */
+  function startPasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): boolean {
+    if (!selection || !layers || layers.active.locked) return false;
+    setTool("select"); // commits any floating selection first
+    if (selection.active) selection.cancel();
+    preSelectionSnapshot = layers.getSnapshot(); // commit pushes it; cancel restores it (no-op)
+    selection.pasteFloat(pixels, rect);
+    return true;
+  }
+
+  function pasteInternal(): boolean {
+    if (!pixelClipboard) return false;
+    const copy = document.createElement("canvas");
+    copy.width = pixelClipboard.canvas.width;
+    copy.height = pixelClipboard.canvas.height;
+    copy.getContext("2d")!.drawImage(pixelClipboard.canvas, 0, 0);
+    return startPasteFloat(
+      copy,
+      placeInternalPaste(pixelClipboard.rect, app.docWidth, app.docHeight),
+    );
+  }
+
+  async function pasteImageBlob(blob: Blob) {
+    const bmp = await createImageBitmap(blob);
+    // Our own copy comes back from the system clipboard at document size: prefer the internal one,
+    // which keeps its position and full resolution.
+    if (
+      pixelClipboard &&
+      bmp.width === Math.round(pixelClipboard.rect.w) &&
+      bmp.height === Math.round(pixelClipboard.rect.h)
+    ) {
+      bmp.close();
+      pasteInternal();
+      return;
+    }
+    const cvs = document.createElement("canvas");
+    cvs.width = bmp.width;
+    cvs.height = bmp.height;
+    cvs.getContext("2d")!.drawImage(bmp, 0, 0);
+    const rect = placeExternalImage(bmp.width, bmp.height, app.docWidth, app.docHeight);
+    bmp.close();
+    startPasteFloat(cvs, rect);
+  }
+
+  /** Ctrl/Cmd+V: an image on the system clipboard wins, else the internal copy. */
+  function handlePaste(e: ClipboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA") return;
+    const file = [...(e.clipboardData?.items ?? [])]
+      .find((i) => i.kind === "file" && i.type.startsWith("image/"))
+      ?.getAsFile();
+    e.preventDefault();
+    if (file) void pasteImageBlob(file).catch(() => pasteInternal());
+    else pasteInternal();
+  }
+
+  /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
+  async function pasteFromMenu() {
+    try {
+      const items = (await navigator.clipboard?.read?.()) ?? [];
+      for (const item of items) {
+        const type = item.types.find((ty) => ty.startsWith("image/"));
+        if (type) {
+          await pasteImageBlob(await item.getType(type));
+          return;
+        }
+      }
+    } catch {
+      /* permission denied or unsupported: fall back to the internal copy */
+    }
+    pasteInternal();
+  }
 
   function init(): () => void {
     viewport = new Viewport(canvasContainerEl);
@@ -1061,7 +1207,12 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} onresize={resizeCanvas} />
+<svelte:window
+  onkeydown={handleKeyDown}
+  onkeyup={handleKeyUp}
+  onpaste={handlePaste}
+  onresize={resizeCanvas}
+/>
 
 <div class="flex h-full w-full flex-col bg-canvas-bg">
   {#if layersReady}
@@ -1070,6 +1221,10 @@
       {undo}
       {redo}
       {clearLayer}
+      copy={copySelection}
+      cut={cutSelection}
+      paste={() => void pasteFromMenu()}
+      {deleteSelection}
       {saveImage}
       exportPsd={doExportPsd}
       savePsd={doSavePsd}
