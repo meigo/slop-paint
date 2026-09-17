@@ -9,7 +9,7 @@
   import { drawStroke } from "./brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
-  import { floodFill, hexToRgba, rgbToHex } from "./fill";
+  import { floodFill, hexToRgba, rgbToHex, sameImageData } from "./fill";
   import { Selection } from "./selection";
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
@@ -606,27 +606,42 @@
     // Fill tool
     if (app.currentTool === "fill") {
       if (points.length === 1 && !done) {
-        const snapshot = layers.getSnapshot();
-        layer.history.push(snapshot);
+        const before = layers.getSnapshot();
         const color = hexToRgba(app.brushSettings.color, app.brushSettings.opacity);
-        if (selection?.state === "selected") {
-          // Run flood fill on a temp canvas (1:1 with layer's physical pixels),
-          // then composite back through the selection clip.
+        const clipSel = selection?.state === "selected" ? selection : null;
+        if (clipSel || layer.alphaLock) {
+          // Run flood fill on a temp canvas (1:1 with layer's physical pixels), then composite
+          // back through the selection clip and/or alpha lock.
           const tmp = document.createElement("canvas");
           tmp.width = layer.canvas.width;
           tmp.height = layer.canvas.height;
           const tmpCtx = tmp.getContext("2d", { willReadFrequently: true })!;
           tmpCtx.drawImage(layer.canvas, 0, 0);
-          floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, app.fillSettings);
+          floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, {
+            ...app.fillSettings,
+            // Expand paints BEHIND existing content, which alpha lock would refuse entirely;
+            // without it the fill recolours the region and source-atop keeps it to existing pixels.
+            expand: layer.alphaLock ? 0 : app.fillSettings.expand,
+          });
           layer.ctx.save();
-          selection.applyClip(layer.ctx);
-          // tmp has physical pixel dimensions; layer.ctx has dpr scaling, so draw
-          // tmp at its CSS-pixel size to land 1:1 in physical pixels.
-          layer.ctx.drawImage(tmp, 0, 0, tmp.width / dpr, tmp.height / dpr);
-          layer.ctx.restore();
+          try {
+            clipSel?.applyClip(layer.ctx);
+            // `copy` replaces instead of blending: tmp already holds the layer's pixels, so
+            // source-over would draw semi-transparent edges on top of themselves and darken them.
+            layer.ctx.globalCompositeOperation = layer.alphaLock ? "source-atop" : "copy";
+            // tmp has physical pixel dimensions; layer.ctx has dpr scaling, so draw
+            // tmp at its CSS-pixel size to land 1:1 in physical pixels.
+            layer.ctx.drawImage(tmp, 0, 0, tmp.width / dpr, tmp.height / dpr);
+          } finally {
+            // layer.ctx is long-lived; a leaked clip or `copy` mode would corrupt every later draw
+            layer.ctx.restore();
+          }
         } else {
           floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, app.fillSettings);
         }
+        // Nothing landed (already this colour, or clipped away): no empty undo step
+        if (sameImageData(before, layers.getSnapshot())) return;
+        layer.history.push(before);
         layers.composite();
         bumpLayerVersion();
       }

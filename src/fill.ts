@@ -223,3 +223,12 @@ export function hexToRgba(
 export function rgbToHex(r: number, g: number, b: number): string {
   return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
 }
+
+/** Pixel-identical check, used to skip an undo step for a fill that changed nothing. */
+export function sameImageData(a: ImageData, b: ImageData): boolean {
+  const x = a.data;
+  const y = b.data;
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
+}

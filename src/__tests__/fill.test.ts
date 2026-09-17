@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hexToRgba, rgbToHex } from "../fill";
+import { hexToRgba, rgbToHex, sameImageData } from "../fill";
 
 describe("hexToRgba", () => {
   it("parses black at full opacity", () => {
@@ -43,5 +43,21 @@ describe("rgbToHex", () => {
   it("round-trips with hexToRgba", () => {
     const { r, g, b } = hexToRgba("#1a2b3c", 100);
     expect(rgbToHex(r, g, b)).toBe("#1a2b3c");
+  });
+});
+
+describe("sameImageData", () => {
+  const img = (...v: number[]) => ({ data: new Uint8ClampedArray(v) }) as ImageData;
+
+  it("is true for identical pixels", () => {
+    expect(sameImageData(img(1, 2, 3, 4), img(1, 2, 3, 4))).toBe(true);
+  });
+
+  it("is false when any byte differs", () => {
+    expect(sameImageData(img(1, 2, 3, 4), img(1, 2, 3, 5))).toBe(false);
+  });
+
+  it("is false for different sizes", () => {
+    expect(sameImageData(img(1, 2, 3, 4), img(1, 2, 3, 4, 5, 6, 7, 8))).toBe(false);
   });
 });
