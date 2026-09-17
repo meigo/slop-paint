@@ -186,6 +186,8 @@ export function setupInput(
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointerleave", onPointerUp);
+  // iPad palm rejection cancels the stream with no pointerup; end the stroke instead of leaving it open
+  canvas.addEventListener("pointercancel", onPointerUp);
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
   return () => {
@@ -193,5 +195,6 @@ export function setupInput(
     canvas.removeEventListener("pointermove", onPointerMove);
     canvas.removeEventListener("pointerup", onPointerUp);
     canvas.removeEventListener("pointerleave", onPointerUp);
+    canvas.removeEventListener("pointercancel", onPointerUp);
   };
 }
