@@ -17,6 +17,7 @@
   import ToolbarMenu from "./ToolbarMenu.svelte";
   import { MAX_GAP } from "../fill-holes";
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
+  import { sliderFill } from "./slider-fill";
 
   let {
     setTool,
@@ -364,6 +365,7 @@
         max="80"
         step="0.5"
         class="w-20"
+        style={sliderFill(app.brushSettings.size, 1, 80)}
         bind:value={app.brushSettings.size}
         oninput={onSettingsChange}
       />
@@ -416,6 +418,7 @@
         min="1"
         max="100"
         class="w-20"
+        style={sliderFill(app.brushSettings.opacity, 1, 100)}
         bind:value={app.brushSettings.opacity}
         oninput={onSettingsChange}
       />
@@ -447,6 +450,7 @@
               min="0"
               max="100"
               class="min-w-0 flex-1"
+              style={sliderFill(app.brushSettings.smoothing, 0, 100)}
               bind:value={app.brushSettings.smoothing}
               oninput={onSettingsChange}
             />
@@ -460,6 +464,7 @@
               min="0"
               max="100"
               class="min-w-0 flex-1"
+              style={sliderFill(app.streamline, 0, 100)}
               bind:value={app.streamline}
               oninput={onSettingsChange}
             />
@@ -472,6 +477,7 @@
               type="range"
               min="100"
               max="5000"
+              style={sliderFill(app.sizeRange * 100, 100, 5000)}
               value={app.sizeRange * 100}
               oninput={onSizeRangeInput}
               class="min-w-0 flex-1"
@@ -486,6 +492,7 @@
                 type="range"
                 min="0"
                 max="180"
+                style={sliderFill(app.brushSettings.nibAngle ?? 0, 0, 180)}
                 bind:value={app.brushSettings.nibAngle}
                 oninput={onSettingsChange}
                 class="min-w-0 flex-1"
@@ -498,6 +505,11 @@
                 type="range"
                 min="0"
                 max={MAX_NIB_FLATNESS * 100}
+                style={sliderFill(
+                  (app.brushSettings.nibFlatness ?? 0) * 100,
+                  0,
+                  MAX_NIB_FLATNESS * 100,
+                )}
                 value={(app.brushSettings.nibFlatness ?? 0) * 100}
                 oninput={onNibFlatnessInput}
                 class="min-w-0 flex-1"
@@ -513,6 +525,7 @@
                 type="range"
                 min="0"
                 max="100"
+                style={sliderFill(app.brushSettings.dwellPool ?? 0, 0, 100)}
                 bind:value={app.brushSettings.dwellPool}
                 oninput={onSettingsChange}
                 class="min-w-0 flex-1"
@@ -563,6 +576,7 @@
         type="range"
         min="0"
         max="200"
+        style={sliderFill(app.fillSettings.alphaThreshold ?? 0, 0, 200)}
         bind:value={app.fillSettings.alphaThreshold}
         oninput={onSettingsChange}
         class="w-20"
@@ -575,6 +589,7 @@
         type="range"
         min="0"
         max="20"
+        style={sliderFill(app.fillSettings.expand ?? 0, 0, 20)}
         bind:value={app.fillSettings.expand}
         oninput={onSettingsChange}
         class="w-20"
@@ -591,6 +606,7 @@
         type="range"
         min="0"
         max={MAX_GAP}
+        style={sliderFill(app.fillEnclosedGap, 0, MAX_GAP)}
         bind:value={app.fillEnclosedGap}
         oninput={onSettingsChange}
         class="w-16"

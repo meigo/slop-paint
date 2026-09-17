@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -48,6 +48,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
 - `lib/SelectionActions.svelte` — floating panel over the selection: Free transform, Distort, Mesh, Flip H/V, keep proportions, Apply, Cancel. Buttons keep their positions when a plain selection is lifted (the panel is centred, so appearing/disappearing buttons would slide under the pen); Apply/Cancel are shown dimmed until there is a float
 - `lib/LayerPanel.svelte` — layer tree in Svelte markup: recursive snippets, Lucide icons, thumbnails via a canvas action, inline rename on double-click AND double-tap (`lib/double-tap.ts`; iPad doesn't fire dblclick reliably), Spine tag popover. Every control carries a `title`, which is also what the status bar shows on touch
+- The panel is resizable by dragging its left edge (`panel-layout.ts`: min 184px, max half the viewport); the width is saved with the other settings
 - The list is rebuilt by `{#key version:dragNonce}` — the layer tree is imperative, so a `layerVersion` bump is what re-renders it. After a SortableJS drop: read the order back from the DOM, remove the node SortableJS relocated (a bottom drop lands past the `{#each}` anchor and would survive as a duplicate), then bump `dragNonce` to rebuild from state. A drop can fire `onEnd` twice (cross-list), so a latch runs the rebuild once
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
@@ -87,7 +88,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Dark only, on the shared slop palette (`../SLOP-TIMELINE-UI.md`, same hexes as slop-animator): zinc chrome (`surface`, `border`, `text`, `canvas-bg`), blue `accent` (#5b8cff) with near-black `accent-text`
 - On-states: `.ui-on` for an active tool/toggle (accent fill), `.ui-selected` for the current layer/group row (10% accent tint + 2px left edge). Use these instead of `class:bg-accent` directives — layered utilities lose to emit order
 - `#app` is `position: fixed` with `100dvh` height so iPad touch drags can't pan the page
-- `app.css` contains Tailwind import + theme tokens + non-utility CSS (on-states, checkerboard, sortable, curve popup, sliders)
+- `app.css` contains Tailwind import + theme tokens + non-utility CSS (on-states, checkerboard, sortable, curve editor, sliders)
+- Sliders follow the family style (SLOP-TIMELINE-UI.md §6): 4px track, 12px round thumb, and the filled portion drawn as a gradient. `appearance: none` (needed to size the thumb) loses the browser's own fill, so every slider passes `style={sliderFill(value, min, max)}` (`lib/slider-fill.ts`) — a new slider without it renders an empty track
 
 ## iPad / Touch Support
 
@@ -190,4 +192,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 
 - UI settings saved to localStorage (debounced)
-- Includes: tool, brush type, size, opacity, smoothing, color, size range, both pressure curves, draw-behind, taper, fill settings, eraser settings, keep proportions, Fill enclosed bridge, nib angle/flatness, ink dwell
+- Includes: tool, brush type, size, opacity, smoothing, color, size range, both pressure curves, draw-behind, taper, fill settings, eraser settings, keep proportions, Fill enclosed bridge, nib angle/flatness, ink dwell, layer panel width

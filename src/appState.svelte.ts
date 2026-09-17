@@ -5,6 +5,7 @@ import type { BrushType } from "./brush-textures";
 export type BrushKind = "smooth" | "ink" | "calligraphy" | BrushType;
 import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
+import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
 
 export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedropper";
 
@@ -24,6 +25,8 @@ interface AppStateShape {
   keepProportions: boolean;
   /** Fill enclosed: bridge outline breaks of about 2×this px (0..MAX_GAP). */
   fillEnclosedGap: number;
+  /** Layer panel width in px (drag its left edge). */
+  layerPanelWidth: number;
   /** Transient message for the status bar (see flashStatus). */
   statusMessage: string;
   /** What the control under the pointer does — iPad has no hover, so titles go here. */
@@ -60,6 +63,7 @@ export const app: AppStateShape = $state({
   docHeight: 1080,
   keepProportions: true,
   fillEnclosedGap: 0,
+  layerPanelWidth: DEFAULT_PANEL_WIDTH,
   statusMessage: "",
   statusHint: "",
 });

@@ -20,6 +20,8 @@
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
   import { clickOutside } from "./click-outside";
+  import { clampPanelWidth } from "../panel-layout";
+  import { sliderFill } from "./slider-fill";
   import { isDoubleTap, type Tap } from "./double-tap";
   import {
     parseTags,
@@ -33,9 +35,37 @@
 
   let {
     layers,
+    onWidthChange,
   }: {
     layers: LayerManager;
+    /** Called when a resize drag ends, so the width can be saved. */
+    onWidthChange: () => void;
   } = $props();
+
+  // Panel resize. The panel is docked RIGHT, so dragging its left-edge grip LEFT makes it wider —
+  // hence (start - current). Pointer capture keeps the drag alive outside the 8px strip.
+  let gripStartX = 0;
+  let gripStartW = 0;
+
+  function gripDown(e: PointerEvent) {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    gripStartX = e.clientX;
+    gripStartW = app.layerPanelWidth;
+  }
+
+  function gripMove(e: PointerEvent) {
+    if (!(e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) return;
+    app.layerPanelWidth = clampPanelWidth(gripStartW + (gripStartX - e.clientX), window.innerWidth);
+  }
+
+  function gripUp(e: PointerEvent) {
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    onWidthChange();
+  }
 
   // The layer tree is imperative, so the list is rebuilt whenever layerVersion changes (and after a
   // drag, see rebuildFromDom). Reading it in a $derived is what makes {#key} re-render.
@@ -360,6 +390,7 @@
         title="Opacity"
         min="0"
         max="100"
+        style={sliderFill(layer.opacity, 0, 100)}
         value={layer.opacity}
         oninput={(e) => {
           e.stopPropagation();
@@ -423,6 +454,7 @@
           title="Group opacity"
           min="0"
           max="100"
+          style={sliderFill(group.opacity, 0, 100)}
           value={group.opacity}
           oninput={(e) => {
             e.stopPropagation();
@@ -457,8 +489,25 @@
 {/snippet}
 
 <div
-  class="layer-panel relative z-2 flex w-70 min-w-70 flex-col overflow-hidden border-l border-border bg-surface"
+  class="layer-panel relative z-2 flex shrink-0 flex-col overflow-hidden border-l border-border bg-surface"
+  style:width="{app.layerPanelWidth}px"
 >
+  <!-- Resize grip on the docked edge: an 8px hit strip, tinted on hover. `touch-action: none` or
+       iPad treats the drag as a scroll and cancels the pointer stream. -->
+  <div
+    class="group absolute inset-y-0 left-0 z-30 w-2 cursor-col-resize"
+    style="touch-action: none"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize layer panel"
+    title="Drag to resize the layer panel"
+    onpointerdown={gripDown}
+    onpointermove={gripMove}
+    onpointerup={gripUp}
+    onpointercancel={gripUp}
+  >
+    <div class="absolute inset-y-0 left-0 w-1 group-hover:bg-text/10"></div>
+  </div>
   <div
     class="flex items-center justify-between border-b border-border px-2.5 py-2 text-xs font-semibold text-text-secondary"
   >

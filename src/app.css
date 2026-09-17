@@ -129,26 +129,27 @@ body {
   border-radius: 4px;
 }
 
-/* Range input — thin track, small round thumb, monochrome */
+/* Range input — 4px track with the filled portion drawn as a gradient, 12px round thumb
+   (SLOP-TIMELINE-UI.md §6, same as the other slop apps). `appearance: none` is the only way to
+   size the thumb, and it costs the filled track the browser drew for free — so each slider reports
+   its fill as --fill-from/--fill-to (see lib/slider-fill.ts) and this gradient rebuilds it. Two
+   stops so a bipolar control could fill outward from its centre. A slider without the vars still
+   renders; it just shows an empty track.
+   The fill is the accent mixed 50% into the track, not the accent itself: at full strength the bar
+   competes with the thumb, which is the thing you aim at. */
 input[type="range"] {
+  --slider-fill: color-mix(in srgb, var(--color-accent) 50%, var(--color-surface-hover));
   -webkit-appearance: none;
   appearance: none;
-  height: 20px;
-  background: transparent;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--color-surface-hover) 0 var(--fill-from, 0%),
+    var(--slider-fill) var(--fill-from, 0%) var(--fill-to, 0%),
+    var(--color-surface-hover) var(--fill-to, 0%) 100%
+  );
   cursor: pointer;
-}
-
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 1.5px;
-  background: var(--color-surface-hover);
-}
-
-input[type="range"]::-moz-range-track {
-  height: 3px;
-  border-radius: 1.5px;
-  background: var(--color-surface-hover);
-  border: none;
 }
 
 input[type="range"]::-webkit-slider-thumb {
@@ -157,10 +158,14 @@ input[type="range"]::-webkit-slider-thumb {
   height: 12px;
   border-radius: 50%;
   background: var(--color-accent);
-  border: 2px solid var(--color-surface);
-  margin-top: -4.5px;
-  box-shadow: 0 0 0 1px var(--color-border);
-  transition: transform 0.1s;
+  border: none;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -168,17 +173,7 @@ input[type="range"]::-moz-range-thumb {
   height: 12px;
   border-radius: 50%;
   background: var(--color-accent);
-  border: 2px solid var(--color-surface);
-  box-shadow: 0 0 0 1px var(--color-border);
-  transition: transform 0.1s;
-}
-
-input[type="range"]:active::-webkit-slider-thumb {
-  transform: scale(1.2);
-}
-
-input[type="range"]:active::-moz-range-thumb {
-  transform: scale(1.2);
+  border: none;
 }
 
 /* Color picker sizing */

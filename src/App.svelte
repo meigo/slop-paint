@@ -20,6 +20,7 @@
     sameImageData,
   } from "./fill";
   import { clampGap } from "./fill-holes";
+  import { clampPanelWidth } from "./panel-layout";
   import { Selection, type SelectionRect } from "./selection";
   import { placeExternalImage, placeInternalPaste } from "./paste";
   import { Viewport } from "./viewport";
@@ -248,6 +249,7 @@
     fillExpand?: number;
     keepProportions?: boolean;
     fillEnclosedGap?: number;
+    layerPanelWidth?: number;
     nibAngle?: number;
     nibFlatness?: number;
     dwellPool?: number;
@@ -278,6 +280,7 @@
       fillExpand: app.fillSettings.expand,
       keepProportions: app.keepProportions,
       fillEnclosedGap: app.fillEnclosedGap,
+      layerPanelWidth: app.layerPanelWidth,
       nibAngle: app.brushSettings.nibAngle,
       nibFlatness: app.brushSettings.nibFlatness,
       dwellPool: app.brushSettings.dwellPool,
@@ -315,6 +318,9 @@
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (data.fillEnclosedGap != null) app.fillEnclosedGap = clampGap(data.fillEnclosedGap);
+      if (data.layerPanelWidth != null) {
+        app.layerPanelWidth = clampPanelWidth(data.layerPanelWidth, window.innerWidth);
+      }
       if (data.nibAngle != null) app.brushSettings.nibAngle = data.nibAngle;
       if (data.nibFlatness != null) app.brushSettings.nibFlatness = data.nibFlatness;
       if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
@@ -1470,7 +1476,11 @@
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
   onpaste={handlePaste}
-  onresize={resizeCanvas}
+  onresize={() => {
+    // Keep the panel inside half the viewport when the window shrinks.
+    app.layerPanelWidth = clampPanelWidth(app.layerPanelWidth, window.innerWidth);
+    resizeCanvas();
+  }}
 />
 
 <div class="flex h-full w-full flex-col bg-canvas-bg">
@@ -1546,7 +1556,7 @@
     </div>
 
     {#if layersReady}
-      <LayerPanel {layers} />
+      <LayerPanel {layers} onWidthChange={debouncedSave} />
     {/if}
   </div>
 
