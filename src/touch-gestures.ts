@@ -29,7 +29,19 @@ export interface TouchGestureCallbacks {
 const TAP_MAX_DURATION = 300; // ms
 const TAP_MAX_DISTANCE = 15; // px
 /** Snap to nearest 90° when within this threshold (radians, ~5°) */
-const SNAP_ANGLE = 5 * (Math.PI / 180);
+export const SNAP_ANGLE = 5 * (Math.PI / 180);
+
+/** Nearest 90° if `rotation` is inside the snap window; otherwise unchanged. */
+export function snappedRotation(rotation: number, snap = SNAP_ANGLE): number {
+  const half = Math.PI;
+  const quarter = Math.PI / 2;
+  let r = rotation % (2 * Math.PI);
+  if (r > half) r -= 2 * Math.PI;
+  if (r < -half) r += 2 * Math.PI;
+  const nearest = Math.round(r / quarter) * quarter;
+  if (Math.abs(r - nearest) >= snap) return rotation;
+  return nearest === 0 ? 0 : nearest;
+}
 
 export function setupTouchGestures(
   /** The stable workspace container (not the transformed element) */
@@ -48,6 +60,9 @@ export function setupTouchGestures(
   let pinchStartMidY = 0;
   let pinchStartPanX = 0;
   let pinchStartPanY = 0;
+  let pinchActive = false;
+  let lastPinchMidX = 0;
+  let lastPinchMidY = 0;
 
   // Single-finger pan state
   let singlePanActive = false;
@@ -142,28 +157,36 @@ export function setupTouchGestures(
       }
     }
 
-    // Snap rotation on gesture end
+    // Snap rotation when a pinch ends (a one-finger pan never rotates, so it never snaps)
     if (touches.size === 0) {
-      snapRotation();
+      if (pinchActive) snapRotation();
+      pinchActive = false;
     }
 
     singlePanActive = false;
-
-    // If one finger remains after lifting one, restart single-finger pan from current position
-    if (touches.size === 1) {
-      const remaining = touches.values().next().value!;
-      singlePanActive = true;
-      singlePanStartX = remaining.x;
-      singlePanStartY = remaining.y;
-      singlePanStartPanX = viewport.panX;
-      singlePanStartPanY = viewport.panY;
-    }
+    restartSinglePan();
   }
 
   function onPointerCancel(e: PointerEvent) {
     if (e.pointerType !== "touch") return;
     touches.delete(e.pointerId);
     singlePanActive = false;
+    // Clear the pinch WITHOUT snapping: a cancelled gesture's rotation is arbitrary, and leaving
+    // pinchActive set made the next lift snap on stale numbers.
+    pinchActive = false;
+    restartSinglePan();
+  }
+
+  /** After one finger goes away, hand the survivor back to single-finger pan from where it is now
+   *  (otherwise no move branch matches one touch and the finger is dead). */
+  function restartSinglePan() {
+    if (touches.size !== 1) return;
+    const remaining = touches.values().next().value!;
+    singlePanActive = true;
+    singlePanStartX = remaining.x;
+    singlePanStartY = remaining.y;
+    singlePanStartPanX = viewport.panX;
+    singlePanStartPanY = viewport.panY;
   }
 
   // --- Pinch + rotate helpers ---
@@ -185,6 +208,9 @@ export function setupTouchGestures(
     pinchStartMidY = (a.y + b.y) / 2;
     pinchStartPanX = viewport.panX;
     pinchStartPanY = viewport.panY;
+    lastPinchMidX = pinchStartMidX;
+    lastPinchMidY = pinchStartMidY;
+    pinchActive = true;
   }
 
   function updatePinch() {
@@ -196,6 +222,8 @@ export function setupTouchGestures(
     const currentAngle = angleBetween(a.x, a.y, b.x, b.y);
     const currentMidX = (a.x + b.x) / 2;
     const currentMidY = (a.y + b.y) / 2;
+    lastPinchMidX = currentMidX;
+    lastPinchMidY = currentMidY;
 
     // New zoom & rotation
     const scale = currentDist / pinchStartDist;
@@ -236,23 +264,13 @@ export function setupTouchGestures(
     callbacks.onViewportChange();
   }
 
-  /** Snap rotation to nearest 90° if within threshold */
   function snapRotation() {
-    const HALF_TURN = Math.PI;
-    const QUARTER_TURN = Math.PI / 2;
-
-    // Normalize to [-PI, PI]
-    let r = viewport.rotation % (2 * Math.PI);
-    if (r > HALF_TURN) r -= 2 * Math.PI;
-    if (r < -HALF_TURN) r += 2 * Math.PI;
-
-    // Find nearest 90° step
-    const nearest = Math.round(r / QUARTER_TURN) * QUARTER_TURN;
-    if (Math.abs(r - nearest) < SNAP_ANGLE) {
-      viewport.rotation = nearest;
-      viewport.applyTransformPublic();
-      callbacks.onViewportChange();
-    }
+    const next = snappedRotation(viewport.rotation);
+    if (next === viewport.rotation) return;
+    // Rotate about the last pinch midpoint — same pivot as the live twist.
+    // Setting rotation alone uses the CSS origin (top-left) and the canvas jumps.
+    viewport.setRotationAroundScreenPoint(lastPinchMidX, lastPinchMidY, next);
+    callbacks.onViewportChange();
   }
 
   // --- Tap detection ---
@@ -283,13 +301,16 @@ export function setupTouchGestures(
   workspace.addEventListener("pointercancel", onPointerCancel, { capture: true });
 
   // Prevent default touch behaviors on the workspace
-  workspace.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
-  workspace.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+  const preventTouch = (e: Event) => e.preventDefault();
+  workspace.addEventListener("touchstart", preventTouch, { passive: false });
+  workspace.addEventListener("touchmove", preventTouch, { passive: false });
 
   return () => {
     workspace.removeEventListener("pointerdown", onPointerDown, { capture: true });
     workspace.removeEventListener("pointermove", onPointerMove, { capture: true });
     workspace.removeEventListener("pointerup", onPointerUp, { capture: true });
     workspace.removeEventListener("pointercancel", onPointerCancel, { capture: true });
+    workspace.removeEventListener("touchstart", preventTouch);
+    workspace.removeEventListener("touchmove", preventTouch);
   };
 }
