@@ -34,6 +34,14 @@ type Handle = "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r" | "rotate" | "mo
 
 const HANDLE_SIZE = 8;
 const ROTATE_OFFSET = 20;
+/** Smallest scale magnitude a corner drag can reach (from slop-animator's ref-transform.ts). */
+export const MIN_SCALE = 0.05;
+
+/** Floor a scale's MAGNITUDE at MIN_SCALE, keeping its sign. Releasing a corner exactly on its
+ *  anchor used to leave scale 0 — a non-invertible matrix that froze the float for good. */
+export function floorScale(v: number): number {
+  return v < 0 ? Math.min(-MIN_SCALE, v) : Math.max(MIN_SCALE, v);
+}
 /** Minimum hit half-width in screen pixels — hit areas grow at low zoom so handles stay grabbable. */
 const MIN_HIT_PX = 12;
 
@@ -327,9 +335,15 @@ export class Selection {
     this.onStateChange?.();
   }
 
-  /** Hit half-width in document px — at least MIN_HIT_PX in screen px, regardless of zoom. */
+  /** One screen pixel in document units. The overlay lives inside the zoomed container, so
+   *  everything drawn on it is scaled by the zoom unless sized with this. */
+  private get px(): number {
+    return 1 / this.screenScale;
+  }
+
+  /** Hit half-width in document px — a constant MIN_HIT_PX on screen, matching the handles. */
   private hitTolerance(): number {
-    return Math.max(HANDLE_SIZE + 2, MIN_HIT_PX / this.screenScale);
+    return MIN_HIT_PX * this.px;
   }
 
   hitTest(x: number, y: number): Handle {
@@ -455,8 +469,8 @@ export class Selection {
         const mouseLocal = applyPoint(invert(this.matrixStart), x, y);
         const denomX = dragLocalX - ax;
         const denomY = dragLocalY - ay;
-        const sx = denomX !== 0 ? (mouseLocal.x - ax) / denomX : 1;
-        const sy = denomY !== 0 ? (mouseLocal.y - ay) / denomY : 1;
+        const sx = floorScale(denomX !== 0 ? (mouseLocal.x - ax) / denomX : 1);
+        const sy = floorScale(denomY !== 0 ? (mouseLocal.y - ay) / denomY : 1);
 
         // S = T(ax, ay) * Scale(sx, sy) * T(-ax, -ay)
         const scale: Mat = { a: sx, b: 0, c: 0, d: sy, e: ax * (1 - sx), f: ay * (1 - sy) };
@@ -651,7 +665,8 @@ export class Selection {
     const n = applyVec(this.matrix, 0, -1);
     const len = Math.hypot(n.x, n.y) || 1;
     const top = { x: (c.tl.x + c.tr.x) / 2, y: (c.tl.y + c.tr.y) / 2 };
-    return { x: top.x + (n.x / len) * ROTATE_OFFSET, y: top.y + (n.y / len) * ROTATE_OFFSET };
+    const off = ROTATE_OFFSET * this.px;
+    return { x: top.x + (n.x / len) * off, y: top.y + (n.y / len) * off };
   }
 
   private pointInsideTransformedBox(x: number, y: number): boolean {
@@ -714,7 +729,7 @@ export class Selection {
       // Internal grid lines (between adjacent control points).
       ctx.save();
       ctx.strokeStyle = "rgba(0,0,0,0.3)";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = this.px;
       ctx.beginPath();
       for (let r = 0; r < this.warpRows; r++) {
         for (let c = 0; c < this.warpCols - 1; c++) {
@@ -785,23 +800,24 @@ export class Selection {
     ctx.moveTo(top.x, top.y);
     ctx.lineTo(rotHandle.x, rotHandle.y);
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1;
+    ctx.lineWidth = this.px;
     ctx.stroke();
     ctx.strokeStyle = "#000";
-    ctx.setLineDash([2, 2]);
+    ctx.setLineDash([2 * this.px, 2 * this.px]);
     ctx.stroke();
     ctx.setLineDash([]);
     this.drawHandle(ctx, rotHandle.x, rotHandle.y, "circle");
   }
 
   private strokeMarchingAnts(ctx: CanvasRenderingContext2D) {
+    const px = this.px;
     ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1;
+    ctx.lineWidth = px;
     ctx.setLineDash([]);
     ctx.stroke();
     ctx.strokeStyle = "#000";
-    ctx.setLineDash([4, 4]);
-    ctx.lineDashOffset = -this.marchOffset;
+    ctx.setLineDash([4 * px, 4 * px]);
+    ctx.lineDashOffset = -this.marchOffset * px;
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -812,19 +828,21 @@ export class Selection {
     y: number,
     shape: "square" | "circle",
   ) {
+    // HANDLE_SIZE is a SCREEN measurement; convert to document units for this zoom level.
+    const s = HANDLE_SIZE * this.px;
     if (shape === "square") {
       ctx.fillStyle = "#fff";
-      ctx.fillRect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+      ctx.fillRect(x - s / 2, y - s / 2, s, s);
       ctx.strokeStyle = "#000";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+      ctx.lineWidth = this.px;
+      ctx.strokeRect(x - s / 2, y - s / 2, s, s);
     } else {
       ctx.beginPath();
-      ctx.arc(x, y, HANDLE_SIZE / 2, 0, Math.PI * 2);
+      ctx.arc(x, y, s / 2, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
       ctx.fill();
       ctx.strokeStyle = "#000";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = this.px;
       ctx.stroke();
     }
   }
