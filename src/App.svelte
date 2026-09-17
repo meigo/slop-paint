@@ -70,8 +70,9 @@
   let preStrokeSnapshot: ImageData | null = null;
   // Fast canvas backup for smooth brush (GPU-accelerated drawImage vs slow putImageData)
   let preStrokeCanvas: HTMLCanvasElement | null = null;
-  // Batched smooth brush rendering — only redraw once per frame
-  let smoothDrawScheduled = false;
+  // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
+  // Null once the stroke ends, so a frame still pending at pen-up can't redraw the unfinished stroke.
+  let smoothPendingPoints: InputPoint[] | null = null;
 
   function saveLayerToCanvas(layer: {
     canvas: HTMLCanvasElement;
@@ -646,7 +647,7 @@
       // Batch restore+draw+composite to once per frame — Apple Pencil fires at
       // 240Hz but screen refreshes at 60-120Hz, so most events are wasted work.
       if (done) {
-        smoothDrawScheduled = false;
+        smoothPendingPoints = null;
         restoreLayerFromCanvas(layer);
         layer.ctx.save();
         selection?.applyClip(layer.ctx);
@@ -664,18 +665,21 @@
           preStrokeSnapshot = null;
         }
         bumpLayerVersion();
-      } else if (!smoothDrawScheduled) {
-        smoothDrawScheduled = true;
+      } else {
+        const alreadyScheduled = smoothPendingPoints !== null;
+        smoothPendingPoints = points;
+        if (alreadyScheduled) return;
         requestAnimationFrame(() => {
-          smoothDrawScheduled = false;
-          if (!layers) return;
+          const latest = smoothPendingPoints;
+          smoothPendingPoints = null;
+          if (!latest || !layers) return;
           const active = layers.active;
           restoreLayerFromCanvas(active);
           active.ctx.save();
           selection?.applyClip(active.ctx);
           drawStroke(
             active.ctx,
-            points,
+            latest,
             { ...app.brushSettings, alphaLock: active.alphaLock },
             false,
             app.sizeRange,

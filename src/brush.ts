@@ -1,6 +1,34 @@
 import getStroke from "perfect-freehand";
 import type { InputPoint } from "./input";
 
+/**
+ * Pressure → width range. `size` is the thinnest width (light pressure, and every mouse stroke);
+ * full pressure widens to `size * sizeRange`. Floored at 0.5px so strokes can be very thin.
+ */
+export function widthRange(size: number, sizeRange: number): { min: number; max: number } {
+  const min = Math.max(0.5, size);
+  return { min, max: min * sizeRange };
+}
+
+/**
+ * perfect-freehand's `smoothing` is a DECIMATION DISTANCE: an outline point is dropped unless it
+ * is farther than `pfSize * smoothing` from the last kept one. `pfSize` comes from the stroke's
+ * MAXIMUM radius, so where the stroke is thin the spacing can exceed its own width; both walls
+ * then bridge that run with chords that cross, and the nonzero fill leaves a hole (dashed
+ * strokes at high Size range). Capping the spacing at the thinnest width the stroke actually
+ * reaches fixes it without over-correcting strokes that never get thin. Ported from
+ * slop-animator, where it removed 89% of gap cases in a parameter sweep.
+ */
+export function decimationSmoothing(
+  smoothing: number,
+  minStrokeWidth: number,
+  pfSize: number,
+): number {
+  if (!(pfSize > 0)) return Math.max(0, smoothing);
+  const cap = Math.max(0, minStrokeWidth) / pfSize;
+  return Math.max(0, Math.min(smoothing, cap));
+}
+
 export interface BrushSettings {
   size: number;
   color: string;
@@ -24,32 +52,7 @@ export function drawStroke(
 ) {
   if (points.length === 0) return;
 
-  // sizeRange: light pressure → settings.size, full pressure → settings.size * sizeRange.
-  // We handle size-from-pressure ourselves and tell pf thinning=1 so it
-  // uses our mapped pressure directly: rendered_width = size * pressure.
-  // Use at least 0.5 so strokes can be very thin
-  const minSize = Math.max(0.5, settings.size);
-  const maxSize = minSize * sizeRange;
-  const inputPoints = points.map((p) => {
-    const desiredSize = minSize + p.pressure * (maxSize - minSize);
-    const mappedPressure = maxSize > 0 ? desiredSize / maxSize : 1;
-    return [p.x, p.y, mappedPressure];
-  });
-
-  const strokePoints = getStroke(inputPoints, {
-    size: maxSize,
-    thinning: 1,
-    smoothing: settings.smoothing / 100,
-    streamline: 0.3,
-    start: { taper: false, cap: true },
-    end: { taper: false, cap: true },
-    last: done,
-    // Always use our supplied (mapped) pressure. perfect-freehand's simulatePressure
-    // is velocity-based and would override our size mapping, leaving the cursor
-    // (which reflects the envelope) out of sync with the rendered stroke.
-    simulatePressure: false,
-  });
-
+  const strokePoints = strokeOutline(points, settings.size, settings.smoothing, sizeRange, done);
   if (strokePoints.length < 2) return;
 
   ctx.save();
@@ -76,6 +79,43 @@ export function drawStroke(
   ctx.fill(path2d);
 
   ctx.restore();
+}
+
+/** The filled outline polygon for a smooth stroke (pure — no canvas). */
+export function strokeOutline(
+  points: InputPoint[],
+  size: number,
+  smoothing: number,
+  sizeRange: number,
+  done: boolean,
+): number[][] {
+  // We map pressure → size ourselves and tell pf thinning=1 so it uses our mapped pressure directly.
+  const { min: minSize, max: maxSize } = widthRange(size, sizeRange);
+  let minStrokeWidth = Infinity;
+  const inputPoints = points.map((p) => {
+    const desiredSize = minSize + p.pressure * (maxSize - minSize);
+    if (desiredSize < minStrokeWidth) minStrokeWidth = desiredSize;
+    const mappedPressure = maxSize > 0 ? desiredSize / maxSize : 1;
+    return [p.x, p.y, mappedPressure];
+  });
+
+  // perfect-freehand's `size` is a RADIUS basis (diameter = 2 * size * pressure), so pass half:
+  // the rendered diameter then equals desiredSize, matching the stamp engine and the size cursor.
+  const pfSize = maxSize / 2;
+
+  return getStroke(inputPoints, {
+    size: pfSize,
+    thinning: 1,
+    smoothing: decimationSmoothing(smoothing / 100, minStrokeWidth, pfSize),
+    streamline: 0.3,
+    start: { taper: false, cap: true },
+    end: { taper: false, cap: true },
+    last: done,
+    // Always use our supplied (mapped) pressure. perfect-freehand's simulatePressure
+    // is velocity-based and would override our size mapping, leaving the cursor
+    // (which reflects the envelope) out of sync with the rendered stroke.
+    simulatePressure: false,
+  });
 }
 
 /**
