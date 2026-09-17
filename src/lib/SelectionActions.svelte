@@ -1,6 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { SquareDashed, Grid3x3, Check, X, Move } from "@lucide/svelte";
+  import {
+    SquareDashed,
+    Grid3x3,
+    Check,
+    X,
+    Move,
+    FlipHorizontal2,
+    FlipVertical2,
+    Link2,
+    Link2Off,
+  } from "@lucide/svelte";
   import type { Selection } from "../selection";
   import type { Viewport } from "../viewport";
   import { computeAnchor } from "../selection-anchor";
@@ -13,6 +23,9 @@
     onTransform,
     onDistort,
     onMesh,
+    onFlip,
+    keepProportions,
+    onToggleKeepProportions,
     onCommit,
     onCancel,
   }: {
@@ -24,6 +37,9 @@
     onTransform: () => void;
     onDistort: () => void;
     onMesh: () => void;
+    onFlip: (axis: "h" | "v") => void;
+    keepProportions: boolean;
+    onToggleKeepProportions: () => void;
     onCommit: () => void;
     onCancel: () => void;
   } = $props();
@@ -75,6 +91,10 @@
 
   const distortActive = $derived(mode === "warping" && warpRes.rows === 2 && warpRes.cols === 2);
   const meshActive = $derived(mode === "warping" && (warpRes.rows !== 2 || warpRes.cols !== 2));
+  const floating = $derived(mode !== "selected");
+
+  const btn = "flex h-11 w-11 items-center justify-center rounded-md border transition-colors";
+  const idle = "border-border bg-surface text-text-secondary";
 
   // Stop propagation so taps on buttons don't bleed through to the canvas (where
   // they would start a new selection or commit the current one).
@@ -94,19 +114,22 @@
     ? 'auto'
     : 'none'}; touch-action: none;"
 >
-  {#if mode === "selected"}
-    <button
-      class="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors"
-      onpointerdown={tap(onTransform)}
-      title="Free transform — show scale/rotate handles"
-    >
-      <Move size={20} />
-    </button>
-  {/if}
+  <!-- Button positions must not change when a plain selection is lifted (Flip lifts it): the panel
+       is centred on the selection, so a button appearing or disappearing would slide the others
+       under the pen. Move stays and shows active; Apply/Cancel are shown dimmed until there is a
+       float. Only Distort/Mesh (their own grid) drop Flip and keep-proportions. -->
   <button
-    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors {distortActive
-      ? 'ui-on'
-      : 'border-border bg-surface text-text-secondary'}"
+    class="{btn} {mode === 'transforming' ? 'ui-on' : idle}"
+    aria-pressed={mode === "transforming"}
+    onpointerdown={tap(() => {
+      if (mode === "selected") onTransform();
+    })}
+    title="Free transform — show scale/rotate handles"
+  >
+    <Move size={20} />
+  </button>
+  <button
+    class="{btn} {distortActive ? 'ui-on' : idle}"
     aria-pressed={distortActive}
     onpointerdown={tap(onDistort)}
     title="Distort (W) — 4-corner warp"
@@ -114,9 +137,7 @@
     <SquareDashed size={20} />
   </button>
   <button
-    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors {meshActive
-      ? 'ui-on'
-      : 'border-border bg-surface text-text-secondary'}"
+    class="{btn} {meshActive ? 'ui-on' : idle}"
     aria-pressed={meshActive}
     onpointerdown={tap(onMesh)}
     title="Mesh warp (M) — 3×3 grid"
@@ -124,21 +145,45 @@
     <Grid3x3 size={20} />
   </button>
 
-  {#if mode !== "selected"}
+  {#if mode !== "warping"}
     <div class="mx-0.5 h-7 w-px bg-border"></div>
-    <button
-      class="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors"
-      onpointerdown={tap(onCommit)}
-      title="Commit (Enter)"
-    >
-      <Check size={20} />
+    <button class="{btn} {idle}" onpointerdown={tap(() => onFlip("h"))} title="Flip horizontal">
+      <FlipHorizontal2 size={20} />
+    </button>
+    <button class="{btn} {idle}" onpointerdown={tap(() => onFlip("v"))} title="Flip vertical">
+      <FlipVertical2 size={20} />
     </button>
     <button
-      class="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors"
-      onpointerdown={tap(onCancel)}
-      title="Cancel (Esc)"
+      class="{btn} {keepProportions ? 'ui-on' : idle}"
+      aria-pressed={keepProportions}
+      onpointerdown={tap(onToggleKeepProportions)}
+      title={keepProportions
+        ? "Corners keep proportions (Shift: free)"
+        : "Corners scale freely (Shift: keep proportions)"}
     >
-      <X size={20} />
+      {#if keepProportions}<Link2 size={20} />{:else}<Link2Off size={20} />{/if}
     </button>
   {/if}
+
+  <div class="mx-0.5 h-7 w-px bg-border"></div>
+  <button
+    class="{btn} {idle} aria-disabled:cursor-default aria-disabled:opacity-40"
+    aria-disabled={!floating}
+    onpointerdown={tap(() => {
+      if (floating) onCommit();
+    })}
+    title="Apply (Enter)"
+  >
+    <Check size={20} />
+  </button>
+  <button
+    class="{btn} {idle} aria-disabled:cursor-default aria-disabled:opacity-40"
+    aria-disabled={!floating}
+    onpointerdown={tap(() => {
+      if (floating) onCancel();
+    })}
+    title="Cancel (Esc)"
+  >
+    <X size={20} />
+  </button>
 </div>

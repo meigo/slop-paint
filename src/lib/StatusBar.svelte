@@ -43,7 +43,9 @@
   {:else if state === "transforming"}
     <span class="font-medium text-text">Free transform</span>
     <span class={sep}>·</span>
-    <span>corners scale, sides skew, top handle rotates</span>
+    <span>corners scale, sides stretch, top handle rotates</span>
+    <span class={sep}>·</span>
+    <span><kbd class={kbd}>Shift</kbd> free corners / skew sides</span>
     <span class={sep}>·</span>
     <span><kbd class={kbd}>W</kbd> distort</span>
     <span><kbd class={kbd}>M</kbd> mesh warp</span>

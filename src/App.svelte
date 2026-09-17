@@ -225,6 +225,7 @@
     drawBehind?: boolean;
     fillAlphaThreshold?: number;
     fillExpand?: number;
+    keepProportions?: boolean;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
   }
@@ -247,6 +248,7 @@
       drawBehind: app.brushSettings.drawBehind,
       fillAlphaThreshold: app.fillSettings.alphaThreshold,
       fillExpand: app.fillSettings.expand,
+      keepProportions: app.keepProportions,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -279,6 +281,7 @@
       if (data.fillAlphaThreshold != null)
         app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
+      if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurve.cp1 = data.curveCp1;
         pressureCurve.cp2 = data.curveCp2;
@@ -760,6 +763,7 @@
 
   // --- Keyboard shortcuts ---
   function handleKeyDown(e: KeyboardEvent) {
+    if (selection) selection.shiftHeld = e.shiftKey;
     if (
       (e.target as HTMLElement).tagName === "INPUT" ||
       (e.target as HTMLElement).tagName === "SELECT"
@@ -890,6 +894,7 @@
   }
 
   function handleKeyUp(e: KeyboardEvent) {
+    if (selection) selection.shiftHeld = e.shiftKey;
     if (e.key === "x" && toolBeforeEraser) {
       setTool(toolBeforeEraser);
       toolBeforeEraser = null;
@@ -909,6 +914,24 @@
     // The onChange callback calls bumpLayerVersion() which writes to app.layerVersion —
     // without untrack, this would trigger other effects and exceed max update depth.
     return untrack(() => init());
+  });
+
+  /** Mirror the selection. A plain selection is lifted first (same as Free transform), so the flip
+   *  shows as a float with handles; lift + commit stay one undo step. */
+  function flipSelection(axis: "h" | "v") {
+    if (!selection) return;
+    if (selection.state === "selected") enterFreeTransform();
+    selection.flip(axis);
+  }
+
+  function toggleKeepProportions() {
+    app.keepProportions = !app.keepProportions;
+    debouncedSave();
+  }
+
+  // Selection reads this at drag time; the toggle lives in app state so it persists.
+  $effect(() => {
+    if (selection) selection.keepProportions = app.keepProportions;
   });
 
   // --- Clipboard ---
@@ -1208,6 +1231,9 @@
 </script>
 
 <svelte:window
+  onblur={() => {
+    if (selection) selection.shiftHeld = false;
+  }}
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
   onpaste={handlePaste}
@@ -1275,6 +1301,9 @@
           onTransform={enterFreeTransform}
           onDistort={() => enterWarp(2, 2)}
           onMesh={() => enterWarp(3, 3)}
+          onFlip={flipSelection}
+          keepProportions={app.keepProportions}
+          onToggleKeepProportions={toggleKeepProportions}
           onCommit={() => selection.commit()}
           onCancel={() => selection.cancel()}
         />

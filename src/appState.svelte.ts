@@ -17,6 +17,8 @@ interface AppStateShape {
   selectionVersion: number;
   docWidth: number;
   docHeight: number;
+  /** Selection transform: corner handles keep the aspect ratio. */
+  keepProportions: boolean;
 }
 
 export const app: AppStateShape = $state({
@@ -43,6 +45,7 @@ export const app: AppStateShape = $state({
   selectionVersion: 0,
   docWidth: 1920,
   docHeight: 1080,
+  keepProportions: true,
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget

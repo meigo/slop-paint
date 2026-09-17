@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `selection.ts` (floorScale), `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -45,6 +45,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool (brush/fill options, size presets, click-to-edit size, color, pressure curve popup; eyedropper color readout; select hints). Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall. Row 1 must not get `overflow` (it would clip the menus)
 - `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
+- `lib/SelectionActions.svelte` — floating panel over the selection: Free transform, Distort, Mesh, Flip H/V, keep proportions, Apply, Cancel. Buttons keep their positions when a plain selection is lifted (the panel is centred, so appearing/disappearing buttons would slide under the pen); Apply/Cancel are shown dimmed until there is a float
 - `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
@@ -56,7 +57,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
 - `layers.ts` — tree-based layer/group management with per-layer undo history, lock, alpha lock, duplicate, merge down
 - `history.ts` — undo/redo stack via ImageData snapshots
-- `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
+- `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); `flip`; pure `flipMatrix` / `cornerScaleMatrix` / `sideStretchMatrix` (from slop-animator). Corners keep proportions when `keepProportions` (Shift inverts), side handles stretch one axis (Shift skews); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT
@@ -157,4 +158,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 
 - UI settings saved to localStorage (debounced)
-- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings, eraser settings
+- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings, eraser settings, keep proportions

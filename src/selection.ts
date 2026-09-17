@@ -99,6 +99,77 @@ function invertVec(m: Mat, x: number, y: number): { x: number; y: number } {
   return { x: (m.d * x - m.c * y) / det, y: (-m.b * x + m.a * y) / det };
 }
 
+/**
+ * `m` with a mirror about the float's own centre applied FIRST, in its local (untransformed) space:
+ * `m · T(c) · S · T(-c)`. Local, not world, so a rotated float flips along its own axis — the same
+ * frame the scale handles work in (`updateDrag` right-multiplies them the same way). Flipping twice
+ * is the identity.
+ */
+export function flipMatrix(m: Mat, rect: SelectionRect, axis: "h" | "v"): Mat {
+  const cx = rect.x + rect.w / 2,
+    cy = rect.y + rect.h / 2;
+  const mirror: Mat =
+    axis === "h"
+      ? { a: -1, b: 0, c: 0, d: 1, e: 2 * cx, f: 0 }
+      : { a: 1, b: 0, c: 0, d: -1, e: 0, f: 2 * cy };
+  return multiply(m, mirror);
+}
+
+/**
+ * A corner scale about the OPPOSITE (anchor) corner, in local rect coords. `keepProportions` uses
+ * one signed factor — the pointer's offset from the anchor projected onto the anchor→corner
+ * diagonal — so the aspect holds and crossing the anchor flips both axes; off, each axis follows the
+ * pointer on its own.
+ */
+export function cornerScaleMatrix(
+  handle: "tl" | "tr" | "bl" | "br",
+  r: SelectionRect,
+  mouseLocal: { x: number; y: number },
+  keepProportions: boolean,
+): Mat {
+  const left = handle === "tl" || handle === "bl";
+  const top = handle === "tl" || handle === "tr";
+  const ax = left ? r.x + r.w : r.x;
+  const ay = top ? r.y + r.h : r.y;
+  const denomX = (left ? r.x : r.x + r.w) - ax;
+  const denomY = (top ? r.y : r.y + r.h) - ay;
+  let sx = denomX !== 0 ? (mouseLocal.x - ax) / denomX : 1;
+  let sy = denomY !== 0 ? (mouseLocal.y - ay) / denomY : 1;
+  if (keepProportions) {
+    const len2 = denomX * denomX + denomY * denomY;
+    const k = len2 !== 0 ? ((mouseLocal.x - ax) * denomX + (mouseLocal.y - ay) * denomY) / len2 : 1;
+    sx = sy = k;
+  }
+  // FLOORED, sign kept. Released
+  // exactly on the anchor the factor is 0, the matrix is SINGULAR, and the next `invert(matrix)`
+  // (hit-testing, and the following drag's `mouseLocal`) is NaN: the float stops responding and can
+  // never be grabbed again. Guarding the divisor alone could not catch this — the divisor is the
+  // rect's own width. Crossing the anchor still mirrors; it just cannot land on zero.
+  sx = floorScale(sx);
+  sy = floorScale(sy);
+  // T(ax, ay) · Scale(sx, sy) · T(−ax, −ay)
+  return { a: sx, b: 0, c: 0, d: sy, e: ax * (1 - sx), f: ay * (1 - sy) };
+}
+
+/** A side stretch: ONE axis, anchored at the opposite side, in local rect coords. Shift-drag
+ *  skews instead (see updateDrag). */
+export function sideStretchMatrix(
+  handle: "t" | "b" | "l" | "r",
+  r: SelectionRect,
+  mouseLocal: { x: number; y: number },
+): Mat {
+  if (handle === "l" || handle === "r") {
+    const ax = handle === "r" ? r.x : r.x + r.w;
+    const denom = (handle === "r" ? r.x + r.w : r.x) - ax;
+    const sx = floorScale(denom !== 0 ? (mouseLocal.x - ax) / denom : 1); // see cornerScaleMatrix
+    return { a: sx, b: 0, c: 0, d: 1, e: ax * (1 - sx), f: 0 };
+  }
+  const ay = handle === "b" ? r.y : r.y + r.h;
+  const denom = (handle === "b" ? r.y + r.h : r.y) - ay;
+  const sy = floorScale(denom !== 0 ? (mouseLocal.y - ay) / denom : 1); // see cornerScaleMatrix
+  return { a: 1, b: 0, c: 0, d: sy, e: 0, f: ay * (1 - sy) };
+}
+
 export class Selection {
   state: SelectionState = "idle";
   rect: SelectionRect | null = null;
@@ -130,6 +201,11 @@ export class Selection {
 
   private overlayCanvas: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
+
+  /** Corners keep the aspect ratio (Shift inverts this while dragging). */
+  keepProportions = true;
+  /** Shift held: side handles skew instead of stretching, corners invert keepProportions. */
+  shiftHeld = false;
 
   /** Current viewport zoom — used to keep handle hit areas at a constant screen-pixel size. */
   screenScale = 1;
@@ -320,6 +396,14 @@ export class Selection {
     this.onStateChange?.();
   }
 
+  /** Mirror the float about its own centre. Free transform only (a warp has its own grid). */
+  flip(axis: "h" | "v") {
+    if (this.state !== "transforming" || !this.rect) return;
+    this.matrix = flipMatrix(this.matrix, this.rect, axis);
+    this.drawOverlay();
+    this.onChange?.();
+  }
+
   /** Start a floating transform from external pixels (paste), drawn into `rect` (doc units). */
   pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): void {
     this.rect = { ...rect };
@@ -485,27 +569,21 @@ export class Selection {
       case "tr":
       case "bl":
       case "br": {
-        // Non-uniform scale around the opposite corner (in local rect coords).
-        const ax = this.dragging === "tl" || this.dragging === "bl" ? r.x + r.w : r.x;
-        const ay = this.dragging === "tl" || this.dragging === "tr" ? r.y + r.h : r.y;
-        const dragLocalX = this.dragging === "tl" || this.dragging === "bl" ? r.x : r.x + r.w;
-        const dragLocalY = this.dragging === "tl" || this.dragging === "tr" ? r.y : r.y + r.h;
-
         const mouseLocal = applyPoint(invert(this.matrixStart), x, y);
-        const denomX = dragLocalX - ax;
-        const denomY = dragLocalY - ay;
-        const sx = floorScale(denomX !== 0 ? (mouseLocal.x - ax) / denomX : 1);
-        const sy = floorScale(denomY !== 0 ? (mouseLocal.y - ay) / denomY : 1);
-
-        // S = T(ax, ay) * Scale(sx, sy) * T(-ax, -ay)
-        const scale: Mat = { a: sx, b: 0, c: 0, d: sy, e: ax * (1 - sx), f: ay * (1 - sy) };
+        const keep = this.keepProportions !== this.shiftHeld;
+        const scale = cornerScaleMatrix(this.dragging, r, mouseLocal, keep);
         this.matrix = multiply(this.matrixStart, scale);
         break;
       }
 
       case "l":
       case "r": {
-        // Drag a vertical side; the opposite vertical side is anchored.
+        if (!this.shiftHeld) {
+          const mouseLocal = applyPoint(invert(this.matrixStart), x, y);
+          this.matrix = multiply(this.matrixStart, sideStretchMatrix(this.dragging, r, mouseLocal));
+          break;
+        }
+        // Shift: skew. Drag a vertical side; the opposite vertical side is anchored.
         // Translate the dragged side by (dx, dy) in world coords, leaving the opposite side fixed.
         const dl = invertVec(this.matrixStart, dx, dy);
         const ax = this.dragging === "r" ? r.x : r.x + r.w; // anchored x in local coords
@@ -513,12 +591,13 @@ export class Selection {
         // T_local: a' = 1 + sign*dl.x/rw, b' = sign*dl.y/rw, c'=0, d'=1, e' = -ax*sign*dl.x/rw + (anchor offset)
         // Derivation in commit message.
         const k = sign / r.w;
+        const sx = floorScale(1 + dl.x * k); // a skew drag can also collapse the width
         const tLocal: Mat = {
-          a: 1 + dl.x * k,
+          a: sx,
           b: dl.y * k,
           c: 0,
           d: 1,
-          e: -ax * dl.x * k,
+          e: ax * (1 - sx),
           f: -ax * dl.y * k,
         };
         this.matrix = multiply(this.matrixStart, tLocal);
@@ -527,17 +606,24 @@ export class Selection {
 
       case "t":
       case "b": {
+        if (!this.shiftHeld) {
+          const mouseLocal = applyPoint(invert(this.matrixStart), x, y);
+          this.matrix = multiply(this.matrixStart, sideStretchMatrix(this.dragging, r, mouseLocal));
+          break;
+        }
+        // Shift: skew.
         const dl = invertVec(this.matrixStart, dx, dy);
         const ay = this.dragging === "b" ? r.y : r.y + r.h;
         const sign = this.dragging === "b" ? 1 : -1;
         const k = sign / r.h;
+        const sy = floorScale(1 + dl.y * k);
         const tLocal: Mat = {
           a: 1,
           b: 0,
           c: dl.x * k,
-          d: 1 + dl.y * k,
+          d: sy,
           e: -ay * dl.x * k,
-          f: -ay * dl.y * k,
+          f: ay * (1 - sy),
         };
         this.matrix = multiply(this.matrixStart, tLocal);
         break;
