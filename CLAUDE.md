@@ -41,7 +41,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
-- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter; `flashStatus(msg)` shows a transient status-bar message (use it when an action does nothing, so a no-op isn't silent)
+- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter; `flashStatus(msg, ms)` shows a status-bar message (use it when an action does nothing, so a no-op isn't silent); `ms = 0` is sticky, for conditions like autosave failing
 - `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool. On the bar: what is changed while drawing (brush type, size + presets, opacity, color swatch). Behind popovers: the gear holds set-once settings (smoothing, streamline, size range, nib angle/flatness for Calligraphy, dwell for Ink, taper for Smooth, draw-behind, pressure curve editor for the active tool), the color swatch holds the palette + native picker. Needs ~750px, so it fits a portrait iPad. Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall, and wrap bare buttons in a flex box (a bare button sits on the text baseline and is 40px). Row 1 must not get `overflow` (it would clip the menus)
 - Brush kinds: `BrushKind` = smooth | ink | calligraphy | stamp tips. Smooth/ink/calligraphy redraw the whole stroke each frame from a pre-stroke canvas copy (a per-segment redraw hardens antialiased edges); stamps draw incrementally
 - `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
@@ -68,7 +68,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content); `enclosedFillRegion` / `fillRegionBehind` for Fill enclosed
 - `fill-holes.ts` — Fill enclosed engine (from slop-animator): floods the outside from the border, so a leaking outline fills nothing; `gap` (clamped to `MAX_GAP` = 8, device px) bridges breaks via dilate → flood → erode
 - `mask-ops.ts` — circular dilate/erode on binary masks (shared by expand and Fill enclosed)
-- `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible)
+- `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible); `psdBuffer()` is the buffer used by both the file writer and autosave
+- `persist/` — `db.ts` (IndexedDB helper), `autosave.ts` (single-slot project autosave), `generation.ts` (supersede guard)
 - `paste.ts` — where pasted pixels land (`placeInternalPaste`: copied spot + 8px, kept on the page; `placeExternalImage`: centred, 1 image px = 1 doc px, scaled down to fit)
 
 ### State Management
@@ -154,6 +155,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Layer/group names can include Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 - Layer order = draw order (bottom drawn first)
 - See: https://esotericsoftware.com/spine-import-psd
+
+## Autosave
+
+- The project is autosaved to IndexedDB (db `slop-paint`, store `kv`, key `autosave`) as a PSD buffer, 3s after the last change and immediately when the tab is hidden (`pagehide` / `visibilitychange`), and restored on startup
+- `persist/db.ts` guarantees the open promise settles (a version upgrade blocked by another tab fires no event) and closes the connection on both paths; `persist/generation.ts` drops in-flight saves superseded by a newer save or New
+- Autosave stays OFF for the session if the startup restore failed, so a blank document can't overwrite the stored copy; failures are reported with a sticky `flashStatus(msg, 0)`
+- New clears the slot. About 0.5 MB for a 1920×1080 doc with 3 layers
 
 ## Project Save/Load
 

@@ -83,5 +83,6 @@ let statusTimer: ReturnType<typeof setTimeout> | undefined;
 export function flashStatus(message: string, ms = 4000) {
   app.statusMessage = message;
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
+  // ms 0 = sticky: for conditions (e.g. autosave failing) rather than one-off explanations.
+  if (ms > 0) statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
 }

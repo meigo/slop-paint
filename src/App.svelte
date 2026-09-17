@@ -24,7 +24,8 @@
   import { placeExternalImage, placeInternalPaste } from "./paste";
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
-  import { exportPsd, savePsd, loadPsd } from "./export-psd";
+  import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
+  import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
   import { untrack } from "svelte";
   import {
     app,
@@ -452,6 +453,7 @@
 
   function newDocument(width: number, height: number) {
     if (!layers) return;
+    void clearAutosave().catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
     app.docHeight = height;
     layers.tree.length = 0;
@@ -948,6 +950,36 @@
     }
   }
 
+  // Re-save 3s after the last document change. layerVersion covers strokes, fills, layer edits and
+  // undo; the doc size covers a resize.
+  $effect(() => {
+    void app.layerVersion;
+    void app.docWidth;
+    void app.docHeight;
+    if (!autosaveReady) return;
+    autosaveDirty = true;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(flushAutosave, 3000);
+  });
+
+  // A backgrounded tab can be killed at any moment (routinely on iPad), so don't wait out the
+  // debounce. The write is async, so this shrinks the window rather than closing it.
+  $effect(() => {
+    const onHide = () => {
+      clearTimeout(autosaveTimer);
+      flushAutosave();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") onHide();
+    };
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  });
+
   // --- Init on mount ---
   $effect(() => {
     if (!canvasEl || !selectionOverlayEl || !canvasContainerEl || !canvasClipEl || !workspaceEl)
@@ -1024,6 +1056,68 @@
   $effect(() => {
     if (selection) selection.keepProportions = app.keepProportions;
   });
+
+  // --- Autosave (IndexedDB, one slot, the project as a PSD) ---
+  // The gate stays shut until the startup restore has settled: until then `layers` holds the blank
+  // startup document, and a save landing mid-restore would overwrite the user's work with it.
+  let autosaveReady = false;
+  let autosaveDirty = false;
+  let autosaveTimer: ReturnType<typeof setTimeout>;
+
+  function flushAutosave() {
+    if (!autosaveReady || !autosaveDirty || !layers) return;
+    autosaveDirty = false;
+    let buffer: ArrayBuffer;
+    try {
+      buffer = psdBuffer(layers, false);
+    } catch (e) {
+      autosaveDirty = true;
+      console.error("autosave encode failed", e);
+      return;
+    }
+    void saveAutosave(buffer).then(
+      () => {
+        if (app.statusMessage.startsWith("Autosave is failing")) flashStatus("");
+      },
+      (e) => {
+        // Keep it dirty so the next change or the hide-flush retries, and SAY so: a silent
+        // failure (iPad quota, a stale tab after a deploy) lets hours of work look saved.
+        autosaveDirty = true;
+        console.error("autosave failed", e);
+        flashStatus(
+          `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save project so this work isn't lost.`,
+          0,
+        );
+      },
+    );
+  }
+
+  /** Restore the autosaved project, if any. Returns false when the restore failed (autosave then
+   *  stays off for the session rather than overwriting the stored copy with a blank document). */
+  async function restoreAutosave(): Promise<boolean> {
+    try {
+      const buffer = await loadAutosave();
+      if (!buffer || !layers) return true;
+      const dpr = window.devicePixelRatio || 1;
+      const { width, height } = loadPsd(buffer, layers, dpr);
+      app.docWidth = width;
+      app.docHeight = height;
+      layers.docWidth = width;
+      layers.docHeight = height;
+      resizeCanvas();
+      layers.composite();
+      bumpLayerVersion();
+      fitDocumentInView();
+      return true;
+    } catch (e) {
+      console.error("autosave restore failed", e);
+      flashStatus(
+        `Couldn't load your autosaved work (${e instanceof Error ? e.message : String(e)}). Autosave is off so the saved copy isn't overwritten — reload to retry, or use File ▸ Open project.`,
+        0,
+      );
+      return false;
+    }
+  }
 
   // --- Clipboard ---
   // Pixels at the layer's physical resolution, plus where they were copied from (doc units).
@@ -1205,6 +1299,9 @@
     loadSettings();
     updateCursor();
     layersReady = true;
+    void restoreAutosave().then((ok) => {
+      autosaveReady = ok;
+    });
     // After layout settles, center the document in the viewport
     requestAnimationFrame(() => {
       resizeCanvas();

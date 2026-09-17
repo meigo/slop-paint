@@ -10,6 +10,18 @@ let importIdCounter = 1000;
  * bounds — false for "save" (round-trip fidelity), true for "export" (smaller files).
  */
 function writePsdFile(manager: LayerManager, opts: { trim: boolean; filename: string }) {
+  const buffer = psdBuffer(manager, opts.trim);
+  const blob = new Blob([buffer], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = opts.filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** The project as a PSD buffer (used by the file writer above and by autosave). */
+export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
   const w = manager.docWidth;
   const h = manager.docHeight;
 
@@ -58,18 +70,10 @@ function writePsdFile(manager: LayerManager, opts: { trim: boolean; filename: st
     children: buildChildren(manager.tree),
   };
 
-  const buffer = writePsd(psd, {
+  return writePsd(psd, {
     generateThumbnail: true,
-    trimImageData: opts.trim,
+    trimImageData: trim,
   });
-
-  const blob = new Blob([buffer], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = opts.filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 /** Export layer tree as a PSD with trimmed layer bounds (smaller file, Photoshop/Spine-friendly). */
