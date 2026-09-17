@@ -1,9 +1,26 @@
 <script lang="ts">
-  import { Plus, FolderPlus, Copy, ArrowDownToLine, Minus } from "@lucide/svelte";
+  import {
+    Plus,
+    FolderPlus,
+    Copy,
+    ArrowDownToLine,
+    Minus,
+    Eye,
+    EyeOff,
+    Lock,
+    LockOpen,
+    Blend,
+    Tag,
+    ChevronRight,
+    ChevronDown,
+    GripVertical,
+  } from "@lucide/svelte";
   import { app, bumpLayerVersion } from "../appState.svelte.js";
   import { structuralEdit } from "../undo";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
+  import { clickOutside } from "./click-outside";
+  import { isDoubleTap, type Tap } from "./double-tap";
   import {
     parseTags,
     buildName,
@@ -11,6 +28,7 @@
     tagsForNodeType,
     tagConflictReason,
     TAG_DESCRIPTIONS,
+    type SpineTag,
   } from "../spine-tags";
 
   let {
@@ -18,6 +36,20 @@
   }: {
     layers: LayerManager;
   } = $props();
+
+  // The layer tree is imperative, so the list is rebuilt whenever layerVersion changes (and after a
+  // drag, see rebuildFromDom). Reading it in a $derived is what makes {#key} re-render.
+  const version = $derived(app.layerVersion);
+  let dragNonce = $state(0);
+  let dropHandled = false; // one drop can fire onEnd twice (cross-list); rebuild once
+  let listEl = $state<HTMLDivElement>()!;
+
+  let editingId = $state<number | null>(null);
+  let draft = $state("");
+  let tagPopoverFor = $state<number | null>(null);
+  let lastTap: Tap | null = null;
+
+  // --- Header actions ---
 
   function addLayer() {
     structuralEdit(layers, () => layers.addLayer());
@@ -56,9 +88,7 @@
     bumpLayerVersion();
   }
 
-  // --- Imperative layer list rendering (same approach as original vanilla code) ---
-  // This avoids Svelte/SortableJS DOM conflicts entirely.
-  let layerListEl: HTMLDivElement;
+  // --- Drag reorder (SortableJS owns the DOM during a drag; we read the result back) ---
 
   function syncTreeFromDom(
     container: HTMLElement,
@@ -66,426 +96,365 @@
     lookup: Map<number, LayerNode>,
   ) {
     targetArray.length = 0;
-    const items = container.children;
-    for (let i = items.length - 1; i >= 0; i--) {
-      const el = items[i] as HTMLElement;
-      const id = Number(el.dataset.nodeId);
-      const node = lookup.get(id);
+    // The list is drawn top-first, the data is bottom-first.
+    for (let i = container.children.length - 1; i >= 0; i--) {
+      const el = container.children[i] as HTMLElement;
+      const node = lookup.get(Number(el.dataset.nodeId));
       if (!node) continue;
       targetArray.push(node);
       if (node.type === "group") {
-        const childContainer = el.querySelector(":scope > .layer-group-children") as HTMLElement;
-        if (childContainer) {
-          syncTreeFromDom(childContainer, node.children, lookup);
-        }
+        const childContainer = el.querySelector(":scope > .layer-group-children");
+        if (childContainer) syncTreeFromDom(childContainer as HTMLElement, node.children, lookup);
       }
     }
   }
 
-  function makeSortable(container: HTMLElement) {
-    Sortable.create(container, {
+  function rebuildFromDom(evt: Sortable.SortableEvent) {
+    // One drop can fire onEnd twice (source list + destination list). The first walk already reads
+    // the whole final order, and the node removal below would corrupt a second one.
+    if (dropHandled) return;
+    dropHandled = true;
+    queueMicrotask(() => (dropHandled = false));
+
+    const lookup = new Map<number, LayerNode>();
+    for (const n of layers.flatAll()) lookup.set(n.id, n);
+    structuralEdit(layers, () => syncTreeFromDom(listEl, layers.tree, lookup));
+
+    // SortableJS physically moved the dragged node. Dropped at the bottom it can land past the
+    // {#each} end anchor, where the re-render's teardown can't reach it and it survives as a
+    // duplicate row. Remove it ourselves; the dragNonce re-render then rebuilds from state.
+    evt.item.remove();
+    dragNonce++;
+    layers.composite();
+    bumpLayerVersion();
+  }
+
+  /** Svelte action: make a container's rows draggable, including between groups. */
+  function sortable(node: HTMLElement) {
+    const s = Sortable.create(node, {
       group: "layers",
       animation: 150,
       fallbackOnBody: true,
       swapThreshold: 0.65,
       handle: ".layer-drag-handle",
-      onEnd: () => {
-        const lookup = new Map<number, LayerNode>();
-        for (const n of layers.flatAll()) {
-          lookup.set(n.id, n);
-        }
-        structuralEdit(layers, () => syncTreeFromDom(layerListEl, layers.tree, lookup));
-        layers.composite();
-        bumpLayerVersion();
-      },
+      onEnd: rebuildFromDom,
     });
+    return { destroy: () => s.destroy() };
   }
 
-  function makeRenameHandler(nameEl: HTMLSpanElement, node: LayerNode) {
-    nameEl.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      const { tags, baseName } = parseTags(node.name);
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "layer-rename-input";
-      input.value = baseName;
-      nameEl.replaceWith(input);
-      input.focus();
-      input.select();
-      const commit = () => {
-        const newBase = input.value.trim();
-        if (newBase) node.name = buildName(newBase, tags);
-        input.replaceWith(nameEl);
-        nameEl.textContent = parseTags(node.name).baseName || "(unnamed)";
-      };
-      input.addEventListener("blur", commit);
-      input.addEventListener("keydown", (ke) => {
-        if (ke.key === "Enter") {
-          ke.preventDefault();
-          input.blur();
-        }
-        if (ke.key === "Escape") {
-          input.value = baseName;
-          input.blur();
-        }
-        ke.stopPropagation();
-      });
-      input.addEventListener("click", (ce) => ce.stopPropagation());
-    });
+  /** Svelte action: draw a layer's pixels into its thumbnail canvas. */
+  function thumbnail(node: HTMLCanvasElement, layer: AppLayer) {
+    const draw = () => {
+      const ctx = node.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, node.width, node.height);
+      ctx.drawImage(layer.canvas, 0, 0, node.width, node.height);
+    };
+    draw();
+    return { update: draw };
   }
 
-  // ---- Spine tag picker ----
+  // --- Rename: double-click (mouse) or double-tap (iPad doesn't fire dblclick reliably) ---
 
-  const TAG_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>`;
-
-  let openPopoverEl: HTMLDivElement | null = null;
-  let openPopoverNodeId: number | null = null;
-
-  function closePopover() {
-    if (openPopoverEl) {
-      openPopoverEl.remove();
-      openPopoverEl = null;
-      openPopoverNodeId = null;
-      document.removeEventListener("pointerdown", onDocPointerDown, true);
-    }
+  function startEdit(node: LayerNode) {
+    draft = parseTags(node.name).baseName;
+    editingId = node.id;
   }
 
-  function onDocPointerDown(e: PointerEvent) {
-    if (openPopoverEl && !openPopoverEl.contains(e.target as Node)) {
-      closePopover();
-    }
-  }
-
-  function openTagPopover(anchor: HTMLElement, node: LayerNode) {
-    closePopover();
-    const popover = document.createElement("div");
-    openPopoverEl = popover;
-    openPopoverNodeId = node.id;
-    popover.className =
-      "fixed z-50 bg-surface border border-border rounded-md shadow-lg p-1 text-xs flex flex-col gap-0.5 min-w-[180px]";
-    const valid = tagsForNodeType(node.type);
-    function refresh() {
-      popover.innerHTML = "";
-      const { tags } = parseTags(node.name);
-      for (const t of valid) {
-        const isOn = tags.includes(t);
-        const conflict = tagConflictReason(t, tags);
-        const disabled = conflict !== null;
-        const row = document.createElement("button");
-        row.disabled = disabled;
-        row.className =
-          "flex items-center gap-2 px-2 py-1 rounded text-left " +
-          (disabled
-            ? "text-text-muted cursor-not-allowed opacity-50"
-            : "text-text-secondary cursor-pointer hover:bg-surface-hover");
-        row.title = conflict ?? TAG_DESCRIPTIONS[t];
-        const check = document.createElement("span");
-        check.className =
-          "shrink-0 w-3.5 h-3.5 border border-border rounded-sm flex items-center justify-center text-[9px] " +
-          (isOn ? "bg-accent text-accent-text border-accent" : "");
-        check.textContent = isOn ? "✓" : "";
-        const label = document.createElement("span");
-        label.className = "flex-1 font-mono text-text";
-        label.textContent = `[${t}]`;
-        const desc = document.createElement("span");
-        desc.className = "text-text-muted text-[10px] truncate";
-        desc.textContent = conflict ?? TAG_DESCRIPTIONS[t];
-        row.appendChild(check);
-        row.appendChild(label);
-        row.appendChild(desc);
-        if (!disabled) {
-          row.addEventListener("click", (e) => {
-            e.stopPropagation();
-            node.name = toggleTag(node.name, t);
-            bumpLayerVersion();
-            refresh();
-          });
-        }
-        popover.appendChild(row);
-      }
-    }
-    refresh();
-    const rect = anchor.getBoundingClientRect();
-    popover.style.left = rect.left + "px";
-    popover.style.top = rect.bottom + 4 + "px";
-    document.body.appendChild(popover);
-    // Adjust if it would overflow the right edge
-    const popRect = popover.getBoundingClientRect();
-    if (popRect.right > window.innerWidth - 8) {
-      popover.style.left = window.innerWidth - popRect.width - 8 + "px";
-    }
-    // Defer the outside-click listener so the click that opened us doesn't immediately close.
-    // Guard against the popover being closed in between (e.g. by a deletion-triggered $effect).
-    setTimeout(() => {
-      if (openPopoverEl === popover) {
-        document.addEventListener("pointerdown", onDocPointerDown, true);
-      }
-    }, 0);
-  }
-
-  function makeTagButton(node: LayerNode): HTMLButtonElement {
-    const btn = document.createElement("button");
-    btn.className =
-      "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary opacity-50 hover:opacity-100 flex items-center";
-    btn.title = "Spine tags";
-    btn.innerHTML = TAG_ICON_SVG;
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openTagPopover(btn, node);
-    });
-    return btn;
-  }
-
-  function buildNameSpan(node: LayerNode): HTMLSpanElement {
-    const { baseName } = parseTags(node.name);
-    const nameEl = document.createElement("span");
-    nameEl.className = "flex-1 overflow-hidden text-ellipsis whitespace-nowrap";
-    nameEl.textContent = baseName || "(unnamed)";
-    makeRenameHandler(nameEl, node);
-    return nameEl;
-  }
-
-  function buildTagPills(node: LayerNode): HTMLSpanElement[] {
-    const { tags } = parseTags(node.name);
-    return tags.map((t) => {
-      const pill = document.createElement("span");
-      pill.className =
-        "shrink-0 px-1 rounded text-[9px] leading-[11px] bg-accent text-accent-text border border-accent font-mono cursor-pointer hover:opacity-70";
-      pill.textContent = t;
-      pill.title = `[${t}] — click to remove`;
-      pill.addEventListener("click", (e) => {
-        e.stopPropagation();
-        node.name = toggleTag(node.name, t);
-        bumpLayerVersion();
-      });
-      return pill;
-    });
-  }
-
-  function renderLayerItem(layer: AppLayer): HTMLElement {
-    const item = document.createElement("div");
-    item.className =
-      "layer-item flex flex-col gap-0.5 px-2 py-1 border-b border-border-light cursor-pointer text-xs transition-colors text-text-secondary hover:bg-surface-hover" +
-      (layer.id === layers.activeId ? " ui-selected" : "");
-    item.title = "Tap to draw on this layer · double-tap the name to rename";
-    item.dataset.nodeId = String(layer.id);
-
-    // ----- Row 1: handle, vis, thumb, name -----
-    const row1 = document.createElement("div");
-    row1.className = "flex items-center gap-1.5 min-w-0";
-
-    const handle = document.createElement("span");
-    handle.className =
-      "layer-drag-handle cursor-grab text-text-muted hover:text-text-secondary shrink-0 select-none text-base";
-    handle.textContent = "\u2261";
-
-    const visBtn = document.createElement("button");
-    visBtn.className =
-      "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
-    visBtn.textContent = layer.visible ? "\u{1F441}" : "\u2013";
-    visBtn.title = layer.visible ? "Hide layer" : "Show layer";
-    visBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      layers.toggleVisibility(layer.id);
+  function commitEdit(node: LayerNode) {
+    const base = draft.trim();
+    if (base) {
+      node.name = buildName(base, parseTags(node.name).tags);
       bumpLayerVersion();
-    });
+    }
+    editingId = null;
+  }
 
-    const thumb = document.createElement("canvas");
-    thumb.className = "w-7 h-7 border border-border rounded-sm thumb-checkerboard shrink-0";
-    thumb.style.imageRendering = "pixelated";
-    thumb.width = 28;
-    thumb.height = 28;
-    thumb.getContext("2d")!.drawImage(layer.canvas, 0, 0, 28, 28);
-
-    const nameSpan = buildNameSpan(layer);
-
-    row1.appendChild(handle);
-    row1.appendChild(visBtn);
-    row1.appendChild(thumb);
-    row1.appendChild(nameSpan);
-
-    // ----- Row 2: pills, tag picker, lock, alpha lock, opacity slider -----
-    const row2 = document.createElement("div");
-    row2.className = "flex items-center gap-1.5 pl-9 min-w-0 leading-none";
-
-    for (const pill of buildTagPills(layer)) row2.appendChild(pill);
-
-    const tagBtn = makeTagButton(layer);
-
-    const lockBtn = document.createElement("button");
-    lockBtn.className =
-      "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary text-[11px] transition-opacity " +
-      (layer.locked ? "opacity-100" : "opacity-30 hover:opacity-60");
-    lockBtn.textContent = "\u{1F512}";
-    lockBtn.title = "Lock layer";
-    lockBtn.addEventListener("click", (e) => {
+  function onNamePointerDown(e: PointerEvent, node: LayerNode) {
+    const tap: Tap = {
+      target: `${node.type}:${node.id}`,
+      t: e.timeStamp,
+      x: e.clientX,
+      y: e.clientY,
+    };
+    if (isDoubleTap(lastTap, tap)) {
       e.stopPropagation();
-      layer.locked = !layer.locked;
-      lockBtn.classList.toggle("opacity-100", layer.locked);
-      lockBtn.classList.toggle("opacity-30", !layer.locked);
-    });
+      e.preventDefault();
+      lastTap = null;
+      startEdit(node);
+      return;
+    }
+    lastTap = tap;
+  }
 
-    const alphaBtn = document.createElement("button");
-    alphaBtn.className =
-      "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary text-[11px] transition-opacity " +
-      (layer.alphaLock ? "opacity-100" : "opacity-30 hover:opacity-60");
-    alphaBtn.textContent = "\u{1F3C1}";
-    alphaBtn.title = "Alpha lock";
-    alphaBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      layer.alphaLock = !layer.alphaLock;
-      alphaBtn.classList.toggle("opacity-100", layer.alphaLock);
-      alphaBtn.classList.toggle("opacity-30", !layer.alphaLock);
-    });
+  // --- Spine tags ---
 
-    const opSlider = document.createElement("input");
-    opSlider.type = "range";
-    opSlider.className = "flex-1 min-w-0 h-3";
-    opSlider.title = "Opacity";
-    opSlider.min = "0";
-    opSlider.max = "100";
-    opSlider.value = String(layer.opacity);
-    opSlider.addEventListener("input", (e) => {
-      e.stopPropagation();
-      layers.setOpacity(layer.id, Number(opSlider.value));
-    });
-    opSlider.addEventListener("click", (e) => e.stopPropagation());
+  function toggleNodeTag(node: LayerNode, tag: SpineTag) {
+    node.name = toggleTag(node.name, tag);
+    bumpLayerVersion();
+  }
 
-    row2.appendChild(tagBtn);
-    row2.appendChild(lockBtn);
-    row2.appendChild(alphaBtn);
-    row2.appendChild(opSlider);
+  const rowBtn = "shrink-0 cursor-pointer text-text-secondary transition-opacity";
+  const headerBtn =
+    "flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover";
+</script>
 
-    item.addEventListener("click", () => {
+{#snippet nameCell(node: LayerNode)}
+  {#if editingId === node.id}
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      class="layer-rename-input"
+      value={draft}
+      autofocus
+      oninput={(e) => (draft = e.currentTarget.value)}
+      onblur={() => commitEdit(node)}
+      onclick={(e) => e.stopPropagation()}
+      onpointerdown={(e) => e.stopPropagation()}
+      onkeydown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          editingId = null;
+        }
+        e.stopPropagation();
+      }}
+    />
+  {:else}
+    <span
+      class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+      ondblclick={(e) => {
+        e.stopPropagation();
+        startEdit(node);
+      }}
+      onpointerdown={(e) => onNamePointerDown(e, node)}
+      role="presentation">{parseTags(node.name).baseName || "(unnamed)"}</span
+    >
+  {/if}
+{/snippet}
+
+{#snippet tagRow(node: LayerNode)}
+  {#each parseTags(node.name).tags as t (t)}
+    <button
+      class="shrink-0 cursor-pointer rounded border border-accent bg-accent px-1 font-mono text-[9px] leading-[11px] text-accent-text hover:opacity-70"
+      title="[{t}] — click to remove"
+      onclick={(e) => {
+        e.stopPropagation();
+        toggleNodeTag(node, t);
+      }}>{t}</button
+    >
+  {/each}
+  <div class="relative flex shrink-0 items-center" use:clickOutside={() => (tagPopoverFor = null)}>
+    <button
+      class="{rowBtn} flex items-center opacity-50 hover:opacity-100"
+      title="Spine tags"
+      onclick={(e) => {
+        e.stopPropagation();
+        tagPopoverFor = tagPopoverFor === node.id ? null : node.id;
+      }}
+    >
+      <Tag size={14} />
+    </button>
+    {#if tagPopoverFor === node.id}
+      <div
+        class="absolute top-full left-0 z-50 mt-1 flex min-w-[200px] flex-col gap-0.5 rounded-md border border-border bg-surface p-1 text-xs shadow-lg"
+      >
+        {#each tagsForNodeType(node.type) as t (t)}
+          {@const tags = parseTags(node.name).tags}
+          {@const conflict = tagConflictReason(t, tags)}
+          <button
+            class="flex items-center gap-2 rounded px-2 py-1 text-left {conflict
+              ? 'cursor-not-allowed text-text-muted opacity-50'
+              : 'cursor-pointer text-text-secondary hover:bg-surface-hover'}"
+            disabled={!!conflict}
+            title={conflict ?? TAG_DESCRIPTIONS[t]}
+            onclick={(e) => {
+              e.stopPropagation();
+              toggleNodeTag(node, t);
+            }}
+          >
+            <span
+              class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-border text-[9px] {tags.includes(
+                t,
+              )
+                ? 'border-accent bg-accent text-accent-text'
+                : ''}">{tags.includes(t) ? "✓" : ""}</span
+            >
+            <span class="flex-1 font-mono text-text">[{t}]</span>
+            <span class="truncate text-[10px] text-text-muted"
+              >{conflict ?? TAG_DESCRIPTIONS[t]}</span
+            >
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet layerRow(layer: AppLayer)}
+  <div
+    class="layer-item flex cursor-pointer flex-col gap-0.5 border-b border-border-light px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-hover {layer.id ===
+    layers.activeId
+      ? 'ui-selected'
+      : ''}"
+    data-node-id={layer.id}
+    title="Tap to draw on this layer · double-tap the name to rename"
+    onclick={() => {
       layers.setActive(layer.id);
       bumpLayerVersion();
-    });
+    }}
+    role="presentation"
+  >
+    <div class="flex min-w-0 items-center gap-1.5">
+      <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
+        ><GripVertical size={14} /></span
+      >
+      <button
+        class="{rowBtn} opacity-60 hover:opacity-100"
+        title={layer.visible ? "Hide layer" : "Show layer"}
+        onclick={(e) => {
+          e.stopPropagation();
+          layers.toggleVisibility(layer.id);
+          bumpLayerVersion();
+        }}
+      >
+        {#if layer.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+      </button>
+      <canvas
+        class="thumb-checkerboard h-7 w-7 shrink-0 rounded-sm border border-border"
+        style="image-rendering: pixelated"
+        width="28"
+        height="28"
+        use:thumbnail={layer}
+      ></canvas>
+      {@render nameCell(layer)}
+    </div>
 
-    item.appendChild(row1);
-    item.appendChild(row2);
-    return item;
-  }
+    <div class="flex min-w-0 items-center gap-1.5 pl-9 leading-none">
+      {@render tagRow(layer)}
+      <button
+        class="{rowBtn} {layer.locked ? 'opacity-100' : 'opacity-30 hover:opacity-60'}"
+        title={layer.locked ? "Unlock layer" : "Lock layer (no drawing)"}
+        onclick={(e) => {
+          e.stopPropagation();
+          layer.locked = !layer.locked;
+          bumpLayerVersion();
+        }}
+      >
+        {#if layer.locked}<Lock size={12} />{:else}<LockOpen size={12} />{/if}
+      </button>
+      <button
+        class="{rowBtn} {layer.alphaLock ? 'opacity-100' : 'opacity-30 hover:opacity-60'}"
+        title="Alpha lock — paint only where this layer already has pixels"
+        onclick={(e) => {
+          e.stopPropagation();
+          layer.alphaLock = !layer.alphaLock;
+          bumpLayerVersion();
+        }}
+      >
+        <Blend size={12} />
+      </button>
+      <input
+        type="range"
+        class="h-3 min-w-0 flex-1"
+        title="Opacity"
+        min="0"
+        max="100"
+        value={layer.opacity}
+        oninput={(e) => {
+          e.stopPropagation();
+          layers.setOpacity(layer.id, Number(e.currentTarget.value));
+        }}
+        onclick={(e) => e.stopPropagation()}
+      />
+    </div>
+  </div>
+{/snippet}
 
-  function renderGroupItem(group: LayerGroup): HTMLElement {
-    const wrapper = document.createElement("div");
-    wrapper.className = "layer-group border-b border-border";
-    wrapper.dataset.nodeId = String(group.id);
+{#snippet groupRow(group: LayerGroup)}
+  <div class="layer-group border-b border-border" data-node-id={group.id}>
+    <div
+      class="flex cursor-default flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
+      layers.activeId
+        ? 'ui-selected'
+        : 'bg-group-bg hover:bg-group-hover'}"
+      title="Layer group · double-tap the name to rename"
+      onclick={() => {
+        layers.activeId = group.id;
+        bumpLayerVersion();
+      }}
+      role="presentation"
+    >
+      <div class="flex min-w-0 items-center gap-1">
+        <span
+          class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
+          ><GripVertical size={14} /></span
+        >
+        <button
+          class="{rowBtn} text-text-muted"
+          title={group.collapsed ? "Expand group" : "Collapse group"}
+          onclick={(e) => {
+            e.stopPropagation();
+            group.collapsed = !group.collapsed;
+            bumpLayerVersion();
+          }}
+        >
+          {#if group.collapsed}<ChevronRight size={12} />{:else}<ChevronDown size={12} />{/if}
+        </button>
+        <button
+          class="{rowBtn} opacity-60 hover:opacity-100"
+          title={group.visible ? "Hide group" : "Show group"}
+          onclick={(e) => {
+            e.stopPropagation();
+            layers.toggleVisibility(group.id);
+            bumpLayerVersion();
+          }}
+        >
+          {#if group.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+        </button>
+        {@render nameCell(group)}
+      </div>
 
-    const header = document.createElement("div");
-    header.className =
-      "flex flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold cursor-default transition-colors text-text-secondary " +
-      (group.id === layers.activeId ? "ui-selected" : "bg-group-bg hover:bg-group-hover");
-    header.title = "Layer group · double-tap the name to rename";
+      <div class="flex min-w-0 items-center gap-1.5 pl-7 leading-none">
+        {@render tagRow(group)}
+        <input
+          type="range"
+          class="h-3 min-w-0 flex-1"
+          title="Group opacity"
+          min="0"
+          max="100"
+          value={group.opacity}
+          oninput={(e) => {
+            e.stopPropagation();
+            layers.setOpacity(group.id, Number(e.currentTarget.value));
+          }}
+          onclick={(e) => e.stopPropagation()}
+        />
+      </div>
+    </div>
 
-    // ----- Row 1: handle, collapse, vis, name -----
-    const row1 = document.createElement("div");
-    row1.className = "flex items-center gap-1 min-w-0";
+    <!-- Always rendered (hidden when collapsed) so rows can still be dropped into a collapsed
+         group's container and the DOM walk keeps seeing its members. -->
+    <div
+      class="layer-group-children mt-0 ml-1 min-h-1 border-l border-border pl-2"
+      style:display={group.collapsed ? "none" : "block"}
+      use:sortable
+    >
+      {@render nodeList(group.children)}
+    </div>
+  </div>
+{/snippet}
 
-    const handle = document.createElement("span");
-    handle.className =
-      "layer-drag-handle cursor-grab text-text-muted hover:text-text-secondary shrink-0 select-none text-base";
-    handle.textContent = "\u2261";
-
-    const collapseBtn = document.createElement("button");
-    collapseBtn.className =
-      "w-4 h-4 border-none bg-transparent cursor-pointer text-text-muted p-0 shrink-0 text-[10px]";
-    collapseBtn.textContent = group.collapsed ? "\u25B6" : "\u25BC";
-    collapseBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      group.collapsed = !group.collapsed;
-      collapseBtn.textContent = group.collapsed ? "\u25B6" : "\u25BC";
-      childContainer.style.display = group.collapsed ? "none" : "block";
-    });
-
-    const visBtn = document.createElement("button");
-    visBtn.className =
-      "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
-    visBtn.textContent = group.visible ? "\u{1F441}" : "\u2013";
-    visBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      layers.toggleVisibility(group.id);
-      bumpLayerVersion();
-    });
-
-    const nameSpan = buildNameSpan(group);
-
-    row1.appendChild(handle);
-    row1.appendChild(collapseBtn);
-    row1.appendChild(visBtn);
-    row1.appendChild(nameSpan);
-
-    // ----- Row 2: pills, tag picker, opacity slider -----
-    const row2 = document.createElement("div");
-    row2.className = "flex items-center gap-1.5 pl-7 min-w-0 leading-none";
-
-    for (const pill of buildTagPills(group)) row2.appendChild(pill);
-
-    const tagBtn = makeTagButton(group);
-
-    const opSlider = document.createElement("input");
-    opSlider.type = "range";
-    opSlider.className = "flex-1 min-w-0 h-3";
-    opSlider.title = "Opacity";
-    opSlider.min = "0";
-    opSlider.max = "100";
-    opSlider.value = String(group.opacity);
-    opSlider.addEventListener("input", (e) => {
-      e.stopPropagation();
-      layers.setOpacity(group.id, Number(opSlider.value));
-    });
-    opSlider.addEventListener("click", (e) => e.stopPropagation());
-
-    row2.appendChild(tagBtn);
-    row2.appendChild(opSlider);
-
-    header.addEventListener("click", () => {
-      layers.activeId = group.id;
-      bumpLayerVersion();
-    });
-
-    header.appendChild(row1);
-    header.appendChild(row2);
-    wrapper.appendChild(header);
-
-    const childContainer = document.createElement("div");
-    childContainer.className = "layer-group-children pl-2 border-l border-border ml-1 min-h-1";
-    childContainer.style.display = group.collapsed ? "none" : "block";
-    renderNodeList(group.children, childContainer);
-    wrapper.appendChild(childContainer);
-
-    return wrapper;
-  }
-
-  function renderNodeList(nodes: LayerNode[], container: HTMLElement) {
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const node = nodes[i];
-      if (node.type === "group") {
-        container.appendChild(renderGroupItem(node));
-      } else {
-        container.appendChild(renderLayerItem(node as AppLayer));
-      }
-    }
-    makeSortable(container);
-  }
-
-  function renderLayerList() {
-    if (!layerListEl) return;
-    layerListEl.innerHTML = "";
-    renderNodeList(layers.tree, layerListEl);
-  }
-
-  // Re-render layer list when layerVersion changes
-  $effect(() => {
-    void app.layerVersion;
-    // If the popover was anchored to a node that no longer exists (deleted),
-    // close it. Otherwise leave it open so multi-toggle keeps working.
-    if (openPopoverNodeId !== null) {
-      const stillExists = layers.flatAll().some((n) => n.id === openPopoverNodeId);
-      if (!stillExists) closePopover();
-    }
-    renderLayerList();
-  });
-</script>
+{#snippet nodeList(nodes: LayerNode[])}
+  <!-- Top of the list is the top of the stack: render the array in reverse. -->
+  {#each [...nodes].reverse() as node (node.id)}
+    {#if node.type === "group"}
+      {@render groupRow(node)}
+    {:else}
+      {@render layerRow(node)}
+    {/if}
+  {/each}
+{/snippet}
 
 <div
   class="layer-panel relative z-2 flex w-70 min-w-70 flex-col overflow-hidden border-l border-border bg-surface"
@@ -495,43 +464,28 @@
   >
     <span>Layers</span>
     <div class="flex gap-0.5">
-      <button
-        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
-        onclick={addLayer}
-        title="Add Layer"
-      >
+      <button class={headerBtn} onclick={addLayer} title="Add layer">
         <Plus size={14} />
       </button>
-      <button
-        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
-        onclick={addGroup}
-        title="Add Group"
-      >
+      <button class={headerBtn} onclick={addGroup} title="Add group">
         <FolderPlus size={14} />
       </button>
-      <button
-        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
-        onclick={duplicateLayer}
-        title="Duplicate Layer"
-      >
+      <button class={headerBtn} onclick={duplicateLayer} title="Duplicate layer">
         <Copy size={14} />
       </button>
-      <button
-        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
-        onclick={mergeDown}
-        title="Merge Down"
-      >
+      <button class={headerBtn} onclick={mergeDown} title="Merge down onto the layer below">
         <ArrowDownToLine size={14} />
       </button>
-      <button
-        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
-        onclick={removeNode}
-        title="Remove"
-      >
+      <button class={headerBtn} onclick={removeNode} title="Delete layer or group">
         <Minus size={14} />
       </button>
     </div>
   </div>
 
-  <div class="flex-1 overflow-y-auto" bind:this={layerListEl}></div>
+  <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
+  {#key `${version}:${dragNonce}`}
+    <div class="layer-list flex-1 overflow-y-auto" bind:this={listEl} use:sortable>
+      {@render nodeList(layers.tree)}
+    </div>
+  {/key}
 </div>
