@@ -20,7 +20,6 @@
     pressureCurve,
     bumpLayerVersion,
     bumpSelectionVersion,
-    initTheme,
     type Tool,
   } from "./appState.svelte.js";
   import type { BrushType } from "./brush-textures";
@@ -798,8 +797,6 @@
   });
 
   function init(): () => void {
-    initTheme();
-
     viewport = new Viewport(canvasContainerEl);
     const ctx = canvasEl.getContext("2d", { willReadFrequently: true })!;
     layers = new LayerManager(canvasEl, ctx, () => bumpLayerVersion());
@@ -970,7 +967,7 @@
 
 <svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} onresize={resizeCanvas} />
 
-<div class="flex h-screen w-screen flex-col bg-canvas-bg">
+<div class="flex h-full w-full flex-col bg-canvas-bg">
   {#if layersReady}
     <Toolbar
       {setTool}
@@ -995,7 +992,7 @@
 
   <div class="workspace-layout flex flex-1 overflow-hidden" bind:this={workspaceEl}>
     <div
-      class="relative min-h-0 min-w-0 flex-1 touch-none overflow-hidden bg-neutral-500/30"
+      class="relative min-h-0 min-w-0 flex-1 touch-none overflow-hidden bg-canvas-bg"
       bind:this={canvasClipEl}
     >
       <div class="absolute touch-none will-change-transform" bind:this={canvasContainerEl}>

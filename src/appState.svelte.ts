@@ -12,7 +12,6 @@ interface AppStateShape {
   streamline: number;
   brushSettings: BrushSettings;
   fillSettings: FillOptions;
-  theme: "light" | "dark";
   zoomText: string;
   layerVersion: number;
   selectionVersion: number;
@@ -39,7 +38,6 @@ export const app: AppStateShape = $state({
     alphaThreshold: 0,
     expand: 0,
   },
-  theme: "light",
   zoomText: "100%",
   layerVersion: 0,
   selectionVersion: 0,
@@ -56,18 +54,4 @@ export function bumpLayerVersion() {
 
 export function bumpSelectionVersion() {
   app.selectionVersion++;
-}
-
-export function initTheme() {
-  const saved = localStorage.getItem("theme");
-  if (saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
-    app.theme = "dark";
-    document.documentElement.classList.add("dark");
-  }
-}
-
-export function toggleTheme() {
-  app.theme = app.theme === "light" ? "dark" : "light";
-  document.documentElement.classList.toggle("dark", app.theme === "dark");
-  localStorage.setItem("theme", app.theme);
 }

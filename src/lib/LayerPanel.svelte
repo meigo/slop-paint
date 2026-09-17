@@ -256,7 +256,7 @@
     const item = document.createElement("div");
     item.className =
       "layer-item flex flex-col gap-0.5 px-2 py-1 border-b border-border-light cursor-pointer text-xs transition-colors text-text-secondary hover:bg-surface-hover" +
-      (layer.id === layers.activeId ? " !bg-surface-active !text-text" : "");
+      (layer.id === layers.activeId ? " ui-selected" : "");
     item.dataset.nodeId = String(layer.id);
 
     // ----- Row 1: handle, vis, thumb, name -----
@@ -361,9 +361,7 @@
     const header = document.createElement("div");
     header.className =
       "flex flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold cursor-default transition-colors text-text-secondary " +
-      (group.id === layers.activeId
-        ? "bg-group-active outline outline-2 outline-selection -outline-offset-2"
-        : "bg-group-bg hover:bg-group-hover");
+      (group.id === layers.activeId ? "ui-selected" : "bg-group-bg hover:bg-group-hover");
 
     // ----- Row 1: handle, collapse, vis, name -----
     const row1 = document.createElement("div");

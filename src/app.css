@@ -1,41 +1,71 @@
 @import "tailwindcss";
 
+/* Dark only, on the shared slop palette (../SLOP-TIMELINE-UI.md §1, same hexes as slop-animator).
+   The light theme and its toggle were removed to match the family. The artwork is unaffected:
+   the Background layer is painted white on the canvas, not by these tokens. */
 @theme {
-  --color-surface: #ffffff;
-  --color-surface-hover: #f5f5f5;
-  --color-surface-active: #ebebeb;
-  --color-surface-raised: #ffffff;
-  --color-border: #e0e0e0;
-  --color-border-light: #f0f0f0;
-  --color-text: #222222;
-  --color-text-secondary: #666666;
-  --color-text-muted: #999999;
-  --color-canvas-bg: #f5f5f5;
-  --color-accent: #222222;
-  --color-accent-text: #ffffff;
-  --color-group-bg: #f0f2f5;
-  --color-group-hover: #e8eaef;
-  --color-group-active: #dde0e8;
-  --color-selection: #6688cc;
-}
-
-.dark {
-  --color-surface: #1e1e1e;
-  --color-surface-hover: #282828;
-  --color-surface-active: #333333;
-  --color-surface-raised: #252525;
-  --color-border: #383838;
-  --color-border-light: #2a2a2a;
-  --color-text: #e0e0e0;
-  --color-text-secondary: #999999;
-  --color-text-muted: #666666;
-  --color-canvas-bg: #121212;
-  --color-accent: #e0e0e0;
-  --color-accent-text: #1e1e1e;
+  --color-surface: #1e1e22; /* family `panel` */
+  --color-surface-hover: #2d2d33;
+  --color-surface-active: #2d2d33;
+  --color-surface-raised: #2d2d33; /* family `raised` */
+  --color-border: #2e2e35; /* family `line` */
+  --color-border-light: #26262b;
+  --color-text: #f4f4f5;
+  --color-text-secondary: #a1a1aa; /* family `muted` */
+  --color-text-muted: #8a8a93;
+  --color-canvas-bg: #101013; /* family `ground` */
+  /* THE accent: active tool/toggle, selection, focus. Near-black text on it (5.92:1). */
+  --color-accent: #5b8cff;
+  --color-accent-hover: #7aa3ff;
+  --color-accent-text: #121212;
   --color-group-bg: #252830;
   --color-group-hover: #2d3040;
-  --color-group-active: #3a4060;
-  --color-selection: #6688cc;
+  --color-selection: #5b8cff;
+}
+
+/* Native controls (checkbox, spinners, color swatch, scrollbars) follow the dark scheme. */
+:root {
+  color-scheme: dark;
+  accent-color: var(--color-accent);
+}
+
+/* iPad: `100%` is the LAYOUT viewport, taller than the visible area while Safari's toolbars show;
+   `dvh` is the visible area. Taking #app out of flow is what actually stops a touch drag from
+   panning the whole page — `overflow: hidden` on the document is only a hint on iOS. */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+@supports (height: 100dvh) {
+  html,
+  body,
+  #app {
+    height: 100dvh;
+  }
+}
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* On-states, defined once (SLOP-TIMELINE-UI.md §6). `.ui-on` = a toggle/tool that is on;
+   `.ui-selected` = the current row, shown by a faint tint plus a 2px left edge. Unlayered, so they
+   beat any Tailwind colour utility on the same element regardless of emit order. */
+.ui-on {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.ui-on:hover {
+  background-color: var(--color-accent-hover);
+}
+.ui-selected {
+  background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+  color: var(--color-text);
 }
 
 /* Base resets */
@@ -43,27 +73,21 @@ body {
   overflow: hidden;
   font-family: "JetBrains Mono", monospace;
   touch-action: none;
+  overscroll-behavior: none;
+  color: var(--color-text);
+  background: var(--color-surface);
   user-select: none;
   -webkit-user-select: none;
 }
 
 /* Canvas checkerboard pattern */
 .canvas-checkerboard {
-  background-image:
-    linear-gradient(45deg, #e0e0e0 25%, transparent 25%),
-    linear-gradient(-45deg, #e0e0e0 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #e0e0e0 75%),
-    linear-gradient(-45deg, transparent 75%, #e0e0e0 75%);
   background-size: 16px 16px;
   background-position:
     0 0,
     0 8px,
     8px -8px,
     -8px 0;
-  background-color: #fff;
-}
-
-.dark .canvas-checkerboard {
   background-image:
     linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
     linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
@@ -75,26 +99,17 @@ body {
 /* Thumbnail checkerboard (smaller) */
 .thumb-checkerboard {
   background-image:
-    linear-gradient(45deg, #ddd 25%, transparent 25%),
-    linear-gradient(-45deg, #ddd 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #ddd 75%),
-    linear-gradient(-45deg, transparent 75%, #ddd 75%);
+    linear-gradient(45deg, #333 25%, transparent 25%),
+    linear-gradient(-45deg, #333 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #333 75%),
+    linear-gradient(-45deg, transparent 75%, #333 75%);
+  background-color: #222;
   background-size: 6px 6px;
   background-position:
     0 0,
     0 3px,
     3px -3px,
     -3px 0;
-  background-color: #fff;
-}
-
-.dark .thumb-checkerboard {
-  background-image:
-    linear-gradient(45deg, #333 25%, transparent 25%),
-    linear-gradient(-45deg, #333 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #333 75%),
-    linear-gradient(-45deg, transparent 75%, #333 75%);
-  background-color: #222;
 }
 
 /* SortableJS styles */
@@ -112,8 +127,8 @@ body {
   position: absolute;
   top: 52px;
   z-index: 20;
-  background: #222;
-  border: 1px solid #444;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -142,13 +157,13 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 1.5px;
-  background: var(--color-border);
+  background: var(--color-surface-hover);
 }
 
 input[type="range"]::-moz-range-track {
   height: 3px;
   border-radius: 1.5px;
-  background: var(--color-border);
+  background: var(--color-surface-hover);
   border: none;
 }
 

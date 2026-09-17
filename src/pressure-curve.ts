@@ -180,7 +180,7 @@ export function createCurveEditor(
     c.stroke();
 
     // Bezier curve
-    c.strokeStyle = "#4af";
+    c.strokeStyle = "#5b8cff";
     c.lineWidth = 2;
     c.beginPath();
     c.moveTo(PAD, PAD + SIZE);
@@ -193,7 +193,7 @@ export function createCurveEditor(
       c.beginPath();
       c.arc(pt.cx, pt.cy, 5, 0, Math.PI * 2);
       c.fill();
-      c.strokeStyle = "#4af";
+      c.strokeStyle = "#5b8cff";
       c.lineWidth = 1.5;
       c.stroke();
     }

@@ -16,7 +16,6 @@
     FileDown,
     FilePlus,
   } from "@lucide/svelte";
-  import ThemeToggle from "./ThemeToggle.svelte";
   import { app, pressureCurve, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
   import { createCurveEditor } from "../pressure-curve";
@@ -151,13 +150,11 @@
   <div class="flex items-center gap-1">
     {#each tools as { tool, icon: Icon, title }}
       <button
-        class="flex h-9 w-9 items-center justify-center rounded-md border transition-colors"
-        class:bg-accent={activeTool === tool}
-        class:text-accent-text={activeTool === tool}
-        class:border-accent={activeTool === tool}
-        class:bg-surface={activeTool !== tool}
-        class:text-text-secondary={activeTool !== tool}
-        class:border-border={activeTool !== tool}
+        class="flex h-9 w-9 items-center justify-center rounded-md border transition-colors {activeTool ===
+        tool
+          ? 'ui-on'
+          : 'border-border bg-surface text-text-secondary'}"
+        aria-pressed={activeTool === tool}
         onclick={() => setTool(tool)}
         {title}
       >
@@ -413,6 +410,5 @@
     <button class={actionBtnClass} onclick={openPsd} title="Open Project (Ctrl+O)"
       ><FolderOpen size={20} /></button
     >
-    <ThemeToggle />
   </div>
 </div>

@@ -5,13 +5,14 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Tech Stack
 
 - Svelte 5 + TypeScript + Vite
-- Tailwind CSS v4 for styling (light/dark mode via `.dark` class on `<html>`)
+- Tailwind CSS v4 for styling (dark only, shared slop palette — see `../SLOP-TIMELINE-UI.md`)
 - `@lucide/svelte` for icons
 - Canvas2D for rendering
 - Stamp-based brush engine for all brush types (smooth, pencil, charcoal, airbrush)
 - `ag-psd` for PSD export
 - `sortablejs` for drag-and-drop layer tree
-- Vitest for tests, ESLint for linting, `svelte-check` for Svelte type checking
+- Vitest for tests, ESLint for linting, Prettier for formatting, `svelte-check` for Svelte type checking
+- husky + lint-staged pre-commit hook: `eslint --fix` + `prettier --write` on staged files
 
 ## Commands
 
@@ -22,6 +23,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `npm run test:watch` — run tests in watch mode
 - `npm run lint` — run ESLint
 - `npm run check` — run svelte-check
+- `npm run format` / `npm run format:check` — Prettier
 
 ## Testing Guidelines
 
@@ -39,10 +41,9 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
-- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, theme, layer version counter
+- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter
 - `lib/Toolbar.svelte` — tool buttons, brush/fill options (size presets, click-to-edit size), color picker, zoom display, action buttons
 - `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename
-- `lib/ThemeToggle.svelte` — light/dark mode toggle (persists to localStorage)
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
 ### Canvas Engine (pure TypeScript, no Svelte)
@@ -70,9 +71,10 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ### Styling
 
 - Tailwind CSS v4 with `@theme` for custom color tokens
-- Monochrome color scheme: `surface`, `border`, `text`, `accent` tokens
-- Dark mode via `.dark` class on `<html>`, overrides CSS custom properties
-- `app.css` contains Tailwind import + theme tokens + non-utility CSS (checkerboard, sortable, curve popup)
+- Dark only, on the shared slop palette (`../SLOP-TIMELINE-UI.md`, same hexes as slop-animator): zinc chrome (`surface`, `border`, `text`, `canvas-bg`), blue `accent` (#5b8cff) with near-black `accent-text`
+- On-states: `.ui-on` for an active tool/toggle (accent fill), `.ui-selected` for the current layer/group row (10% accent tint + 2px left edge). Use these instead of `class:bg-accent` directives — layered utilities lose to emit order
+- `#app` is `position: fixed` with `100dvh` height so iPad touch drags can't pan the page
+- `app.css` contains Tailwind import + theme tokens + non-utility CSS (on-states, checkerboard, sortable, curve popup, sliders)
 
 ## iPad / Touch Support
 
@@ -88,7 +90,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - B/E/S/L/G — brush/eraser/select/lasso/fill
 - X (hold) — temporary eraser
 - R / Shift+R — rotate canvas 15° CW/CCW
-- Ctrl+0 — reset view (zoom, pan, rotation)
+- 0 — reset view (zoom, pan, rotation); 1 — 100% zoom (plain keys: browsers reserve Ctrl/Cmd+digit)
 - Ctrl+=/- — zoom in/out
 - [ / ] — decrease/increase brush size
 - Ctrl+Z / Ctrl+Shift+Z — undo/redo
@@ -131,4 +133,3 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - UI settings saved to localStorage (debounced)
 - Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings
-- Theme preference saved separately to localStorage

@@ -104,26 +104,20 @@
     </button>
   {/if}
   <button
-    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors"
-    class:bg-accent={distortActive}
-    class:text-accent-text={distortActive}
-    class:border-accent={distortActive}
-    class:bg-surface={!distortActive}
-    class:text-text-secondary={!distortActive}
-    class:border-border={!distortActive}
+    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors {distortActive
+      ? 'ui-on'
+      : 'border-border bg-surface text-text-secondary'}"
+    aria-pressed={distortActive}
     onpointerdown={tap(onDistort)}
     title="Distort (W) — 4-corner warp"
   >
     <SquareDashed size={20} />
   </button>
   <button
-    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors"
-    class:bg-accent={meshActive}
-    class:text-accent-text={meshActive}
-    class:border-accent={meshActive}
-    class:bg-surface={!meshActive}
-    class:text-text-secondary={!meshActive}
-    class:border-border={!meshActive}
+    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors {meshActive
+      ? 'ui-on'
+      : 'border-border bg-surface text-text-secondary'}"
+    aria-pressed={meshActive}
     onpointerdown={tap(onMesh)}
     title="Mesh warp (M) — 3×3 grid"
   >
