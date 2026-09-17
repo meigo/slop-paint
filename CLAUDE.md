@@ -8,7 +8,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Tailwind CSS v4 for styling (dark only, shared slop palette — see `../SLOP-TIMELINE-UI.md`)
 - `@lucide/svelte` for icons
 - Canvas2D for rendering
-- Stamp-based brush engine for all brush types (smooth, pencil, charcoal, airbrush)
+- perfect-freehand for the Smooth brush; stamp-based engine for pencil, charcoal, airbrush
 - `ag-psd` for PSD export
 - `sortablejs` for drag-and-drop layer tree
 - Vitest for tests, ESLint for linting, Prettier for formatting, `svelte-check` for Svelte type checking
@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex), `tool-settings.ts`
+- Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `selection.ts` (floorScale), `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -49,12 +49,12 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ### Canvas Engine (pure TypeScript, no Svelte)
 
 - `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) ends the stroke like `pointerup`; the lift point reuses the last move's pressure (pen `pointerup` reports 0)
-- `brush.ts` — BrushSettings interface (legacy perfect-freehand code, no longer used for rendering)
-- `stamp-brush.ts` — stamp-based brush engine for all brush types, supports eraser/draw-behind/alpha-lock compositing
+- `brush.ts` — BrushSettings, `widthRange` (size = thinnest width, × sizeRange at full pressure), and the Smooth brush (perfect-freehand). pf's `size` is a RADIUS basis, so it gets `maxSize / 2`; `decimationSmoothing` caps pf's point spacing so thin sections don't leave holes
+- `stamp-brush.ts` — stamp engine for pencil/charcoal/airbrush, supports eraser/draw-behind/alpha-lock compositing; `stampFootprint` draws sub-2px stamps at 2px with reduced alpha (smaller tips downsample to nothing)
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
 - `layers.ts` — tree-based layer/group management with per-layer undo history, lock, alpha lock, duplicate, merge down
 - `history.ts` — undo/redo stack via ImageData snapshots
-- `selection.ts` — rect/lasso selection with move/scale/rotate transform
+- `selection.ts` — rect/lasso selection with move/scale/rotate transform; the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT
@@ -81,7 +81,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - Apple Pencil draws; finger touch navigates (pan/zoom/rotate)
 - One finger: pan canvas
-- Two-finger pinch: zoom + pan + rotate (snaps to 90° increments)
+- Two-finger pinch: zoom + pan + rotate (snaps to 90° within 5° on lift, pivoting on the pinch midpoint)
 - Two-finger tap: undo; three-finger tap: redo
 - Pencil double-tap: toggle between current tool and eraser
 - Point interpolation ensures smooth strokes even with sparse pointer events
@@ -123,6 +123,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - Alpha threshold ("gap close"): treats semi-transparent pixels as walls to prevent leaking through antialiased stroke edges
 - Expand: dilates fill by N pixels, drawn behind existing content to eliminate seams between fill and outlines
+- Inside a selection or on an alpha-locked layer, the fill runs on a temp copy and is composited back (`copy` / `source-atop`); a fill that changes no pixels pushes no undo step
 
 ## New Document
 
