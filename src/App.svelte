@@ -9,7 +9,15 @@
   import { drawStroke } from "./brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
-  import { floodFill, hexToRgba, rgbToHex, sameImageData } from "./fill";
+  import {
+    enclosedFillRegion,
+    fillRegionBehind,
+    floodFill,
+    hexToRgba,
+    rgbToHex,
+    sameImageData,
+  } from "./fill";
+  import { clampGap } from "./fill-holes";
   import { Selection, type SelectionRect } from "./selection";
   import { placeExternalImage, placeInternalPaste } from "./paste";
   import { Viewport } from "./viewport";
@@ -21,6 +29,7 @@
     pressureCurve,
     bumpLayerVersion,
     bumpSelectionVersion,
+    flashStatus,
     type Tool,
   } from "./appState.svelte.js";
   import type { BrushType } from "./brush-textures";
@@ -226,6 +235,7 @@
     fillAlphaThreshold?: number;
     fillExpand?: number;
     keepProportions?: boolean;
+    fillEnclosedGap?: number;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
   }
@@ -249,6 +259,7 @@
       fillAlphaThreshold: app.fillSettings.alphaThreshold,
       fillExpand: app.fillSettings.expand,
       keepProportions: app.keepProportions,
+      fillEnclosedGap: app.fillEnclosedGap,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -282,6 +293,7 @@
         app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
+      if (data.fillEnclosedGap != null) app.fillEnclosedGap = clampGap(data.fillEnclosedGap);
       if (data.curveCp1 && data.curveCp2) {
         pressureCurve.cp1 = data.curveCp1;
         pressureCurve.cp2 = data.curveCp2;
@@ -916,6 +928,54 @@
     return untrack(() => init());
   });
 
+  /** Fill every area the active layer's outlines enclose, behind the lines (inside the selection, if
+   *  there is one). One undo step; says so in the status bar when nothing was filled. */
+  function fillAllEnclosed() {
+    if (!layers) return;
+    const layer = layers.active;
+    if (layer.locked) return flashStatus("Layer is locked");
+    // Fill enclosed only paints EMPTY interiors, which alpha lock refuses: it could never land.
+    if (layer.alphaLock)
+      return flashStatus("Alpha lock is on — Fill enclosed only paints empty areas");
+    const { region, area } = enclosedFillRegion(layer.canvas, {
+      gap: app.fillEnclosedGap,
+      expand: app.fillSettings.expand,
+    });
+    if (area === 0) {
+      return flashStatus(
+        "Nothing enclosed — the outline isn't closed (raise Bridge), or it's already filled",
+      );
+    }
+    const before = layers.getSnapshot();
+    const color = hexToRgba(app.brushSettings.color, app.brushSettings.opacity);
+    if (selection?.state === "selected") {
+      // Same as the click fill: paint a temp copy, composite back through the clip.
+      const dpr = window.devicePixelRatio || 1;
+      const tmp = document.createElement("canvas");
+      tmp.width = layer.canvas.width;
+      tmp.height = layer.canvas.height;
+      const tctx = tmp.getContext("2d", { willReadFrequently: true })!;
+      tctx.drawImage(layer.canvas, 0, 0);
+      fillRegionBehind(tctx, region, color);
+      layer.ctx.save();
+      try {
+        selection.applyClip(layer.ctx);
+        layer.ctx.globalCompositeOperation = "copy";
+        layer.ctx.drawImage(tmp, 0, 0, tmp.width / dpr, tmp.height / dpr);
+      } finally {
+        layer.ctx.restore();
+      }
+    } else {
+      fillRegionBehind(layer.ctx, region, color);
+    }
+    if (sameImageData(before, layers.getSnapshot())) {
+      return flashStatus("Nothing filled — the enclosed areas are outside the selection");
+    }
+    layer.history.push(before);
+    layers.composite();
+    bumpLayerVersion();
+  }
+
   /** Mirror the selection. A plain selection is lifted first (same as Free transform), so the flip
    *  shows as a float with handles; lift + commit stay one undo step. */
   function flipSelection(axis: "h" | "v") {
@@ -1247,6 +1307,7 @@
       {undo}
       {redo}
       {clearLayer}
+      fillEnclosed={fillAllEnclosed}
       copy={copySelection}
       cut={cutSelection}
       paste={() => void pasteFromMenu()}

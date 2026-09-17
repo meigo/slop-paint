@@ -15,12 +15,14 @@
   import { createCurveEditor } from "../pressure-curve";
   import { clickOutside } from "./click-outside";
   import ToolbarMenu from "./ToolbarMenu.svelte";
+  import { MAX_GAP } from "../fill-holes";
 
   let {
     setTool,
     undo,
     redo,
     clearLayer,
+    fillEnclosed,
     copy,
     cut,
     paste,
@@ -39,6 +41,7 @@
     undo: () => void;
     redo: () => void;
     clearLayer: () => void;
+    fillEnclosed: () => void;
     copy: () => void;
     cut: () => void;
     paste: () => void;
@@ -476,6 +479,28 @@
       />
       <span class="min-w-7 text-[11px] text-text-muted">{fillExpandDisplay}</span>
     </label>
+    <div class="h-6 w-px bg-border"></div>
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="Fill enclosed: close breaks in the outline up to about twice this many pixels"
+    >
+      Bridge
+      <input
+        type="range"
+        min="0"
+        max={MAX_GAP}
+        bind:value={app.fillEnclosedGap}
+        oninput={onSettingsChange}
+        class="w-16"
+      />
+      <span class="min-w-4 text-[11px] text-text-muted">{app.fillEnclosedGap}</span>
+    </label>
+    <button
+      class="h-8 rounded-md border border-border bg-surface px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover"
+      onclick={fillEnclosed}
+      title="Fill every area the outlines on this layer enclose, behind the lines"
+      >Fill enclosed</button
+    >
   {/if}
 
   <!-- Color -->

@@ -19,6 +19,10 @@ interface AppStateShape {
   docHeight: number;
   /** Selection transform: corner handles keep the aspect ratio. */
   keepProportions: boolean;
+  /** Fill enclosed: bridge outline breaks of about 2×this px (0..MAX_GAP). */
+  fillEnclosedGap: number;
+  /** Transient message for the status bar (see flashStatus). */
+  statusMessage: string;
 }
 
 export const app: AppStateShape = $state({
@@ -46,6 +50,8 @@ export const app: AppStateShape = $state({
   docWidth: 1920,
   docHeight: 1080,
   keepProportions: true,
+  fillEnclosedGap: 0,
+  statusMessage: "",
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget
@@ -57,4 +63,12 @@ export function bumpLayerVersion() {
 
 export function bumpSelectionVersion() {
   app.selectionVersion++;
+}
+
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
+/** Show a short message in the status bar, e.g. why an action did nothing. */
+export function flashStatus(message: string, ms = 4000) {
+  app.statusMessage = message;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
 }

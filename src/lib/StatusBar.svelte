@@ -27,7 +27,9 @@
 <div
   class="flex min-h-7 flex-wrap items-center gap-2 border-t border-border bg-surface px-3 py-1 text-xs text-text-secondary select-none"
 >
-  {#if state === "idle"}
+  {#if app.statusMessage}
+    <span class="text-text">{app.statusMessage}</span>
+  {:else if state === "idle"}
     <span
       >Drag with the <kbd class={kbd}>S</kbd> or <kbd class={kbd}>L</kbd> tool to make a selection</span
     >

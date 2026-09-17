@@ -3,6 +3,9 @@
  * Operates on raw ImageData for performance.
  */
 
+import { dilateMask } from "./mask-ops";
+import { enclosedRegion } from "./fill-holes";
+
 export interface FillOptions {
   /** Color tolerance for matching the clicked pixel's color (0-255) */
   tolerance?: number;
@@ -174,40 +177,6 @@ export function floodFill(
   }
 }
 
-/**
- * Dilate a binary mask by `radius` pixels using a circular kernel.
- * Uses a distance-based approach for clean circular expansion.
- */
-function dilateMask(mask: Uint8Array, w: number, h: number, radius: number): Uint8Array {
-  const result = new Uint8Array(w * h);
-
-  // Build list of offsets within the circular radius
-  const offsets: [number, number][] = [];
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      if (dx * dx + dy * dy <= radius * radius) {
-        offsets.push([dx, dy]);
-      }
-    }
-  }
-
-  // For each filled pixel, mark all pixels within radius
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (!mask[y * w + x]) continue;
-      for (const [dx, dy] of offsets) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-          result[ny * w + nx] = 1;
-        }
-      }
-    }
-  }
-
-  return result;
-}
-
 export function hexToRgba(
   hex: string,
   opacity: number,
@@ -231,4 +200,60 @@ export function sameImageData(a: ImageData, b: ImageData): boolean {
   if (x.length !== y.length) return false;
   for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
   return true;
+}
+
+/**
+ * Every region the ink on `canvas` encloses, as a device-px mask — READ-ONLY, so the caller can ask
+ * "is there anything to fill?" before it touches the document. `area` 0 means nothing was enclosed
+ * (an open outline, or art that is already solid), which the caller must report rather than
+ * silently no-op: a no-op and a successful fill of an already-white interior look identical.
+ */
+export function enclosedFillRegion(
+  canvas: HTMLCanvasElement,
+  opts: { gap?: number; expand?: number } = {},
+): { region: Uint8Array; area: number } {
+  const w = canvas.width,
+    h = canvas.height;
+  if (w === 0 || h === 0) return { region: new Uint8Array(0), area: 0 };
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const { data } = ctx.getImageData(0, 0, w, h);
+  return enclosedRegion(data, w, h, { gap: opts.gap, expand: opts.expand });
+}
+
+/**
+ * Paint `region` (device px, sized to the ctx's canvas) in one pass BEHIND existing content (e.g. white under a black outline).
+ *
+ * Always composites with destination-over, unlike `floodFill`, which only takes that path when
+ * `expand > 0`. Painting behind is the point here, not an artefact of the expand pass.
+ */
+export function fillRegionBehind(
+  ctx: CanvasRenderingContext2D,
+  region: Uint8Array,
+  fillColor: { r: number; g: number; b: number; a: number },
+): void {
+  const w = ctx.canvas.width,
+    h = ctx.canvas.height;
+  if (w === 0 || h === 0 || region.length < w * h) return;
+
+  const temp = document.createElement("canvas");
+  temp.width = w;
+  temp.height = h;
+  const tctx = temp.getContext("2d")!;
+  const img = tctx.createImageData(w, h);
+  const td = img.data;
+  for (let i = 0; i < w * h; i++) {
+    if (!region[i]) continue;
+    const pi = i * 4;
+    td[pi] = fillColor.r;
+    td[pi + 1] = fillColor.g;
+    td[pi + 2] = fillColor.b;
+    td[pi + 3] = fillColor.a;
+  }
+  tctx.putImageData(img, 0, 0);
+
+  ctx.save();
+  ctx.resetTransform(); // the region is in device px; the caller's CTM must not scale it
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.drawImage(temp, 0, 0);
+  ctx.restore();
 }
