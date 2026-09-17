@@ -41,13 +41,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
-- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter; `flashStatus(msg, ms)` shows a status-bar message (use it when an action does nothing, so a no-op isn't silent); `ms = 0` is sticky, for conditions like autosave failing
+- `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter; `statusHint` carries the `title` of whatever the pointer is over (see the status bar below); `flashStatus(msg, ms)` shows a status-bar message (use it when an action does nothing, so a no-op isn't silent); `ms = 0` is sticky, for conditions like autosave failing
 - `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool. On the bar: what is changed while drawing (brush type, size + presets, opacity, color swatch). Behind popovers: the gear holds set-once settings (smoothing, streamline, size range, nib angle/flatness for Calligraphy, dwell for Ink, taper for Smooth, draw-behind, pressure curve editor for the active tool), the color swatch holds the palette + native picker. Needs ~750px, so it fits a portrait iPad. Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall, and wrap bare buttons in a flex box (a bare button sits on the text baseline and is 40px). Row 1 must not get `overflow` (it would clip the menus)
 - Brush kinds: `BrushKind` = smooth | ink | calligraphy | stamp tips. Smooth/ink/calligraphy redraw the whole stroke each frame from a pre-stroke canvas copy (a per-segment redraw hardens antialiased edges); stamps draw incrementally
 - `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
 - `lib/SelectionActions.svelte` — floating panel over the selection: Free transform, Distort, Mesh, Flip H/V, keep proportions, Apply, Cancel. Buttons keep their positions when a plain selection is lifted (the panel is centred, so appearing/disappearing buttons would slide under the pen); Apply/Cancel are shown dimmed until there is a float
-- `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename
+- `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename. Every control carries a `title`, which is also what the status bar shows on touch
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
 ### Canvas Engine (pure TypeScript, no Svelte)
@@ -144,6 +144,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - NOT undoable: rename, visibility, opacity, lock and alpha-lock toggles (a structural snapshot holds layers by reference, so their own fields aren't part of it)
 - The stack is cleared by New, Open, autosave restore and canvas resize (its snapshots are the old canvas size)
 - Budget: 50 steps or 256 MB of pixel snapshots, whichever comes first
+
+## Status Bar
+
+- Fixed height, `px-5` so text clears an iPad's rounded window corners. Right side: the active tool
+- Left side, in priority order: an explicit message (`flashStatus`, e.g. why an action did nothing), then `statusHint` — the `title` of the control under the pointer — then the selection/transform context
+- The hint is written on `pointerover` AND `pointerdown` (capture) in App.svelte, since iPad has no hover: touching a control explains it. A `pointerover` resolving to the same element is ignored, or pointer capture's boundary events would clear a message the press just wrote
+- Give every new control a `title`: on touch it is the only explanation the user gets
 
 ## Fill Tool
 

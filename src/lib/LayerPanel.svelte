@@ -267,6 +267,7 @@
     item.className =
       "layer-item flex flex-col gap-0.5 px-2 py-1 border-b border-border-light cursor-pointer text-xs transition-colors text-text-secondary hover:bg-surface-hover" +
       (layer.id === layers.activeId ? " ui-selected" : "");
+    item.title = "Tap to draw on this layer · double-tap the name to rename";
     item.dataset.nodeId = String(layer.id);
 
     // ----- Row 1: handle, vis, thumb, name -----
@@ -282,6 +283,7 @@
     visBtn.className =
       "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
     visBtn.textContent = layer.visible ? "\u{1F441}" : "\u2013";
+    visBtn.title = layer.visible ? "Hide layer" : "Show layer";
     visBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       layers.toggleVisibility(layer.id);
@@ -339,6 +341,7 @@
     const opSlider = document.createElement("input");
     opSlider.type = "range";
     opSlider.className = "flex-1 min-w-0 h-3";
+    opSlider.title = "Opacity";
     opSlider.min = "0";
     opSlider.max = "100";
     opSlider.value = String(layer.opacity);
@@ -372,6 +375,7 @@
     header.className =
       "flex flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold cursor-default transition-colors text-text-secondary " +
       (group.id === layers.activeId ? "ui-selected" : "bg-group-bg hover:bg-group-hover");
+    header.title = "Layer group · double-tap the name to rename";
 
     // ----- Row 1: handle, collapse, vis, name -----
     const row1 = document.createElement("div");
@@ -421,6 +425,7 @@
     const opSlider = document.createElement("input");
     opSlider.type = "range";
     opSlider.className = "flex-1 min-w-0 h-3";
+    opSlider.title = "Opacity";
     opSlider.min = "0";
     opSlider.max = "100";
     opSlider.value = String(group.opacity);

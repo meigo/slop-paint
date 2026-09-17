@@ -1061,6 +1061,20 @@
     bumpLayerVersion();
   }
 
+  // iPad shows no tooltips, so a control's `title` goes to the status bar: on hover (desktop) and
+  // on press (touch), read from the nearest ancestor that has one.
+  // A `pointerover` resolving to the SAME element as the last write is ignored: pointer capture
+  // (the canvas takes it on every press) fires boundary `pointerover`s that would otherwise clear a
+  // message the press's own action just wrote. A `pointerdown` always writes, so pressing the
+  // canvas still clears a stale hint. (From slop-animator.)
+  let hintSource: Element | null = null;
+  function onPointerHint(e: PointerEvent) {
+    const el = (e.target as Element | null)?.closest("[title]") ?? null;
+    if (e.type === "pointerover" && el === hintSource) return;
+    hintSource = el;
+    app.statusHint = el?.getAttribute("title") ?? "";
+  }
+
   /** Mirror the selection. A plain selection is lifted first (same as Free transform), so the flip
    *  shows as a float with handles; lift + commit stay one undo step. */
   function flipSelection(axis: "h" | "v") {
@@ -1448,6 +1462,8 @@
 <ShareReadyDialog file={shareFileReady} onClose={() => (shareFileReady = null)} />
 
 <svelte:window
+  onpointerovercapture={onPointerHint}
+  onpointerdowncapture={onPointerHint}
   onblur={() => {
     if (selection) selection.shiftHeld = false;
   }}

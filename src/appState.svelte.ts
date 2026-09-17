@@ -26,6 +26,8 @@ interface AppStateShape {
   fillEnclosedGap: number;
   /** Transient message for the status bar (see flashStatus). */
   statusMessage: string;
+  /** What the control under the pointer does — iPad has no hover, so titles go here. */
+  statusHint: string;
 }
 
 export const app: AppStateShape = $state({
@@ -59,6 +61,7 @@ export const app: AppStateShape = $state({
   keepProportions: true,
   fillEnclosedGap: 0,
   statusMessage: "",
+  statusHint: "",
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget
