@@ -1,7 +1,6 @@
 import { writePsd, readPsd, type Psd, type Layer as PsdLayer } from "ag-psd";
 import { downloadBlob } from "./download";
 import type { LayerNode, LayerManager, Layer, LayerGroup } from "./layers";
-import { History } from "./history";
 
 let importIdCounter = 1000;
 
@@ -142,7 +141,6 @@ export function loadPsd(
         opacity: Math.round((psdLayer.opacity ?? 1) * 100),
         locked: false,
         alphaLock: false,
-        history: new History(),
       };
       return layer;
     }

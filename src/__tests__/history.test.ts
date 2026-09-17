@@ -1,89 +1,128 @@
 import { describe, it, expect } from "vitest";
-import { History } from "../history";
+import { History, type Command } from "../history";
 
-function fakeImageData(id: number): ImageData {
-  // Create a minimal ImageData-like object for testing
-  const data = new Uint8ClampedArray([id, 0, 0, 255]);
-  return { data, width: 1, height: 1, colorSpace: "srgb" } as ImageData;
+function counterCmd(state: { n: number }, delta: number): Command {
+  return {
+    undo: () => {
+      state.n -= delta;
+    },
+    redo: () => {
+      state.n += delta;
+    },
+  };
 }
 
 describe("History", () => {
-  it("starts empty", () => {
+  it("undo reverts the last command and redo re-applies it", () => {
+    const s = { n: 0 };
+    const h = new History();
+    s.n += 5;
+    h.push(counterCmd(s, 5));
+    expect(s.n).toBe(5);
+    h.undo();
+    expect(s.n).toBe(0);
+    h.redo();
+    expect(s.n).toBe(5);
+  });
+
+  it("pushing a new command after undo clears the redo stack", () => {
+    const s = { n: 0 };
+    const h = new History();
+    s.n += 5;
+    h.push(counterCmd(s, 5));
+    h.undo();
+    s.n += 2;
+    h.push(counterCmd(s, 2));
+    h.redo(); // nothing to redo
+    expect(s.n).toBe(2);
+    expect(h.canRedo).toBe(false);
+  });
+
+  it("undo/redo are no-ops on empty stacks", () => {
     const h = new History();
     expect(h.canUndo).toBe(false);
-    expect(h.canRedo).toBe(false);
-  });
-
-  it("push enables undo", () => {
-    const h = new History();
-    h.push(fakeImageData(1));
-    expect(h.canUndo).toBe(true);
-    expect(h.canRedo).toBe(false);
-  });
-
-  it("undo returns previous state", () => {
-    const h = new History();
-    const s1 = fakeImageData(1);
-    h.push(s1);
-    const current = fakeImageData(2);
-    const result = h.undo(current);
-    expect(result).toBe(s1);
+    h.undo();
+    h.redo();
     expect(h.canUndo).toBe(false);
-    expect(h.canRedo).toBe(true);
   });
 
-  it("redo returns undone state", () => {
-    const h = new History();
-    h.push(fakeImageData(1));
-    const s2 = fakeImageData(2);
-    h.undo(s2);
-    const s3 = fakeImageData(3);
-    const result = h.redo(s3);
-    expect(result).toBe(s2);
-  });
-
-  it("push after undo clears redo stack", () => {
-    const h = new History();
-    h.push(fakeImageData(1));
-    h.undo(fakeImageData(2));
-    expect(h.canRedo).toBe(true);
-    h.push(fakeImageData(3));
-    expect(h.canRedo).toBe(false);
-  });
-
-  it("undo on empty returns null", () => {
-    const h = new History();
-    expect(h.undo(fakeImageData(1))).toBeNull();
-  });
-
-  it("redo on empty returns null", () => {
-    const h = new History();
-    expect(h.redo(fakeImageData(1))).toBeNull();
-  });
-
-  it("clear resets both stacks", () => {
-    const h = new History();
-    h.push(fakeImageData(1));
-    h.push(fakeImageData(2));
-    h.undo(fakeImageData(3));
-    h.clear();
-    expect(h.canUndo).toBe(false);
-    expect(h.canRedo).toBe(false);
-  });
-
-  it("respects max size (50)", () => {
-    const h = new History();
-    for (let i = 0; i < 60; i++) {
-      h.push(fakeImageData(i));
+  it("caps the undo stack at its max size", () => {
+    const s = { n: 0 };
+    const h = new History(3);
+    for (let i = 0; i < 5; i++) {
+      s.n += 1;
+      h.push(counterCmd(s, 1));
     }
-    // Should have at most 50 items
-    let undoCount = 0;
-    let current = fakeImageData(99);
+    let undone = 0;
     while (h.canUndo) {
-      const prev = h.undo(current);
-      if (prev) current = prev;
-      undoCount++;
+      h.undo();
+      undone++;
     }
-    expect(undoCount).toBe(50);
+    expect(undone).toBe(3); // only the last 3 are retained
+  });
+
+  it("drops the oldest commands when the byte budget is exceeded", () => {
+    const s = { n: 0 };
+    const h = new History(50, 25);
+    for (let i = 0; i < 3; i++) {
+      s.n += 1;
+      h.push({ ...counterCmd(s, 1), bytes: 10 });
+    }
+    // 30 bytes > 25 → drop the oldest; 20 bytes / 2 commands remain
+    let undone = 0;
+    while (h.canUndo) {
+      h.undo();
+      undone++;
+    }
+    expect(undone).toBe(2);
+  });
+
+  it("keeps a single command even if it is over the byte budget", () => {
+    const h = new History(50, 10);
+    h.push({ ...counterCmd({ n: 0 }, 1), bytes: 99 });
+    expect(h.canUndo).toBe(true);
+    h.undo();
+    expect(h.canUndo).toBe(false);
+  });
+});
+
+describe("History.onChange", () => {
+  /** The toolbar mirrors canUndo/canRedo into $state through this hook — a plain class getter is
+   *  not a reactive dependency, so if the hook stops firing the buttons silently stop greying. */
+  function tracked() {
+    const st = { n: 0 };
+    const h = new History();
+    const seen: { undo: boolean; redo: boolean }[] = [];
+    h.onChange = () => seen.push({ undo: h.canUndo, redo: h.canRedo });
+    return { st, h, seen };
+  }
+
+  it("fires on push, undo, redo and clear, reporting the state AFTER the change", () => {
+    const { st, h, seen } = tracked();
+    h.push(counterCmd(st, 1));
+    expect(seen.at(-1)).toEqual({ undo: true, redo: false });
+    h.undo();
+    expect(seen.at(-1)).toEqual({ undo: false, redo: true });
+    h.redo();
+    expect(seen.at(-1)).toEqual({ undo: true, redo: false });
+    h.clear();
+    expect(seen.at(-1)).toEqual({ undo: false, redo: false });
+    expect(seen).toHaveLength(4);
+  });
+
+  it("does not fire when undo/redo have nothing to do", () => {
+    const { h, seen } = tracked();
+    h.undo();
+    h.redo();
+    expect(seen).toHaveLength(0);
+  });
+
+  it("reports redo as unavailable once a push clears the redo stack", () => {
+    const { st, h, seen } = tracked();
+    h.push(counterCmd(st, 1));
+    h.undo();
+    expect(h.canRedo).toBe(true);
+    h.push(counterCmd(st, 2));
+    expect(seen.at(-1)).toEqual({ undo: true, redo: false });
   });
 });

@@ -58,8 +58,9 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `calligraphy-brush.ts` — broad-nib ribbon with nib angle/flatness; smooths and decimates points first (from slop-animator)
 - `stamp-brush.ts` — stamp engine for pencil/charcoal/airbrush, supports eraser/draw-behind/alpha-lock compositing; `stampFootprint` draws sub-2px stamps at 2px with reduced alpha (smaller tips downsample to nothing)
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
-- `layers.ts` — tree-based layer/group management with per-layer undo history, lock, alpha lock, duplicate, merge down
-- `history.ts` — undo/redo stack via ImageData snapshots
+- `layers.ts` — tree-based layer/group management with lock, alpha lock, duplicate, merge down; `captureStructure`/`restoreStructure` snapshot the tree's SHAPE (layers by reference, so their canvases survive undo), `snapshotOf`/`restoreTo` do pixels for one layer
+- `history.ts` — one undo/redo stack of commands for the whole document, with a 50-step / 256 MB budget (from slop-animator)
+- `undo.ts` — the single `history` instance plus `pushPixelEdit` (a pixel change on one layer) and `structuralEdit` (add/delete/duplicate/merge/group/reorder; takes an optional layer whose pixels change too, as merge down does)
 - `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); `flip`; pure `flipMatrix` / `cornerScaleMatrix` / `sideStretchMatrix` (from slop-animator). Corners keep proportions when `keepProportions` (Shift inverts), side handles stretch one axis (Shift skews); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
@@ -115,7 +116,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Alpha lock: paint only on existing pixels
 - Duplicate layer
 - Merge down (onto layer below)
-- Per-layer opacity, visibility, undo history
+- Per-layer opacity, visibility
 - Drag-and-drop reordering with groups
 
 ## Brush / Eraser Settings
@@ -136,6 +137,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Paste goes through the window `paste` event: an image on the system clipboard floats centred (scaled down to fit); if its size equals the internal copy's, the internal copy is used instead so it keeps its position. Pasted pixels float on the active layer with transform handles (Enter applies, Esc cancels); the paste is one undo step
 - Edit menu Paste (for iPad without a keyboard) tries `navigator.clipboard.read()` and falls back to the internal copy
 - Delete/cut are one undo step and skip the step if nothing changed
+
+## Undo
+
+- One stack for the document: strokes, fills, clears, selection commits and structural edits (add, delete, duplicate, merge down, group, drag-reorder) undo in the order they were made, on whichever layer they touched
+- NOT undoable: rename, visibility, opacity, lock and alpha-lock toggles (a structural snapshot holds layers by reference, so their own fields aren't part of it)
+- The stack is cleared by New, Open, autosave restore and canvas resize (its snapshots are the old canvas size)
+- Budget: 50 steps or 256 MB of pixel snapshots, whichever comes first
 
 ## Fill Tool
 

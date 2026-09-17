@@ -1,5 +1,3 @@
-import { History } from "./history";
-
 export interface Layer {
   type: "layer";
   id: number;
@@ -10,7 +8,6 @@ export interface Layer {
   opacity: number;
   locked: boolean;
   alphaLock: boolean;
-  history: History;
 }
 
 export interface LayerGroup {
@@ -24,6 +21,17 @@ export interface LayerGroup {
 }
 
 export type LayerNode = Layer | LayerGroup;
+
+/** A structural undo point: the tree's shape, with layers held by reference. */
+export interface StructSnapshot {
+  tree: LayerNode[];
+  activeId: number;
+}
+
+/** Copy the arrays and group nodes; keep Layer objects (and their canvases) shared. */
+function cloneTree(nodes: LayerNode[]): LayerNode[] {
+  return nodes.map((n) => (n.type === "group" ? { ...n, children: cloneTree(n.children) } : n));
+}
 
 let nextId = 1;
 
@@ -169,7 +177,6 @@ export class LayerManager {
       opacity: 100,
       locked: false,
       alphaLock: false,
-      history: new History(),
     };
   }
 
@@ -278,9 +285,6 @@ export class LayerManager {
     const below = loc.parent[loc.index - 1];
     if (below.type !== "layer") return false;
 
-    // Save undo snapshot on the target
-    below.history.push(below.ctx.getImageData(0, 0, below.canvas.width, below.canvas.height));
-
     // Draw src onto below
     below.ctx.save();
     below.ctx.resetTransform();
@@ -340,6 +344,31 @@ export class LayerManager {
     }
     drawNodes(this.tree, 1);
     ctx.globalAlpha = 1;
+  }
+
+  /** Pixels of one layer (not just the active one), for undo. */
+  snapshotOf(layer: Layer): ImageData {
+    return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
+  }
+
+  /** Put pixels back on one layer. putImageData ignores the ctx transform. */
+  restoreTo(layer: Layer, data: ImageData) {
+    layer.ctx.putImageData(data, 0, 0);
+  }
+
+  /**
+   * The SHAPE of the tree — which nodes exist, their nesting and order, plus the active id.
+   * Layer objects are kept by reference (their canvases must survive undo), so this records
+   * structure only: a layer's own name/opacity/visibility/lock are not part of it.
+   */
+  captureStructure(): StructSnapshot {
+    return { tree: cloneTree(this.tree), activeId: this.activeId };
+  }
+
+  restoreStructure(snap: StructSnapshot) {
+    this.tree = cloneTree(snap.tree);
+    this.activeId = snap.activeId;
+    this.onChange();
   }
 
   getSnapshot(): ImageData {

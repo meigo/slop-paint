@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Plus, FolderPlus, Copy, ArrowDownToLine, Minus } from "@lucide/svelte";
   import { app, bumpLayerVersion } from "../appState.svelte.js";
+  import { structuralEdit } from "../undo";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
   import {
@@ -19,29 +20,38 @@
   } = $props();
 
   function addLayer() {
-    layers.addLayer();
+    structuralEdit(layers, () => layers.addLayer());
     bumpLayerVersion();
   }
 
   function addGroup() {
-    layers.addGroup();
+    structuralEdit(layers, () => layers.addGroup());
     bumpLayerVersion();
   }
 
   function removeNode() {
-    layers.removeNode(layers.activeId);
+    structuralEdit(layers, () => layers.removeNode(layers.activeId));
     layers.composite();
     bumpLayerVersion();
   }
 
   function duplicateLayer() {
-    layers.duplicateLayer(layers.activeId);
+    structuralEdit(layers, () => layers.duplicateLayer(layers.activeId));
     layers.composite();
     bumpLayerVersion();
   }
 
   function mergeDown() {
-    layers.mergeDown(layers.activeId);
+    // Merge also writes pixels onto the layer below, so that layer's pixels join the undo step.
+    structuralEdit(
+      layers,
+      () => layers.mergeDown(layers.activeId),
+      () => {
+        const loc = layers.findParent(layers.activeId);
+        const below = loc && loc.index > 0 ? loc.parent[loc.index - 1] : null;
+        return below?.type === "layer" ? below : null;
+      },
+    );
     layers.composite();
     bumpLayerVersion();
   }
@@ -84,7 +94,7 @@
         for (const n of layers.flatAll()) {
           lookup.set(n.id, n);
         }
-        syncTreeFromDom(layerListEl, layers.tree, lookup);
+        structuralEdit(layers, () => syncTreeFromDom(layerListEl, layers.tree, lookup));
         layers.composite();
         bumpLayerVersion();
       },

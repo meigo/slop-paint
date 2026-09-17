@@ -26,6 +26,7 @@
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
+  import { history, pushPixelEdit, setOnHistoryApplied } from "./undo";
   import { canShareFile, saveToFilesAvailable, shareFile } from "./share";
   import { downloadBlob } from "./download";
   import ShareReadyDialog from "./lib/ShareReadyDialog.svelte";
@@ -347,14 +348,7 @@
       selection.cancel();
       return;
     }
-    const layer = layers.active;
-    const current = layers.getSnapshot();
-    const prev = layer.history.undo(current);
-    if (prev) {
-      layers.restoreSnapshot(prev);
-      layers.composite();
-      bumpLayerVersion();
-    }
+    history.undo();
   }
 
   function redo() {
@@ -363,14 +357,7 @@
       selection.cancel();
       return;
     }
-    const layer = layers.active;
-    const current = layers.getSnapshot();
-    const next = layer.history.redo(current);
-    if (next) {
-      layers.restoreSnapshot(next);
-      layers.composite();
-      bumpLayerVersion();
-    }
+    history.redo();
   }
 
   /**
@@ -419,8 +406,9 @@
   function clearLayer() {
     if (!layers) return;
     const layer = layers.active;
-    layer.history.push(layers.getSnapshot());
+    const before = layers.snapshotOf(layer);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    pushPixelEdit(layers, layer, before);
     layers.composite();
     bumpLayerVersion();
   }
@@ -496,8 +484,8 @@
     const bg = layers.addLayer("Background");
     bg.ctx.fillStyle = "#ffffff";
     bg.ctx.fillRect(0, 0, width, height);
-    bg.history.push(bg.ctx.getImageData(0, 0, bg.canvas.width, bg.canvas.height));
     layers.addLayer("Layer 1");
+    history.clear(); // a new document starts with nothing to undo
     layers.composite();
     bumpLayerVersion();
     fitDocumentInView();
@@ -509,7 +497,7 @@
     app.docWidth = width;
     app.docHeight = height;
     layers.setDocumentSize(width, height, anchorX, anchorY);
-    for (const layer of layers.flatLayers()) layer.history.clear();
+    history.clear(); // snapshots are the old canvas size
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
@@ -529,6 +517,7 @@
       const buffer = reader.result as ArrayBuffer;
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = loadPsd(buffer, layers, dpr);
+      history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
       app.docWidth = width;
       app.docHeight = height;
@@ -721,7 +710,7 @@
         }
         // Nothing landed (already this colour, or clipped away): no empty undo step
         if (sameImageData(before, layers.getSnapshot())) return;
-        layer.history.push(before);
+        pushPixelEdit(layers, layer, before);
         layers.composite();
         bumpLayerVersion();
       }
@@ -764,7 +753,7 @@
         layer.ctx.restore();
         layers.composite();
         if (preStrokeSnapshot) {
-          layer.history.push(preStrokeSnapshot);
+          pushPixelEdit(layers, layer, preStrokeSnapshot);
           preStrokeSnapshot = null;
         }
         bumpLayerVersion();
@@ -801,7 +790,7 @@
       if (done) {
         layers.composite();
         if (preStrokeSnapshot) {
-          layer.history.push(preStrokeSnapshot);
+          pushPixelEdit(layers, layer, preStrokeSnapshot);
           preStrokeSnapshot = null;
         }
         bumpLayerVersion();
@@ -1067,7 +1056,7 @@
     if (sameImageData(before, layers.getSnapshot())) {
       return flashStatus("Nothing filled — the enclosed areas are outside the selection");
     }
-    layer.history.push(before);
+    pushPixelEdit(layers, layer, before);
     layers.composite();
     bumpLayerVersion();
   }
@@ -1133,6 +1122,7 @@
       if (!buffer || !layers) return true;
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = loadPsd(buffer, layers, dpr);
+      history.clear(); // restored document: nothing from this session to undo
       app.docWidth = width;
       app.docHeight = height;
       layers.docWidth = width;
@@ -1196,7 +1186,7 @@
     selection.clearRegion(layer.ctx, dpr);
     selection.cancel(); // drop the marquee
     if (sameImageData(before, layers.getSnapshot())) return;
-    layer.history.push(before);
+    pushPixelEdit(layers, layer, before);
     layers.composite();
     bumpLayerVersion();
   }
@@ -1285,14 +1275,19 @@
     layers = new LayerManager(canvasEl, ctx, () => bumpLayerVersion());
     selection = new Selection(selectionOverlayEl);
 
+    // Undo/redo repaint: commands change pixels or the tree, then this refreshes the view.
+    setOnHistoryApplied(() => {
+      layers.composite();
+      bumpLayerVersion();
+    });
+
     // Selection callbacks
     selection.onCommit = () => {
       const layer = layers.active;
-      if (preSelectionSnapshot) {
-        layer.history.push(preSelectionSnapshot);
-        preSelectionSnapshot = null;
-      }
+      const before = preSelectionSnapshot;
+      preSelectionSnapshot = null;
       selection.renderFloatingTo(layer.ctx);
+      if (before) pushPixelEdit(layers, layer, before);
       layers.composite();
       bumpLayerVersion();
     };
@@ -1327,7 +1322,6 @@
     const bg = layers.addLayer("Background");
     bg.ctx.fillStyle = "#ffffff";
     bg.ctx.fillRect(0, 0, app.docWidth, app.docHeight);
-    bg.history.push(bg.ctx.getImageData(0, 0, bg.canvas.width, bg.canvas.height));
     layers.addLayer("Layer 1");
     loadSettings();
     updateCursor();
