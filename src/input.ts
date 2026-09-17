@@ -159,7 +159,11 @@ export function setupInput(
     e.preventDefault();
     isDrawing = false;
     lastStreamlined = null;
-    currentPoints.push(getPoint(e));
+    // Pen pointerup reports pressure 0; keep the last move's pressure so the stroke doesn't taper
+    const up = getPoint(e);
+    const last = currentPoints[currentPoints.length - 1];
+    if (last) up.pressure = last.pressure;
+    currentPoints.push(up);
     onStroke(currentPoints, true);
     currentPoints = [];
 
