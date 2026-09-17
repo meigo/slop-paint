@@ -19,13 +19,18 @@
 
   let warpLabel = $derived(warpRes === "2×2" ? "4-corner distort" : `Mesh warp ${warpRes}`);
 
-  const kbd = "font-mono text-[10px] px-1 py-px rounded-sm border border-border bg-surface-hover text-text mx-px";
+  const kbd =
+    "font-mono text-[10px] px-1 py-px rounded-sm border border-border bg-surface-hover text-text mx-px";
   const sep = "opacity-60";
 </script>
 
-<div class="bg-surface border-t border-border px-3 py-1 text-xs text-text-secondary flex items-center gap-2 min-h-7 select-none flex-wrap">
+<div
+  class="flex min-h-7 flex-wrap items-center gap-2 border-t border-border bg-surface px-3 py-1 text-xs text-text-secondary select-none"
+>
   {#if state === "idle"}
-    <span>Drag with the <kbd class={kbd}>S</kbd> or <kbd class={kbd}>L</kbd> tool to make a selection</span>
+    <span
+      >Drag with the <kbd class={kbd}>S</kbd> or <kbd class={kbd}>L</kbd> tool to make a selection</span
+    >
   {:else if state === "selected"}
     <span class="font-medium text-text">Selection</span>
     <span class={sep}>·</span>

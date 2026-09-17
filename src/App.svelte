@@ -15,7 +15,14 @@
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd } from "./export-psd";
   import { untrack } from "svelte";
-  import { app, pressureCurve, bumpLayerVersion, bumpSelectionVersion, initTheme, type Tool } from "./appState.svelte.js";
+  import {
+    app,
+    pressureCurve,
+    bumpLayerVersion,
+    bumpSelectionVersion,
+    initTheme,
+    type Tool,
+  } from "./appState.svelte.js";
   import type { BrushType } from "./brush-textures";
 
   // --- Canvas refs ---
@@ -58,8 +65,15 @@
   // Batched smooth brush rendering — only redraw once per frame
   let smoothDrawScheduled = false;
 
-  function saveLayerToCanvas(layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }): HTMLCanvasElement {
-    if (!preStrokeCanvas || preStrokeCanvas.width !== layer.canvas.width || preStrokeCanvas.height !== layer.canvas.height) {
+  function saveLayerToCanvas(layer: {
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+  }): HTMLCanvasElement {
+    if (
+      !preStrokeCanvas ||
+      preStrokeCanvas.width !== layer.canvas.width ||
+      preStrokeCanvas.height !== layer.canvas.height
+    ) {
       preStrokeCanvas = document.createElement("canvas");
       preStrokeCanvas.width = layer.canvas.width;
       preStrokeCanvas.height = layer.canvas.height;
@@ -70,7 +84,10 @@
     return preStrokeCanvas;
   }
 
-  function restoreLayerFromCanvas(layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }) {
+  function restoreLayerFromCanvas(layer: {
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+  }) {
     if (!preStrokeCanvas) return;
     layer.ctx.save();
     layer.ctx.resetTransform();
@@ -97,7 +114,11 @@
     }
     // Check if pointer is over the document area
     const canvasPos = viewport.screenToCanvas(screenX, screenY);
-    const overCanvas = canvasPos.x >= 0 && canvasPos.x <= app.docWidth && canvasPos.y >= 0 && canvasPos.y <= app.docHeight;
+    const overCanvas =
+      canvasPos.x >= 0 &&
+      canvasPos.x <= app.docWidth &&
+      canvasPos.y >= 0 &&
+      canvasPos.y <= app.docHeight;
     if (!overCanvas) {
       if (brushCursorVisible) {
         brushCursorEl.style.display = "none";
@@ -205,7 +226,8 @@
       if (data.sizeRange != null) app.sizeRange = data.sizeRange;
       if (data.streamline != null) app.streamline = data.streamline;
       if (data.drawBehind != null) app.brushSettings.drawBehind = data.drawBehind;
-      if (data.fillAlphaThreshold != null) app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
+      if (data.fillAlphaThreshold != null)
+        app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurve.cp1 = data.curveCp1;
@@ -485,7 +507,10 @@
             selectionMode = "drag";
             selection.startDrag("move", p.x, p.y);
           }
-        } else if ((selection.state === "transforming" || selection.state === "warping") && handle) {
+        } else if (
+          (selection.state === "transforming" || selection.state === "warping") &&
+          handle
+        ) {
           selectionMode = "drag";
           selection.startDrag(handle, p.x, p.y);
         } else {
@@ -556,7 +581,13 @@
         restoreLayerFromCanvas(layer);
         layer.ctx.save();
         selection?.applyClip(layer.ctx);
-        drawStroke(layer.ctx, points, { ...app.brushSettings, alphaLock: layer.alphaLock }, true, app.sizeRange);
+        drawStroke(
+          layer.ctx,
+          points,
+          { ...app.brushSettings, alphaLock: layer.alphaLock },
+          true,
+          app.sizeRange,
+        );
         layer.ctx.restore();
         layers.composite();
         if (preStrokeSnapshot) {
@@ -573,7 +604,13 @@
           restoreLayerFromCanvas(active);
           active.ctx.save();
           selection?.applyClip(active.ctx);
-          drawStroke(active.ctx, points, { ...app.brushSettings, alphaLock: active.alphaLock }, false, app.sizeRange);
+          drawStroke(
+            active.ctx,
+            points,
+            { ...app.brushSettings, alphaLock: active.alphaLock },
+            false,
+            app.sizeRange,
+          );
           active.ctx.restore();
           layers.composite();
         });
@@ -582,7 +619,12 @@
       // Stamp engine: incremental, only draws new points
       layer.ctx.save();
       selection?.applyClip(layer.ctx);
-      drawStampStrokeIncremental(layer.ctx, points, { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock }, app.sizeRange);
+      drawStampStrokeIncremental(
+        layer.ctx,
+        points,
+        { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock },
+        app.sizeRange,
+      );
       layer.ctx.restore();
       scheduleComposite();
 
@@ -625,7 +667,11 @@
 
   // --- Keyboard shortcuts ---
   function handleKeyDown(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "SELECT") return;
+    if (
+      (e.target as HTMLElement).tagName === "INPUT" ||
+      (e.target as HTMLElement).tagName === "SELECT"
+    )
+      return;
 
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
@@ -742,7 +788,8 @@
 
   // --- Init on mount ---
   $effect(() => {
-    if (!canvasEl || !selectionOverlayEl || !canvasContainerEl || !canvasClipEl || !workspaceEl) return;
+    if (!canvasEl || !selectionOverlayEl || !canvasContainerEl || !canvasClipEl || !workspaceEl)
+      return;
 
     // Use untrack to prevent reactive writes during init from creating circular dependencies.
     // The onChange callback calls bumpLayerVersion() which writes to app.layerVersion —
@@ -812,18 +859,23 @@
     });
 
     // Input handling
-    const cleanupInput = setupInput(canvasEl, handleStroke, (sx, sy) => viewport.screenToCanvas(sx, sy), {
-      streamline: () => app.streamline / 100,
-      onPencilDoubleTap: () => {
-        if (app.currentTool === "eraser") {
-          setTool(toolBeforePencilToggle ?? "brush");
-          toolBeforePencilToggle = null;
-        } else {
-          toolBeforePencilToggle = app.currentTool;
-          setTool("eraser");
-        }
+    const cleanupInput = setupInput(
+      canvasEl,
+      handleStroke,
+      (sx, sy) => viewport.screenToCanvas(sx, sy),
+      {
+        streamline: () => app.streamline / 100,
+        onPencilDoubleTap: () => {
+          if (app.currentTool === "eraser") {
+            setTool(toolBeforePencilToggle ?? "brush");
+            toolBeforePencilToggle = null;
+          } else {
+            toolBeforePencilToggle = app.currentTool;
+            setTool("eraser");
+          }
+        },
       },
-    });
+    );
 
     // Touch gestures
     const cleanupTouch = setupTouchGestures(canvasClipEl, viewport, {
@@ -865,7 +917,7 @@
         e.stopPropagation();
         viewport.endPan();
         const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
-        canvasEl.style.cursor = spaceHeld ? "grab" : (isBrushTool ? "none" : "crosshair");
+        canvasEl.style.cursor = spaceHeld ? "grab" : isBrushTool ? "none" : "crosshair";
         if (!spaceHeld) updateBrushCursor(e.clientX, e.clientY);
       }
     }
@@ -918,7 +970,7 @@
 
 <svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} onresize={resizeCanvas} />
 
-<div class="w-screen h-screen flex flex-col bg-canvas-bg">
+<div class="flex h-screen w-screen flex-col bg-canvas-bg">
   {#if layersReady}
     <Toolbar
       {setTool}
@@ -929,8 +981,12 @@
       exportPsd={doExportPsd}
       savePsd={doSavePsd}
       openPsd={doOpenPsd}
-      newDoc={() => { showNewDocDialog = true; }}
-      resizeDoc={() => { showResizeDialog = true; }}
+      newDoc={() => {
+        showNewDocDialog = true;
+      }}
+      resizeDoc={() => {
+        showResizeDialog = true;
+      }}
       {resetView}
       reset100={resetTo100Percent}
       onSettingsChange={debouncedSave}
@@ -938,20 +994,20 @@
   {/if}
 
   <div class="workspace-layout flex flex-1 overflow-hidden" bind:this={workspaceEl}>
-    <div class="flex-1 min-w-0 min-h-0 overflow-hidden relative touch-none bg-neutral-500/30" bind:this={canvasClipEl}>
-      <div class="absolute will-change-transform touch-none" bind:this={canvasContainerEl}>
-        <canvas
-          bind:this={canvasEl}
-          class="block touch-none canvas-checkerboard"
-        ></canvas>
+    <div
+      class="relative min-h-0 min-w-0 flex-1 touch-none overflow-hidden bg-neutral-500/30"
+      bind:this={canvasClipEl}
+    >
+      <div class="absolute touch-none will-change-transform" bind:this={canvasContainerEl}>
+        <canvas bind:this={canvasEl} class="canvas-checkerboard block touch-none"></canvas>
         <canvas
           bind:this={selectionOverlayEl}
-          class="absolute inset-0 pointer-events-none touch-none"
+          class="pointer-events-none absolute inset-0 touch-none"
         ></canvas>
       </div>
       <div
         bind:this={brushCursorEl}
-        class="absolute rounded-full border pointer-events-none"
+        class="pointer-events-none absolute rounded-full border"
         style="display: none; border-color: rgba(0,0,0,0.5); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); mix-blend-mode: difference;"
       ></div>
       {#if layersReady}
@@ -992,12 +1048,16 @@
   <NewDocDialog
     open={showNewDocDialog}
     onConfirm={newDocument}
-    onCancel={() => { showNewDocDialog = false; }}
+    onCancel={() => {
+      showNewDocDialog = false;
+    }}
   />
 
   <ResizeDocDialog
     open={showResizeDialog}
     onConfirm={resizeDocument}
-    onCancel={() => { showResizeDialog = false; }}
+    onCancel={() => {
+      showResizeDialog = false;
+    }}
   />
 </div>

@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { parseTags, buildName, toggleTag, tagConflictReason, GROUP_TAGS, LAYER_TAGS } from "../spine-tags";
+import {
+  parseTags,
+  buildName,
+  toggleTag,
+  tagConflictReason,
+  GROUP_TAGS,
+  LAYER_TAGS,
+} from "../spine-tags";
 
 describe("parseTags", () => {
   it("returns empty tags and full name when there are no brackets", () => {

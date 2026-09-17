@@ -138,17 +138,20 @@
     { tool: "fill", icon: PaintBucket, title: "Paint Bucket (G)" },
   ];
 
-  const actionBtnClass = "w-9 h-9 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors";
+  const actionBtnClass =
+    "w-9 h-9 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors";
 </script>
 
 <svelte:document onclick={handleDocumentClick} />
 
-<div class="flex items-center gap-4 px-4 py-2 bg-surface border-b border-border shadow-sm z-10 flex-wrap min-h-12">
+<div
+  class="z-10 flex min-h-12 flex-wrap items-center gap-4 border-b border-border bg-surface px-4 py-2 shadow-sm"
+>
   <!-- Tool buttons -->
   <div class="flex items-center gap-1">
     {#each tools as { tool, icon: Icon, title }}
       <button
-        class="w-9 h-9 rounded-md border flex items-center justify-center transition-colors"
+        class="flex h-9 w-9 items-center justify-center rounded-md border transition-colors"
         class:bg-accent={activeTool === tool}
         class:text-accent-text={activeTool === tool}
         class:border-accent={activeTool === tool}
@@ -168,7 +171,7 @@
     <div class="flex items-center gap-1">
       <select
         id="brush-type"
-        class="h-[30px] border border-border rounded-md bg-surface text-text-secondary text-xs px-1.5 cursor-pointer"
+        class="h-[30px] cursor-pointer rounded-md border border-border bg-surface px-1.5 text-xs text-text-secondary"
         value={app.brushType}
         onchange={onBrushTypeChange}
       >
@@ -179,78 +182,127 @@
       </select>
     </div>
 
-    <div class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <div class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Size
-      <input type="range" min="1" max="80" step="0.5" class="w-20" bind:value={app.brushSettings.size} oninput={onSettingsChange} />
+      <input
+        type="range"
+        min="1"
+        max="80"
+        step="0.5"
+        class="w-20"
+        bind:value={app.brushSettings.size}
+        oninput={onSettingsChange}
+      />
       {#if editingSize}
         <!-- svelte-ignore a11y_autofocus -->
         <input
-          class="w-10 text-[11px] text-center bg-surface border border-border rounded px-1 py-0.5 text-text"
+          class="w-10 rounded border border-border bg-surface px-1 py-0.5 text-center text-[11px] text-text"
           type="text"
           inputmode="decimal"
           bind:value={sizeInputValue}
           autofocus
           onblur={commitSize}
           onkeydown={(e: KeyboardEvent) => {
-            if (e.key === "Enter") { e.preventDefault(); commitSize(); }
-            if (e.key === "Escape") { editingSize = false; }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitSize();
+            }
+            if (e.key === "Escape") {
+              editingSize = false;
+            }
             e.stopPropagation();
           }}
         />
       {:else}
         <button
-          class="text-[11px] min-w-7 text-text-muted hover:text-text hover:bg-surface-hover rounded px-1 py-0.5 cursor-text"
+          class="min-w-7 cursor-text rounded px-1 py-0.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
           onclick={startEditSize}
-          title="Click to type exact size"
-        >{sizeDisplay}</button>
+          title="Click to type exact size">{sizeDisplay}</button
+        >
       {/if}
       <div class="flex gap-px">
         {#each sizePresets as s}
           <button
-            class="text-[10px] px-1 py-0.5 rounded transition-colors
-                   {app.brushSettings.size === s ? 'bg-accent text-accent-text' : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
-            onclick={() => setSize(s)}
-          >{s}</button>
+            class="rounded px-1 py-0.5 text-[10px] transition-colors
+                   {app.brushSettings.size === s
+              ? 'bg-accent text-accent-text'
+              : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+            onclick={() => setSize(s)}>{s}</button
+          >
         {/each}
       </div>
     </div>
   {/if}
 
   {#if showBrush || showFill}
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Opacity
-      <input type="range" min="1" max="100" class="w-20" bind:value={app.brushSettings.opacity} oninput={onSettingsChange} />
-      <span class="text-[11px] min-w-7 text-text-muted">{opacityDisplay}</span>
+      <input
+        type="range"
+        min="1"
+        max="100"
+        class="w-20"
+        bind:value={app.brushSettings.opacity}
+        oninput={onSettingsChange}
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{opacityDisplay}</span>
     </label>
   {/if}
 
   {#if showBrush}
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Smoothing
-      <input type="range" min="0" max="100" class="w-20" bind:value={app.brushSettings.smoothing} oninput={onSettingsChange} />
+      <input
+        type="range"
+        min="0"
+        max="100"
+        class="w-20"
+        bind:value={app.brushSettings.smoothing}
+        oninput={onSettingsChange}
+      />
     </label>
 
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Streamline
-      <input type="range" min="0" max="100" class="w-20" bind:value={app.streamline} oninput={onSettingsChange} />
+      <input
+        type="range"
+        min="0"
+        max="100"
+        class="w-20"
+        bind:value={app.streamline}
+        oninput={onSettingsChange}
+      />
     </label>
 
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
-      <input type="checkbox" bind:checked={app.brushSettings.drawBehind} onchange={onSettingsChange} />
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
+      <input
+        type="checkbox"
+        bind:checked={app.brushSettings.drawBehind}
+        onchange={onSettingsChange}
+      />
       Behind
     </label>
 
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Size range
-      <input type="range" min="100" max="5000" value={app.sizeRange * 100} oninput={onSizeRangeInput} class="w-20" />
-      <span class="text-[11px] min-w-7 text-text-muted">{sizeRangeDisplay}</span>
+      <input
+        type="range"
+        min="100"
+        max="5000"
+        value={app.sizeRange * 100}
+        oninput={onSizeRangeInput}
+        class="w-20"
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{sizeRangeDisplay}</span>
     </label>
 
     <div class="relative">
       <button
         class={actionBtnClass}
         bind:this={curveButtonEl}
-        onclick={() => { curveOpen = !curveOpen; }}
+        onclick={() => {
+          curveOpen = !curveOpen;
+        }}
         title="Pressure Curve"
       >
         <Spline size={20} />
@@ -261,30 +313,52 @@
 
   <!-- Fill options -->
   {#if showFill}
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Gap close
-      <input type="range" min="0" max="200" bind:value={app.fillSettings.alphaThreshold} oninput={onSettingsChange} class="w-20" />
-      <span class="text-[11px] min-w-7 text-text-muted">{fillThresholdDisplay}</span>
+      <input
+        type="range"
+        min="0"
+        max="200"
+        bind:value={app.fillSettings.alphaThreshold}
+        oninput={onSettingsChange}
+        class="w-20"
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{fillThresholdDisplay}</span>
     </label>
-    <label class="flex items-center gap-1.5 text-xs text-text-secondary whitespace-nowrap">
+    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Expand
-      <input type="range" min="0" max="20" bind:value={app.fillSettings.expand} oninput={onSettingsChange} class="w-20" />
-      <span class="text-[11px] min-w-7 text-text-muted">{fillExpandDisplay}</span>
+      <input
+        type="range"
+        min="0"
+        max="20"
+        bind:value={app.fillSettings.expand}
+        oninput={onSettingsChange}
+        class="w-20"
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{fillExpandDisplay}</span>
     </label>
   {/if}
 
   <!-- Color -->
   {#if showBrush || showFill}
     <div class="flex items-center gap-1">
-      <input type="color" bind:value={app.brushSettings.color} oninput={onSettingsChange} title="Color" />
+      <input
+        type="color"
+        bind:value={app.brushSettings.color}
+        oninput={onSettingsChange}
+        title="Color"
+      />
       <div class="flex gap-0.5">
         {#each swatches as { color, name }}
           <button
-            class="w-[22px] h-[22px] rounded-full border-2 border-border cursor-pointer transition-transform hover:scale-120"
+            class="h-[22px] w-[22px] cursor-pointer rounded-full border-2 border-border transition-transform hover:scale-120"
             class:border-text-muted={color === "#ffffff"}
             style:background={color}
             title={name}
-            onclick={() => { app.brushSettings.color = color; onSettingsChange(); }}
+            onclick={() => {
+              app.brushSettings.color = color;
+              onSettingsChange();
+            }}
           ></button>
         {/each}
       </div>
@@ -293,12 +367,14 @@
 
   <!-- Zoom + reset -->
   <div class="flex items-center gap-1">
-    <span class="text-[11px] text-text-muted min-w-9 text-center cursor-default">{app.zoomText}</span>
+    <span class="min-w-9 cursor-default text-center text-[11px] text-text-muted"
+      >{app.zoomText}</span
+    >
     <button class={actionBtnClass} onclick={resetView} title="Fit to View (Ctrl+0)">
       <RotateCcw size={20} />
     </button>
     <button
-      class="h-9 px-2 rounded-md border border-border bg-surface text-text-secondary text-[11px] font-mono hover:bg-surface-hover transition-colors"
+      class="h-9 rounded-md border border-border bg-surface px-2 font-mono text-[11px] text-text-secondary transition-colors hover:bg-surface-hover"
       onclick={reset100}
       title="Actual Size — 100% (Ctrl+1)"
     >
@@ -308,21 +384,35 @@
 
   <!-- Doc size (click to resize) -->
   <button
-    class="text-[11px] text-text-muted hover:text-text hover:bg-surface-hover rounded px-1 py-0.5 whitespace-nowrap"
+    class="rounded px-1 py-0.5 text-[11px] whitespace-nowrap text-text-muted hover:bg-surface-hover hover:text-text"
     onclick={resizeDoc}
-    title="Resize Canvas"
-  >{app.docWidth} x {app.docHeight}</button>
+    title="Resize Canvas">{app.docWidth} x {app.docHeight}</button
+  >
 
   <!-- Actions -->
-  <div class="flex items-center gap-1 ml-auto">
+  <div class="ml-auto flex items-center gap-1">
     <button class={actionBtnClass} onclick={undo} title="Undo (Ctrl+Z)"><Undo2 size={20} /></button>
-    <button class={actionBtnClass} onclick={redo} title="Redo (Ctrl+Shift+Z)"><Redo2 size={20} /></button>
-    <button class={actionBtnClass} onclick={clearLayer} title="Clear Layer"><Trash2 size={20} /></button>
-    <button class={actionBtnClass} onclick={newDoc} title="New Document"><FilePlus size={20} /></button>
-    <button class={actionBtnClass} onclick={saveImage} title="Save as PNG"><Download size={20} /></button>
-    <button class={actionBtnClass} onclick={exportPsd} title="Export as PSD"><FileDown size={20} /></button>
-    <button class={actionBtnClass} onclick={savePsd} title="Save Project (Ctrl+S)"><Save size={20} /></button>
-    <button class={actionBtnClass} onclick={openPsd} title="Open Project (Ctrl+O)"><FolderOpen size={20} /></button>
+    <button class={actionBtnClass} onclick={redo} title="Redo (Ctrl+Shift+Z)"
+      ><Redo2 size={20} /></button
+    >
+    <button class={actionBtnClass} onclick={clearLayer} title="Clear Layer"
+      ><Trash2 size={20} /></button
+    >
+    <button class={actionBtnClass} onclick={newDoc} title="New Document"
+      ><FilePlus size={20} /></button
+    >
+    <button class={actionBtnClass} onclick={saveImage} title="Save as PNG"
+      ><Download size={20} /></button
+    >
+    <button class={actionBtnClass} onclick={exportPsd} title="Export as PSD"
+      ><FileDown size={20} /></button
+    >
+    <button class={actionBtnClass} onclick={savePsd} title="Save Project (Ctrl+S)"
+      ><Save size={20} /></button
+    >
+    <button class={actionBtnClass} onclick={openPsd} title="Open Project (Ctrl+O)"
+      ><FolderOpen size={20} /></button
+    >
     <ThemeToggle />
   </div>
 </div>

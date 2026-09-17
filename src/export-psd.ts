@@ -89,7 +89,7 @@ export function savePsd(manager: LayerManager, filename: string = "project.psd")
 export function loadPsd(
   buffer: ArrayBuffer,
   manager: LayerManager,
-  dpr: number
+  dpr: number,
 ): { width: number; height: number } {
   const psd = readPsd(buffer);
   const w = psd.width;

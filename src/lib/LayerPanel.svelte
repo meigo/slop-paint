@@ -1,11 +1,5 @@
 <script lang="ts">
-  import {
-    Plus,
-    FolderPlus,
-    Copy,
-    ArrowDownToLine,
-    Minus,
-  } from "@lucide/svelte";
+  import { Plus, FolderPlus, Copy, ArrowDownToLine, Minus } from "@lucide/svelte";
   import { app, bumpLayerVersion } from "../appState.svelte.js";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
@@ -56,7 +50,11 @@
   // This avoids Svelte/SortableJS DOM conflicts entirely.
   let layerListEl: HTMLDivElement;
 
-  function syncTreeFromDom(container: HTMLElement, targetArray: LayerNode[], lookup: Map<number, LayerNode>) {
+  function syncTreeFromDom(
+    container: HTMLElement,
+    targetArray: LayerNode[],
+    lookup: Map<number, LayerNode>,
+  ) {
     targetArray.length = 0;
     const items = container.children;
     for (let i = items.length - 1; i >= 0; i--) {
@@ -112,8 +110,14 @@
       };
       input.addEventListener("blur", commit);
       input.addEventListener("keydown", (ke) => {
-        if (ke.key === "Enter") { ke.preventDefault(); input.blur(); }
-        if (ke.key === "Escape") { input.value = baseName; input.blur(); }
+        if (ke.key === "Enter") {
+          ke.preventDefault();
+          input.blur();
+        }
+        if (ke.key === "Escape") {
+          input.value = baseName;
+          input.blur();
+        }
         ke.stopPropagation();
       });
       input.addEventListener("click", (ce) => ce.stopPropagation());
@@ -147,7 +151,8 @@
     const popover = document.createElement("div");
     openPopoverEl = popover;
     openPopoverNodeId = node.id;
-    popover.className = "fixed z-50 bg-surface border border-border rounded-md shadow-lg p-1 text-xs flex flex-col gap-0.5 min-w-[180px]";
+    popover.className =
+      "fixed z-50 bg-surface border border-border rounded-md shadow-lg p-1 text-xs flex flex-col gap-0.5 min-w-[180px]";
     const valid = tagsForNodeType(node.type);
     function refresh() {
       popover.innerHTML = "";
@@ -158,13 +163,16 @@
         const disabled = conflict !== null;
         const row = document.createElement("button");
         row.disabled = disabled;
-        row.className = "flex items-center gap-2 px-2 py-1 rounded text-left " +
+        row.className =
+          "flex items-center gap-2 px-2 py-1 rounded text-left " +
           (disabled
             ? "text-text-muted cursor-not-allowed opacity-50"
             : "text-text-secondary cursor-pointer hover:bg-surface-hover");
         row.title = conflict ?? TAG_DESCRIPTIONS[t];
         const check = document.createElement("span");
-        check.className = "shrink-0 w-3.5 h-3.5 border border-border rounded-sm flex items-center justify-center text-[9px] " + (isOn ? "bg-accent text-accent-text border-accent" : "");
+        check.className =
+          "shrink-0 w-3.5 h-3.5 border border-border rounded-sm flex items-center justify-center text-[9px] " +
+          (isOn ? "bg-accent text-accent-text border-accent" : "");
         check.textContent = isOn ? "✓" : "";
         const label = document.createElement("span");
         label.className = "flex-1 font-mono text-text";
@@ -189,12 +197,12 @@
     refresh();
     const rect = anchor.getBoundingClientRect();
     popover.style.left = rect.left + "px";
-    popover.style.top = (rect.bottom + 4) + "px";
+    popover.style.top = rect.bottom + 4 + "px";
     document.body.appendChild(popover);
     // Adjust if it would overflow the right edge
     const popRect = popover.getBoundingClientRect();
     if (popRect.right > window.innerWidth - 8) {
-      popover.style.left = (window.innerWidth - popRect.width - 8) + "px";
+      popover.style.left = window.innerWidth - popRect.width - 8 + "px";
     }
     // Defer the outside-click listener so the click that opened us doesn't immediately close.
     // Guard against the popover being closed in between (e.g. by a deletion-triggered $effect).
@@ -207,7 +215,8 @@
 
   function makeTagButton(node: LayerNode): HTMLButtonElement {
     const btn = document.createElement("button");
-    btn.className = "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary opacity-50 hover:opacity-100 flex items-center";
+    btn.className =
+      "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary opacity-50 hover:opacity-100 flex items-center";
     btn.title = "Spine tags";
     btn.innerHTML = TAG_ICON_SVG;
     btn.addEventListener("click", (e) => {
@@ -230,7 +239,8 @@
     const { tags } = parseTags(node.name);
     return tags.map((t) => {
       const pill = document.createElement("span");
-      pill.className = "shrink-0 px-1 rounded text-[9px] leading-[11px] bg-accent text-accent-text border border-accent font-mono cursor-pointer hover:opacity-70";
+      pill.className =
+        "shrink-0 px-1 rounded text-[9px] leading-[11px] bg-accent text-accent-text border border-accent font-mono cursor-pointer hover:opacity-70";
       pill.textContent = t;
       pill.title = `[${t}] — click to remove`;
       pill.addEventListener("click", (e) => {
@@ -244,7 +254,8 @@
 
   function renderLayerItem(layer: AppLayer): HTMLElement {
     const item = document.createElement("div");
-    item.className = "layer-item flex flex-col gap-0.5 px-2 py-1 border-b border-border-light cursor-pointer text-xs transition-colors text-text-secondary hover:bg-surface-hover" +
+    item.className =
+      "layer-item flex flex-col gap-0.5 px-2 py-1 border-b border-border-light cursor-pointer text-xs transition-colors text-text-secondary hover:bg-surface-hover" +
       (layer.id === layers.activeId ? " !bg-surface-active !text-text" : "");
     item.dataset.nodeId = String(layer.id);
 
@@ -253,11 +264,13 @@
     row1.className = "flex items-center gap-1.5 min-w-0";
 
     const handle = document.createElement("span");
-    handle.className = "layer-drag-handle cursor-grab text-text-muted hover:text-text-secondary shrink-0 select-none text-base";
+    handle.className =
+      "layer-drag-handle cursor-grab text-text-muted hover:text-text-secondary shrink-0 select-none text-base";
     handle.textContent = "\u2261";
 
     const visBtn = document.createElement("button");
-    visBtn.className = "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
+    visBtn.className =
+      "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
     visBtn.textContent = layer.visible ? "\u{1F441}" : "\u2013";
     visBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -288,7 +301,8 @@
     const tagBtn = makeTagButton(layer);
 
     const lockBtn = document.createElement("button");
-    lockBtn.className = "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary text-[11px] transition-opacity " +
+    lockBtn.className =
+      "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary text-[11px] transition-opacity " +
       (layer.locked ? "opacity-100" : "opacity-30 hover:opacity-60");
     lockBtn.textContent = "\u{1F512}";
     lockBtn.title = "Lock layer";
@@ -300,7 +314,8 @@
     });
 
     const alphaBtn = document.createElement("button");
-    alphaBtn.className = "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary text-[11px] transition-opacity " +
+    alphaBtn.className =
+      "shrink-0 p-0 border-none bg-transparent cursor-pointer text-text-secondary text-[11px] transition-opacity " +
       (layer.alphaLock ? "opacity-100" : "opacity-30 hover:opacity-60");
     alphaBtn.textContent = "\u{1F3C1}";
     alphaBtn.title = "Alpha lock";
@@ -344,19 +359,24 @@
     wrapper.dataset.nodeId = String(group.id);
 
     const header = document.createElement("div");
-    header.className = "flex flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold cursor-default transition-colors text-text-secondary " +
-      (group.id === layers.activeId ? "bg-group-active outline outline-2 outline-selection -outline-offset-2" : "bg-group-bg hover:bg-group-hover");
+    header.className =
+      "flex flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold cursor-default transition-colors text-text-secondary " +
+      (group.id === layers.activeId
+        ? "bg-group-active outline outline-2 outline-selection -outline-offset-2"
+        : "bg-group-bg hover:bg-group-hover");
 
     // ----- Row 1: handle, collapse, vis, name -----
     const row1 = document.createElement("div");
     row1.className = "flex items-center gap-1 min-w-0";
 
     const handle = document.createElement("span");
-    handle.className = "layer-drag-handle cursor-grab text-text-muted hover:text-text-secondary shrink-0 select-none text-base";
+    handle.className =
+      "layer-drag-handle cursor-grab text-text-muted hover:text-text-secondary shrink-0 select-none text-base";
     handle.textContent = "\u2261";
 
     const collapseBtn = document.createElement("button");
-    collapseBtn.className = "w-4 h-4 border-none bg-transparent cursor-pointer text-text-muted p-0 shrink-0 text-[10px]";
+    collapseBtn.className =
+      "w-4 h-4 border-none bg-transparent cursor-pointer text-text-muted p-0 shrink-0 text-[10px]";
     collapseBtn.textContent = group.collapsed ? "\u25B6" : "\u25BC";
     collapseBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -366,7 +386,8 @@
     });
 
     const visBtn = document.createElement("button");
-    visBtn.className = "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
+    visBtn.className =
+      "shrink-0 p-0 border-none bg-transparent cursor-pointer opacity-60 hover:opacity-100 text-text-secondary text-sm";
     visBtn.textContent = group.visible ? "\u{1F441}" : "\u2013";
     visBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -453,23 +474,47 @@
   });
 </script>
 
-<div class="layer-panel w-70 min-w-70 bg-surface border-l border-border flex flex-col overflow-hidden relative z-2">
-  <div class="flex items-center justify-between px-2.5 py-2 border-b border-border text-xs font-semibold text-text-secondary">
+<div
+  class="layer-panel relative z-2 flex w-70 min-w-70 flex-col overflow-hidden border-l border-border bg-surface"
+>
+  <div
+    class="flex items-center justify-between border-b border-border px-2.5 py-2 text-xs font-semibold text-text-secondary"
+  >
     <span>Layers</span>
     <div class="flex gap-0.5">
-      <button class="w-6 h-6 border border-border rounded bg-surface hover:bg-surface-hover flex items-center justify-center text-text-secondary cursor-pointer" onclick={addLayer} title="Add Layer">
+      <button
+        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
+        onclick={addLayer}
+        title="Add Layer"
+      >
         <Plus size={14} />
       </button>
-      <button class="w-6 h-6 border border-border rounded bg-surface hover:bg-surface-hover flex items-center justify-center text-text-secondary cursor-pointer" onclick={addGroup} title="Add Group">
+      <button
+        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
+        onclick={addGroup}
+        title="Add Group"
+      >
         <FolderPlus size={14} />
       </button>
-      <button class="w-6 h-6 border border-border rounded bg-surface hover:bg-surface-hover flex items-center justify-center text-text-secondary cursor-pointer" onclick={duplicateLayer} title="Duplicate Layer">
+      <button
+        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
+        onclick={duplicateLayer}
+        title="Duplicate Layer"
+      >
         <Copy size={14} />
       </button>
-      <button class="w-6 h-6 border border-border rounded bg-surface hover:bg-surface-hover flex items-center justify-center text-text-secondary cursor-pointer" onclick={mergeDown} title="Merge Down">
+      <button
+        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
+        onclick={mergeDown}
+        title="Merge Down"
+      >
         <ArrowDownToLine size={14} />
       </button>
-      <button class="w-6 h-6 border border-border rounded bg-surface hover:bg-surface-hover flex items-center justify-center text-text-secondary cursor-pointer" onclick={removeNode} title="Remove">
+      <button
+        class="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover"
+        onclick={removeNode}
+        title="Remove"
+      >
         <Minus size={14} />
       </button>
     </div>

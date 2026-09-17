@@ -40,8 +40,14 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") { e.preventDefault(); confirm(); }
-    if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      confirm();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
   }
 </script>
 
@@ -50,9 +56,11 @@
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
     onkeydown={handleKeydown}
-    onpointerdown={(e: PointerEvent) => { if (e.target === e.currentTarget) onCancel(); }}
+    onpointerdown={(e: PointerEvent) => {
+      if (e.target === e.currentTarget) onCancel();
+    }}
   >
-    <div class="bg-surface border border-border rounded-lg shadow-xl p-5 w-80 flex flex-col gap-4">
+    <div class="flex w-80 flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-xl">
       <h2 class="text-sm font-semibold text-text">New Document</h2>
 
       <div class="flex flex-col gap-2">
@@ -63,7 +71,7 @@
             min="1"
             max="8192"
             bind:value={width}
-            class="flex-1 h-7 px-2 text-xs bg-surface border border-border rounded text-text"
+            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
           />
           <span class="text-text-muted">px</span>
@@ -75,15 +83,15 @@
             min="1"
             max="8192"
             bind:value={height}
-            class="flex-1 h-7 px-2 text-xs bg-surface border border-border rounded text-text"
+            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
           />
           <span class="text-text-muted">px</span>
         </label>
         <button
-          class="self-start text-[11px] text-text-muted hover:text-text px-1 py-0.5 rounded hover:bg-surface-hover"
-          onclick={swap}
-        >Swap W/H</button>
+          class="self-start rounded px-1 py-0.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+          onclick={swap}>Swap W/H</button
+        >
       </div>
 
       <div class="flex flex-col gap-1">
@@ -91,23 +99,25 @@
         <div class="flex flex-wrap gap-1">
           {#each presets as preset}
             <button
-              class="text-[10px] px-2 py-1 rounded border border-border text-text-secondary hover:bg-surface-hover transition-colors
-                     {width === preset.w && height === preset.h ? 'bg-accent text-accent-text border-accent' : 'bg-surface'}"
-              onclick={() => applyPreset(preset)}
-            >{preset.label}</button>
+              class="rounded border border-border px-2 py-1 text-[10px] text-text-secondary transition-colors hover:bg-surface-hover
+                     {width === preset.w && height === preset.h
+                ? 'border-accent bg-accent text-accent-text'
+                : 'bg-surface'}"
+              onclick={() => applyPreset(preset)}>{preset.label}</button
+            >
           {/each}
         </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-1">
         <button
-          class="px-3 py-1.5 text-xs rounded border border-border text-text-secondary hover:bg-surface-hover"
-          onclick={onCancel}
-        >Cancel</button>
+          class="rounded border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-hover"
+          onclick={onCancel}>Cancel</button
+        >
         <button
-          class="px-3 py-1.5 text-xs rounded bg-accent text-accent-text hover:opacity-90"
-          onclick={confirm}
-        >Create</button>
+          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90"
+          onclick={confirm}>Create</button
+        >
       </div>
     </div>
   </div>

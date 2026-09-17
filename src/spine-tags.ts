@@ -9,7 +9,13 @@
 
 export type SpineTag = "slot" | "skin" | "bone" | "mesh" | "merge" | "ignore";
 
-export const GROUP_TAGS = ["slot", "skin", "bone", "merge", "ignore"] as const satisfies readonly SpineTag[];
+export const GROUP_TAGS = [
+  "slot",
+  "skin",
+  "bone",
+  "merge",
+  "ignore",
+] as const satisfies readonly SpineTag[];
 export const LAYER_TAGS = ["mesh", "ignore"] as const satisfies readonly SpineTag[];
 
 const KNOWN_TAGS = new Set<string>([...GROUP_TAGS, ...LAYER_TAGS]);
@@ -77,8 +83,11 @@ export const TAG_DESCRIPTIONS: Record<SpineTag, string> = {
 export function tagConflictReason(tag: SpineTag, currentTags: readonly SpineTag[]): string | null {
   if (currentTags.includes(tag)) return null; // already on — toggle off is always allowed
   if (currentTags.includes("ignore")) return "Conflicts with [ignore]";
-  if (tag === "ignore" && currentTags.length > 0) return "Remove other tags first — [ignore] is exclusive";
-  if (tag === "slot" && currentTags.includes("skin")) return "Conflicts with [skin] — nest, don't stack";
-  if (tag === "skin" && currentTags.includes("slot")) return "Conflicts with [slot] — nest, don't stack";
+  if (tag === "ignore" && currentTags.length > 0)
+    return "Remove other tags first — [ignore] is exclusive";
+  if (tag === "slot" && currentTags.includes("skin"))
+    return "Conflicts with [skin] — nest, don't stack";
+  if (tag === "skin" && currentTags.includes("slot"))
+    return "Conflicts with [slot] — nest, don't stack";
   return null;
 }

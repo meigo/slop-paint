@@ -3,6 +3,7 @@
 Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (Spine 2D compatible).
 
 ## Tech Stack
+
 - Svelte 5 + TypeScript + Vite
 - Tailwind CSS v4 for styling (light/dark mode via `.dark` class on `<html>`)
 - `@lucide/svelte` for icons
@@ -13,6 +14,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Vitest for tests, ESLint for linting, `svelte-check` for Svelte type checking
 
 ## Commands
+
 - `npm run dev` — start dev server
 - `npm run dev:lan` — start dev server exposed on local network (for iPad testing)
 - `npm run build` — production build (runs svelte-check + tsc + vite build)
@@ -22,6 +24,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `npm run check` — run svelte-check
 
 ## Testing Guidelines
+
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
 - Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba)
@@ -33,6 +36,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Architecture
 
 ### Svelte UI Layer
+
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
 - `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, theme, layer version counter
@@ -42,6 +46,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
 ### Canvas Engine (pure TypeScript, no Svelte)
+
 - `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input
 - `brush.ts` — BrushSettings interface (legacy perfect-freehand code, no longer used for rendering)
 - `stamp-brush.ts` — stamp-based brush engine for all brush types, supports eraser/draw-behind/alpha-lock compositing
@@ -56,18 +61,21 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible)
 
 ### State Management
+
 - UI state uses Svelte 5 runes (`$state`, `$derived`) in `appState.svelte.ts`
 - Canvas engine objects (LayerManager, Viewport, Selection) are imperative instances, NOT wrapped in `$state`
 - `layerVersion` counter bridges imperative mutations to Svelte reactivity — bump it to trigger re-renders
 - Settings persist to localStorage via debounced `$effect` in App.svelte
 
 ### Styling
+
 - Tailwind CSS v4 with `@theme` for custom color tokens
 - Monochrome color scheme: `surface`, `border`, `text`, `accent` tokens
 - Dark mode via `.dark` class on `<html>`, overrides CSS custom properties
 - `app.css` contains Tailwind import + theme tokens + non-utility CSS (checkerboard, sortable, curve popup)
 
 ## iPad / Touch Support
+
 - Apple Pencil draws; finger touch navigates (pan/zoom/rotate)
 - One finger: pan canvas
 - Two-finger pinch: zoom + pan + rotate (snaps to 90° increments)
@@ -76,6 +84,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Point interpolation ensures smooth strokes even with sparse pointer events
 
 ## Desktop Shortcuts
+
 - B/E/S/L/G — brush/eraser/select/lasso/fill
 - X (hold) — temporary eraser
 - R / Shift+R — rotate canvas 15° CW/CCW
@@ -87,6 +96,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Space+drag or middle mouse — pan
 
 ## Layer Features
+
 - Lock: prevent editing
 - Alpha lock: paint only on existing pixels
 - Duplicate layer
@@ -95,13 +105,16 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Drag-and-drop reordering with groups
 
 ## Fill Tool
+
 - Alpha threshold ("gap close"): treats semi-transparent pixels as walls to prevent leaking through antialiased stroke edges
 - Expand: dilates fill by N pixels, drawn behind existing content to eliminate seams between fill and outlines
 
 ## New Document
+
 - Creates a white-filled "Background" layer at the bottom and an empty "Layer 1" on top
 
 ## PSD Export / Spine 2D
+
 - All exports (PNG, PSD) use CSS pixel dimensions (not physical/dpr-scaled pixels)
 - Layer groups in the tree are exported as PSD group folders
 - Layer/group names can include Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
@@ -109,11 +122,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - See: https://esotericsoftware.com/spine-import-psd
 
 ## Project Save/Load
+
 - PSD is the project format — Ctrl+S to save, Ctrl+O to open
 - Round-trips layer tree, names, opacity, visibility, groups
 - Interoperable with Photoshop, GIMP, Spine, etc.
 
 ## Settings Persistence
+
 - UI settings saved to localStorage (debounced)
 - Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings
 - Theme preference saved separately to localStorage

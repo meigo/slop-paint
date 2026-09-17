@@ -4,7 +4,7 @@
 </script>
 
 <button
-  class="w-9 h-9 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors"
+  class="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors hover:bg-surface-hover"
   onclick={toggleTheme}
   title={app.theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
 >

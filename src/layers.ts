@@ -42,7 +42,7 @@ export class LayerManager {
   constructor(
     _displayCanvas: HTMLCanvasElement,
     displayCtx: CanvasRenderingContext2D,
-    onChange: () => void
+    onChange: () => void,
   ) {
     this.displayCtx = displayCtx;
     this.onChange = onChange;
@@ -204,7 +204,7 @@ export class LayerManager {
     const group: LayerGroup = {
       type: "group",
       id: nextId++,
-      name: name ?? `Group ${this.flatAll().filter(n => n.type === "group").length + 1}`,
+      name: name ?? `Group ${this.flatAll().filter((n) => n.type === "group").length + 1}`,
       visible: true,
       opacity: 100,
       children: [],
@@ -279,9 +279,7 @@ export class LayerManager {
     if (below.type !== "layer") return false;
 
     // Save undo snapshot on the target
-    below.history.push(
-      below.ctx.getImageData(0, 0, below.canvas.width, below.canvas.height)
-    );
+    below.history.push(below.ctx.getImageData(0, 0, below.canvas.width, below.canvas.height));
 
     // Draw src onto below
     below.ctx.save();

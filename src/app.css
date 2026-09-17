@@ -41,7 +41,7 @@
 /* Base resets */
 body {
   overflow: hidden;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -55,7 +55,11 @@ body {
     linear-gradient(45deg, transparent 75%, #e0e0e0 75%),
     linear-gradient(-45deg, transparent 75%, #e0e0e0 75%);
   background-size: 16px 16px;
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
   background-color: #fff;
 }
 
@@ -76,7 +80,11 @@ body {
     linear-gradient(45deg, transparent 75%, #ddd 75%),
     linear-gradient(-45deg, transparent 75%, #ddd 75%);
   background-size: 6px 6px;
-  background-position: 0 0, 0 3px, 3px -3px, -3px 0;
+  background-position:
+    0 0,
+    0 3px,
+    3px -3px,
+    -3px 0;
   background-color: #fff;
 }
 

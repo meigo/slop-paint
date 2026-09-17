@@ -35,7 +35,7 @@ export function setupTouchGestures(
   /** The stable workspace container (not the transformed element) */
   workspace: HTMLElement,
   viewport: Viewport,
-  callbacks: TouchGestureCallbacks
+  callbacks: TouchGestureCallbacks,
 ) {
   const touches = new Map<number, ActiveTouch>();
 

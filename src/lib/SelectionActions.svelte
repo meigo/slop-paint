@@ -89,12 +89,14 @@
 
 <div
   bind:this={panelEl}
-  class="selection-actions-panel absolute z-30 flex items-center gap-1 p-1 rounded-lg bg-surface border border-border shadow-md transition-opacity"
-  style="left: {pos.x}px; top: {pos.y}px; opacity: {visible ? 1 : 0}; pointer-events: {visible ? 'auto' : 'none'}; touch-action: none;"
+  class="selection-actions-panel absolute z-30 flex items-center gap-1 rounded-lg border border-border bg-surface p-1 shadow-md transition-opacity"
+  style="left: {pos.x}px; top: {pos.y}px; opacity: {visible ? 1 : 0}; pointer-events: {visible
+    ? 'auto'
+    : 'none'}; touch-action: none;"
 >
   {#if mode === "selected"}
     <button
-      class="w-11 h-11 rounded-md border border-border bg-surface text-text-secondary flex items-center justify-center transition-colors"
+      class="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors"
       onpointerdown={tap(onTransform)}
       title="Free transform — show scale/rotate handles"
     >
@@ -102,7 +104,7 @@
     </button>
   {/if}
   <button
-    class="w-11 h-11 rounded-md border flex items-center justify-center transition-colors"
+    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors"
     class:bg-accent={distortActive}
     class:text-accent-text={distortActive}
     class:border-accent={distortActive}
@@ -115,7 +117,7 @@
     <SquareDashed size={20} />
   </button>
   <button
-    class="w-11 h-11 rounded-md border flex items-center justify-center transition-colors"
+    class="flex h-11 w-11 items-center justify-center rounded-md border transition-colors"
     class:bg-accent={meshActive}
     class:text-accent-text={meshActive}
     class:border-accent={meshActive}
@@ -129,16 +131,16 @@
   </button>
 
   {#if mode !== "selected"}
-    <div class="w-px h-7 bg-border mx-0.5"></div>
+    <div class="mx-0.5 h-7 w-px bg-border"></div>
     <button
-      class="w-11 h-11 rounded-md border border-border bg-surface text-text-secondary flex items-center justify-center transition-colors"
+      class="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors"
       onpointerdown={tap(onCommit)}
       title="Commit (Enter)"
     >
       <Check size={20} />
     </button>
     <button
-      class="w-11 h-11 rounded-md border border-border bg-surface text-text-secondary flex items-center justify-center transition-colors"
+      class="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors"
       onpointerdown={tap(onCancel)}
       title="Cancel (Esc)"
     >

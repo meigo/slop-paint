@@ -5,8 +5,15 @@ import { Viewport } from "../viewport";
 function createMockElements() {
   const parent = {
     getBoundingClientRect: () => ({
-      left: 0, top: 0, width: 800, height: 600,
-      right: 800, bottom: 600, x: 0, y: 0, toJSON: () => {},
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
     }),
   };
   const target = {
@@ -95,7 +102,12 @@ describe("Viewport", () => {
     vp.panX = 30;
     vp.panY = -45;
     vp.rotation = 0.6;
-    for (const [sx, sy] of [[0, 0], [123, 456], [800, 600], [-50, 200]]) {
+    for (const [sx, sy] of [
+      [0, 0],
+      [123, 456],
+      [800, 600],
+      [-50, 200],
+    ]) {
       const c = vp.screenToCanvas(sx, sy);
       const s = vp.canvasToScreen(c.x, c.y);
       expect(s.x).toBeCloseTo(sx, 6);
