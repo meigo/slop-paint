@@ -26,6 +26,9 @@
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
+  import { canShareFile, saveToFilesAvailable, shareFile } from "./share";
+  import { downloadBlob } from "./download";
+  import ShareReadyDialog from "./lib/ShareReadyDialog.svelte";
   import { untrack } from "svelte";
   import {
     app,
@@ -449,6 +452,36 @@
   function doSavePsd() {
     if (!layers) return;
     savePsd(layers);
+  }
+
+  // --- Save to Files (iPad/iPhone) ---
+  // A web page can only put a file where the user chooses via the share sheet: Safari has no save
+  // picker, and a download always lands in Downloads as a new copy.
+  let shareFileReady = $state<File | null>(null);
+
+  async function doSaveToFiles() {
+    if (!layers) return;
+    const file = new File([psdBuffer(layers, false)], "project.psd", {
+      type: "application/octet-stream",
+    });
+    if (!canShareFile(file)) {
+      // This browser won't share a PSD: fall back to a download.
+      downloadBlob(file, file.name);
+      flashStatus(`Downloaded ${file.name}`);
+      return;
+    }
+    // Try to ride the tap that started this. Building the PSD can outlast Safari's idea of a
+    // "recent" tap, and then the sheet is refused — the dialog gives it a fresh one.
+    const r = await shareFile(file);
+    if (r.outcome === "shared") {
+      flashStatus(`Sent ${file.name} to the share sheet`);
+      return;
+    }
+    if (r.outcome === "dismissed") {
+      flashStatus("Not saved — the share sheet was closed");
+      return;
+    }
+    shareFileReady = file;
   }
 
   function newDocument(width: number, height: number) {
@@ -1418,6 +1451,8 @@
   }
 </script>
 
+<ShareReadyDialog file={shareFileReady} onClose={() => (shareFileReady = null)} />
+
 <svelte:window
   onblur={() => {
     if (selection) selection.shiftHeld = false;
@@ -1443,6 +1478,7 @@
       {saveImage}
       exportPsd={doExportPsd}
       savePsd={doSavePsd}
+      saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
       openPsd={doOpenPsd}
       newDoc={() => {
         showNewDocDialog = true;

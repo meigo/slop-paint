@@ -31,6 +31,7 @@
     saveImage,
     exportPsd,
     savePsd,
+    saveToFiles,
     openPsd,
     newDoc,
     resizeDoc,
@@ -50,6 +51,8 @@
     saveImage: () => void;
     exportPsd: () => void;
     savePsd: () => void;
+    /** iPad/iPhone only: null elsewhere, and then the menu item is hidden. */
+    saveToFiles: (() => void) | null;
     openPsd: () => void;
     newDoc: () => void;
     resizeDoc: () => void;
@@ -218,6 +221,17 @@
             close();
           }}>Save project <span class={kbd}>Ctrl+S</span></button
         >
+        {#if saveToFiles}
+          <button
+            class={menuItem}
+            role="menuitem"
+            title="Save the PSD to a folder you pick in Files"
+            onclick={() => {
+              saveToFiles();
+              close();
+            }}>Save to Files…</button
+          >
+        {/if}
         <div class="my-1 h-px bg-border"></div>
         <button
           class={menuItem}

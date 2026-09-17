@@ -1,4 +1,5 @@
 import { writePsd, readPsd, type Psd, type Layer as PsdLayer } from "ag-psd";
+import { downloadBlob } from "./download";
 import type { LayerNode, LayerManager, Layer, LayerGroup } from "./layers";
 import { History } from "./history";
 
@@ -11,13 +12,7 @@ let importIdCounter = 1000;
  */
 function writePsdFile(manager: LayerManager, opts: { trim: boolean; filename: string }) {
   const buffer = psdBuffer(manager, opts.trim);
-  const blob = new Blob([buffer], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = opts.filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(new Blob([buffer], { type: "application/octet-stream" }), opts.filename);
 }
 
 /** The project as a PSD buffer (used by the file writer above and by autosave). */

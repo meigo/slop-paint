@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -166,6 +166,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Project Save/Load
 
 - PSD is the project format — Ctrl+S to save, Ctrl+O to open
+- iPad/iPhone only: File ▸ Save to Files… shares the PSD through the share sheet, the only way a web page can put a file where the user picks (Safari has no save picker; a download always lands in Downloads). It tries the sheet on the tap that started it and, if that tap has expired (`NotAllowedError`), opens a dialog whose fresh tap retries; the dialog also offers a plain download. "Shared" means the sheet completed, not that the file reached Files
+- `share.ts` (pure: device check, error classification), `download.ts` (`downloadBlob`, revokes the object URL after 60s — an immediate revoke can kill a large download on iPad), `lib/ShareReadyDialog.svelte`
 - Round-trips layer tree, names, opacity, visibility, groups
 - Interoperable with Photoshop, GIMP, Spine, etc.
 
