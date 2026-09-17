@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba)
+- Testable modules: `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex), `tool-settings.ts`
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -48,7 +48,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ### Canvas Engine (pure TypeScript, no Svelte)
 
-- `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input
+- `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) ends the stroke like `pointerup`; the lift point reuses the last move's pressure (pen `pointerup` reports 0)
 - `brush.ts` — BrushSettings interface (legacy perfect-freehand code, no longer used for rendering)
 - `stamp-brush.ts` — stamp-based brush engine for all brush types, supports eraser/draw-behind/alpha-lock compositing
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
@@ -58,6 +58,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT
+- `tool-settings.ts` — brush/eraser stroke-setting slots (size, opacity, smoothing, streamline, size range, brush type); the active tool's values live in `app`, the other tool's in a slot, swapped in `setTool`
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content)
 - `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible)
 
@@ -87,7 +88,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Desktop Shortcuts
 
-- B/E/S/L/G — brush/eraser/select/lasso/fill
+- B/E/S/L/G/I — brush/eraser/select/lasso/fill/eyedropper
 - X (hold) — temporary eraser
 - R / Shift+R — rotate canvas 15° CW/CCW
 - 0 — reset view (zoom, pan, rotation); 1 — 100% zoom (plain keys: browsers reserve Ctrl/Cmd+digit)
@@ -105,6 +106,18 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Merge down (onto layer below)
 - Per-layer opacity, visibility, undo history
 - Drag-and-drop reordering with groups
+
+## Brush / Eraser Settings
+
+- Brush and eraser each keep their own size, opacity, smoothing, streamline, size range and brush type (eraser defaults to size 8)
+- Color, draw-behind and the pressure curve are shared
+- Saved as the top-level fields (brush) plus an `eraser` object in the settings
+
+## Eyedropper
+
+- Samples the composited document (ignores layer lock); transparent pixels pick nothing
+- Drag to aim (a swatch follows above-left of the point), release to pick; then returns to the previous tool
+- Sets the shared color, which the brush and the fill tool both use
 
 ## Fill Tool
 
@@ -132,4 +145,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 
 - UI settings saved to localStorage (debounced)
-- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings
+- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings, eraser settings

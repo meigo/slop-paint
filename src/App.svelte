@@ -23,6 +23,15 @@
     type Tool,
   } from "./appState.svelte.js";
   import type { BrushType } from "./brush-textures";
+  import {
+    allSlots,
+    parseSlot,
+    readSlot,
+    swapSlots,
+    writeSlot,
+    type SlotName,
+    type StrokeSlot,
+  } from "./tool-settings";
 
   // --- Canvas refs ---
   let canvasContainerEl: HTMLDivElement;
@@ -190,6 +199,13 @@
   let toolBeforePencilToggle: Tool | null = null;
   let toolBeforeEyedropper: Tool = "brush";
 
+  // --- Per-tool stroke settings ---
+  // The active tool's values live in `app` (the toolbar binds there); this holds the other tool's.
+  const strokeSlots: Record<SlotName, StrokeSlot> = {
+    brush: readSlot(app),
+    eraser: { ...readSlot(app), size: 8 },
+  };
+
   // --- Settings persistence ---
   const STORAGE_KEY = "drawingAppSettings";
 
@@ -207,19 +223,23 @@
     drawBehind?: boolean;
     fillAlphaThreshold?: number;
     fillExpand?: number;
+    /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
+    eraser?: StrokeSlot;
   }
 
   function saveSettings() {
+    const slots = allSlots(app, strokeSlots, app.currentTool);
     const data: SavedSettings = {
       // The eyedropper is transient; reopen on the tool it will return to.
       tool: app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool,
-      brushType: app.brushType,
-      size: app.brushSettings.size,
-      opacity: app.brushSettings.opacity,
-      smoothing: app.brushSettings.smoothing,
+      brushType: slots.brush.brushType,
+      size: slots.brush.size,
+      opacity: slots.brush.opacity,
+      smoothing: slots.brush.smoothing,
       color: app.brushSettings.color,
-      sizeRange: app.sizeRange,
-      streamline: app.streamline,
+      sizeRange: slots.brush.sizeRange,
+      streamline: slots.brush.streamline,
+      eraser: slots.eraser,
       curveCp1: { ...pressureCurve.cp1 },
       curveCp2: { ...pressureCurve.cp2 },
       drawBehind: app.brushSettings.drawBehind,
@@ -262,6 +282,10 @@
         pressureCurve.cp2 = data.curveCp2;
         pressureCurve.buildLUT();
       }
+      strokeSlots.brush = readSlot(app);
+      strokeSlots.eraser = parseSlot(data.eraser, strokeSlots.eraser);
+      if (app.currentTool === "eraser") writeSlot(app, strokeSlots.eraser);
+      app.brushSettings.isEraser = app.currentTool === "eraser";
     } catch {
       /* corrupted */
     }
@@ -694,6 +718,7 @@
     if (tool === "eyedropper" && app.currentTool !== "eyedropper") {
       toolBeforeEyedropper = app.currentTool;
     }
+    swapSlots(app, strokeSlots, app.currentTool, tool);
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";
     if (tool === "select") selection.mode = "rect";
@@ -781,9 +806,11 @@
 
     if (e.key === "[") {
       app.brushSettings.size = Math.max(1, app.brushSettings.size - 2);
+      debouncedSave();
     }
     if (e.key === "]") {
       app.brushSettings.size = Math.min(80, app.brushSettings.size + 2);
+      debouncedSave();
     }
 
     if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
