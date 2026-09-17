@@ -35,6 +35,7 @@ export const app: AppStateShape = $state({
   streamline: 50,
   brushSettings: {
     size: 4,
+    taper: false,
     color: "#1a1a1a",
     opacity: 100,
     smoothing: 50,
@@ -61,7 +62,13 @@ export const app: AppStateShape = $state({
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget
-export const pressureCurve = new PressureCurve();
+/** One curve per stroke tool: the eraser got its own so a tuned brush feel isn't shared. */
+export const pressureCurves = { brush: new PressureCurve(), eraser: new PressureCurve() };
+
+/** The curve for the active tool — the eraser's own, everything else the brush's. */
+export function activePressureCurve(): PressureCurve {
+  return app.currentTool === "eraser" ? pressureCurves.eraser : pressureCurves.brush;
+}
 
 export function bumpLayerVersion() {
   app.layerVersion++;

@@ -10,7 +10,7 @@
     Settings2,
     Pipette,
   } from "@lucide/svelte";
-  import { app, pressureCurve, type Tool } from "../appState.svelte.js";
+  import { app, pressureCurves, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
   import { createCurveEditor } from "../pressure-curve";
   import { clickOutside } from "./click-outside";
@@ -97,14 +97,20 @@
   let curvePopupEl = $state<HTMLDivElement | null>(null);
   let settingsOpen = $state(false);
   let colorOpen = $state(false);
-  let curveEditorEl: (HTMLElement & { redraw: () => void }) | null = null;
+  let curveEditors: Record<"brush" | "eraser", HTMLElement & { redraw: () => void }> | null = null;
 
-  // The popup element is recreated whenever the brush options come back after another tool, so
-  // re-attach the (single, long-lived) editor to whichever popup currently exists.
+  // Brush and eraser have their own curve, so there is an editor per tool. The host div only
+  // exists while the popover is open (and is recreated when the brush options come back after
+  // another tool), so attach the active tool's editor whenever either changes.
   $effect(() => {
     if (!curvePopupEl) return;
-    curveEditorEl ??= createCurveEditor(pressureCurve, onSettingsChange);
-    if (curveEditorEl.parentElement !== curvePopupEl) curvePopupEl.appendChild(curveEditorEl);
+    curveEditors ??= {
+      brush: createCurveEditor(pressureCurves.brush, onSettingsChange),
+      eraser: createCurveEditor(pressureCurves.eraser, onSettingsChange),
+    };
+    const editor = curveEditors[activeTool === "eraser" ? "eraser" : "brush"];
+    curvePopupEl.replaceChildren(editor);
+    editor.redraw();
   });
 
   const swatches = [
@@ -501,6 +507,20 @@
             </label>
           {/if}
 
+          {#if app.brushType === "smooth"}
+            <label
+              class="flex items-center gap-2 text-xs text-text-secondary"
+              title="Taper the stroke's ends to a point instead of capping them"
+            >
+              <input
+                type="checkbox"
+                bind:checked={app.brushSettings.taper}
+                onchange={onSettingsChange}
+              />
+              Taper stroke ends
+            </label>
+          {/if}
+
           <label class="flex items-center gap-2 text-xs text-text-secondary">
             <input
               type="checkbox"
@@ -511,7 +531,9 @@
           </label>
 
           <div class="mt-1 flex flex-col gap-1 border-t border-border pt-2">
-            <span class="text-xs text-text-secondary">Pressure curve</span>
+            <span class="text-xs text-text-secondary"
+              >Pressure curve{activeTool === "eraser" ? " (eraser)" : ""}</span
+            >
             <div bind:this={curvePopupEl} class="curve-editor flex flex-col items-center"></div>
           </div>
         </div>

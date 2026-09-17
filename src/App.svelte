@@ -28,7 +28,8 @@
   import { untrack } from "svelte";
   import {
     app,
-    pressureCurve,
+    pressureCurves,
+    activePressureCurve,
     bumpLayerVersion,
     bumpSelectionVersion,
     flashStatus,
@@ -233,6 +234,10 @@
     streamline?: number;
     curveCp1: { x: number; y: number };
     curveCp2: { x: number; y: number };
+    /** Absent in settings saved before the eraser got its own curve: it falls back to the brush's. */
+    eraserCurveCp1?: { x: number; y: number };
+    eraserCurveCp2?: { x: number; y: number };
+    taper?: boolean;
     drawBehind?: boolean;
     fillAlphaThreshold?: number;
     fillExpand?: number;
@@ -258,8 +263,11 @@
       sizeRange: slots.brush.sizeRange,
       streamline: slots.brush.streamline,
       eraser: slots.eraser,
-      curveCp1: { ...pressureCurve.cp1 },
-      curveCp2: { ...pressureCurve.cp2 },
+      curveCp1: { ...pressureCurves.brush.cp1 },
+      curveCp2: { ...pressureCurves.brush.cp2 },
+      eraserCurveCp1: { ...pressureCurves.eraser.cp1 },
+      eraserCurveCp2: { ...pressureCurves.eraser.cp2 },
+      taper: app.brushSettings.taper,
       drawBehind: app.brushSettings.drawBehind,
       fillAlphaThreshold: app.fillSettings.alphaThreshold,
       fillExpand: app.fillSettings.expand,
@@ -306,10 +314,19 @@
       if (data.nibFlatness != null) app.brushSettings.nibFlatness = data.nibFlatness;
       if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
       if (data.curveCp1 && data.curveCp2) {
-        pressureCurve.cp1 = data.curveCp1;
-        pressureCurve.cp2 = data.curveCp2;
-        pressureCurve.buildLUT();
+        pressureCurves.brush.cp1 = data.curveCp1;
+        pressureCurves.brush.cp2 = data.curveCp2;
+        pressureCurves.brush.buildLUT();
       }
+      // Settings saved before the split carry one curve: give the eraser the brush's.
+      const eCp1 = data.eraserCurveCp1 ?? data.curveCp1;
+      const eCp2 = data.eraserCurveCp2 ?? data.curveCp2;
+      if (eCp1 && eCp2) {
+        pressureCurves.eraser.cp1 = eCp1;
+        pressureCurves.eraser.cp2 = eCp2;
+        pressureCurves.eraser.buildLUT();
+      }
+      if (typeof data.taper === "boolean") app.brushSettings.taper = data.taper;
       strokeSlots.brush = readSlot(app);
       strokeSlots.eraser = parseSlot(data.eraser, strokeSlots.eraser);
       if (app.currentTool === "eraser") writeSlot(app, strokeSlots.eraser);
@@ -561,9 +578,10 @@
       // (will be updated on next mousemove anyway)
     }
 
+    const curve = activePressureCurve();
     const points = rawPoints.map((p) => ({
       ...p,
-      pressure: pressureCurve.evaluate(p.pressure),
+      pressure: curve.evaluate(p.pressure),
     }));
 
     // Eyedropper: reads the composite, so it ignores the active layer's lock.

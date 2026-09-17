@@ -42,6 +42,8 @@ export interface BrushSettings {
   nibFlatness?: number;
   /** Ink only: 0-100, how much the mark swells where the nib lingers (0 = off). */
   dwellPool?: number;
+  /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
+  taper?: boolean;
 }
 
 /**
@@ -57,7 +59,14 @@ export function drawStroke(
 ) {
   if (points.length === 0) return;
 
-  const strokePoints = strokeOutline(points, settings.size, settings.smoothing, sizeRange, done);
+  const strokePoints = strokeOutline(
+    points,
+    settings.size,
+    settings.smoothing,
+    sizeRange,
+    done,
+    settings.taper ?? false,
+  );
   if (strokePoints.length < 2) return;
 
   ctx.save();
@@ -93,6 +102,7 @@ export function strokeOutline(
   smoothing: number,
   sizeRange: number,
   done: boolean,
+  taper: boolean = false,
 ): number[][] {
   // We map pressure → size ourselves and tell pf thinning=1 so it uses our mapped pressure directly.
   const { min: minSize, max: maxSize } = widthRange(size, sizeRange);
@@ -113,8 +123,8 @@ export function strokeOutline(
     thinning: 1,
     smoothing: decimationSmoothing(smoothing / 100, minStrokeWidth, pfSize),
     streamline: 0.3,
-    start: { taper: false, cap: true },
-    end: { taper: false, cap: true },
+    start: { taper, cap: !taper },
+    end: { taper, cap: !taper },
     last: done,
     // Always use our supplied (mapped) pressure. perfect-freehand's simulatePressure
     // is velocity-based and would override our size mapping, leaving the cursor

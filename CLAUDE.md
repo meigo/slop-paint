@@ -42,7 +42,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
 - `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter; `flashStatus(msg)` shows a transient status-bar message (use it when an action does nothing, so a no-op isn't silent)
-- `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool. On the bar: what is changed while drawing (brush type, size + presets, opacity, color swatch). Behind popovers: the gear holds set-once settings (smoothing, streamline, size range, nib angle/flatness for Calligraphy, dwell for Ink, draw-behind, pressure curve editor), the color swatch holds the palette + native picker. Needs ~750px, so it fits a portrait iPad. Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall, and wrap bare buttons in a flex box (a bare button sits on the text baseline and is 40px). Row 1 must not get `overflow` (it would clip the menus)
+- `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool. On the bar: what is changed while drawing (brush type, size + presets, opacity, color swatch). Behind popovers: the gear holds set-once settings (smoothing, streamline, size range, nib angle/flatness for Calligraphy, dwell for Ink, taper for Smooth, draw-behind, pressure curve editor for the active tool), the color swatch holds the palette + native picker. Needs ~750px, so it fits a portrait iPad. Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall, and wrap bare buttons in a flex box (a bare button sits on the text baseline and is 40px). Row 1 must not get `overflow` (it would clip the menus)
 - Brush kinds: `BrushKind` = smooth | ink | calligraphy | stamp tips. Smooth/ink/calligraphy redraw the whole stroke each frame from a pre-stroke canvas copy (a per-segment redraw hardens antialiased edges); stamps draw incrementally
 - `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
@@ -63,7 +63,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); `flip`; pure `flipMatrix` / `cornerScaleMatrix` / `sideStretchMatrix` (from slop-animator). Corners keep proportions when `keepProportions` (Shift inverts), side handles stretch one axis (Shift skews); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
-- `pressure-curve.ts` — cubic bezier pressure curve with LUT
+- `pressure-curve.ts` — cubic bezier pressure curve with LUT. Brush and eraser have their own (`pressureCurves`, `activePressureCurve()`); settings saved before the split give the eraser the brush's curve
 - `tool-settings.ts` — brush/eraser stroke-setting slots (size, opacity, smoothing, streamline, size range, brush type); the active tool's values live in `app`, the other tool's in a slot, swapped in `setTool`
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content); `enclosedFillRegion` / `fillRegionBehind` for Fill enclosed
 - `fill-holes.ts` — Fill enclosed engine (from slop-animator): floods the outside from the border, so a leaking outline fills nothing; `gap` (clamped to `MAX_GAP` = 8, device px) bridges breaks via dilate → flood → erode
@@ -119,8 +119,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Brush / Eraser Settings
 
-- Brush and eraser each keep their own size, opacity, smoothing, streamline, size range and brush type (eraser defaults to size 8)
-- Color, draw-behind and the pressure curve are shared
+- Brush and eraser each keep their own size, opacity, smoothing, streamline, size range, brush type (eraser defaults to size 8) and pressure curve
+- Color, draw-behind and taper are shared
 - Saved as the top-level fields (brush) plus an `eraser` object in the settings
 
 ## Eyedropper
@@ -164,4 +164,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 
 - UI settings saved to localStorage (debounced)
-- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings, eraser settings, keep proportions, Fill enclosed bridge, nib angle/flatness, ink dwell
+- Includes: tool, brush type, size, opacity, smoothing, color, size range, both pressure curves, draw-behind, taper, fill settings, eraser settings, keep proportions, Fill enclosed bridge, nib angle/flatness, ink dwell

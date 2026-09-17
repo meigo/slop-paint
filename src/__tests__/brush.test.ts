@@ -34,3 +34,26 @@ describe("strokeOutline width", () => {
     expect(horizontalWidth(10, 3, 1)).toBeCloseTo(30, 0);
   });
 });
+
+describe("taper", () => {
+  const pts = Array.from({ length: 41 }, (_, i) => ({
+    x: i * 5,
+    y: 100,
+    pressure: 0.5,
+    timestamp: i,
+  }));
+  /** Height of the outline within `dx` px of the stroke's start — the width at that end. */
+  const startWidth = (taper: boolean) => {
+    const near = strokeOutline(pts, 10, 0, 1, true, taper).filter((p) => p[0] < 3);
+    const ys = near.map((p) => p[1]);
+    return Math.max(...ys) - Math.min(...ys);
+  };
+
+  it("narrows the stroke's ends to a point", () => {
+    expect(startWidth(true)).toBeLessThan(startWidth(false) / 2);
+  });
+
+  it("leaves the ends at full width when off", () => {
+    expect(startWidth(false)).toBeCloseTo(10, 0);
+  });
+});
