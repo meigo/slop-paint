@@ -1,5 +1,8 @@
 import type { BrushSettings } from "./brush";
 import type { BrushType } from "./brush-textures";
+
+/** Every brush the toolbar offers: the full-redraw engines plus the stamp tips. */
+export type BrushKind = "smooth" | "ink" | "calligraphy" | BrushType;
 import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 
@@ -7,7 +10,7 @@ export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedroppe
 
 interface AppStateShape {
   currentTool: Tool;
-  brushType: BrushType;
+  brushType: BrushKind;
   sizeRange: number;
   streamline: number;
   brushSettings: BrushSettings;
@@ -38,6 +41,9 @@ export const app: AppStateShape = $state({
     isEraser: false,
     drawBehind: false,
     alphaLock: false,
+    nibAngle: 45,
+    nibFlatness: 0.35,
+    dwellPool: 0,
   },
   fillSettings: {
     tolerance: 32,

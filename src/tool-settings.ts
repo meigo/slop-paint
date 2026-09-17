@@ -1,8 +1,8 @@
-import type { BrushType } from "./brush-textures";
+import type { BrushKind } from "./appState.svelte";
 
 /** Stroke settings that brush and eraser each keep their own copy of. */
 export interface StrokeSlot {
-  brushType: BrushType;
+  brushType: BrushKind;
   size: number;
   opacity: number;
   smoothing: number;
@@ -14,7 +14,7 @@ export type SlotName = "brush" | "eraser";
 
 /** The live settings the toolbar binds to (a subset of AppStateShape). */
 export interface LiveStroke {
-  brushType: BrushType;
+  brushType: BrushKind;
   sizeRange: number;
   streamline: number;
   brushSettings: { size: number; opacity: number; smoothing: number };
@@ -77,8 +77,8 @@ export function parseSlot(raw: unknown, fallback: StrokeSlot): StrokeSlot {
   if (!raw || typeof raw !== "object") return fallback;
   const r = raw as Record<string, unknown>;
   const out = { ...fallback };
-  const types: BrushType[] = ["smooth", "pencil", "charcoal", "airbrush"];
-  if (types.includes(r.brushType as BrushType)) out.brushType = r.brushType as BrushType;
+  const types: BrushKind[] = ["smooth", "ink", "calligraphy", "pencil", "charcoal", "airbrush"];
+  if (types.includes(r.brushType as BrushKind)) out.brushType = r.brushType as BrushKind;
   for (const k of ["size", "opacity", "smoothing", "streamline", "sizeRange"] as const) {
     if (typeof r[k] === "number" && Number.isFinite(r[k])) out[k] = r[k];
   }

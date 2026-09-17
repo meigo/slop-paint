@@ -8,7 +8,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Tailwind CSS v4 for styling (dark only, shared slop palette — see `../SLOP-TIMELINE-UI.md`)
 - `@lucide/svelte` for icons
 - Canvas2D for rendering
-- perfect-freehand for the Smooth brush; stamp-based engine for pencil, charcoal, airbrush
+- Brush engines: perfect-freehand (Smooth), ink/marker (Ink), swept-nib ribbon (Calligraphy), stamp tips (Pencil, Charcoal, Airbrush)
 - `ag-psd` for PSD export
 - `sortablejs` for drag-and-drop layer tree
 - Vitest for tests, ESLint for linting, Prettier for formatting, `svelte-check` for Svelte type checking
@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -42,7 +42,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
 - `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter; `flashStatus(msg)` shows a transient status-bar message (use it when an action does nothing, so a no-op isn't silent)
-- `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool (brush/fill options, size presets, click-to-edit size, color, pressure curve popup; eyedropper color readout; select hints). Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall. Row 1 must not get `overflow` (it would clip the menus)
+- `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool. On the bar: what is changed while drawing (brush type, size + presets, opacity, color swatch). Behind popovers: the gear holds set-once settings (smoothing, streamline, size range, nib angle/flatness for Calligraphy, dwell for Ink, draw-behind, pressure curve editor), the color swatch holds the palette + native picker. Needs ~750px, so it fits a portrait iPad. Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall, and wrap bare buttons in a flex box (a bare button sits on the text baseline and is 40px). Row 1 must not get `overflow` (it would clip the menus)
+- Brush kinds: `BrushKind` = smooth | ink | calligraphy | stamp tips. Smooth/ink/calligraphy redraw the whole stroke each frame from a pre-stroke canvas copy (a per-segment redraw hardens antialiased edges); stamps draw incrementally
 - `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
 - `lib/SelectionActions.svelte` — floating panel over the selection: Free transform, Distort, Mesh, Flip H/V, keep proportions, Apply, Cancel. Buttons keep their positions when a plain selection is lifted (the panel is centred, so appearing/disappearing buttons would slide under the pen); Apply/Cancel are shown dimmed until there is a float
@@ -53,6 +54,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) ends the stroke like `pointerup`; the lift point reuses the last move's pressure (pen `pointerup` reports 0)
 - `brush.ts` — BrushSettings, `widthRange` (size = thinnest width, × sizeRange at full pressure), and the Smooth brush (perfect-freehand). pf's `size` is a RADIUS basis, so it gets `maxSize / 2`; `decimationSmoothing` caps pf's point spacing so thin sections don't leave holes
+- `ink-brush.ts` — Ink/marker: full-stroke redraw, segments batched into runs of similar width; optional dwell swell (from slop-animator)
+- `calligraphy-brush.ts` — broad-nib ribbon with nib angle/flatness; smooths and decimates points first (from slop-animator)
 - `stamp-brush.ts` — stamp engine for pencil/charcoal/airbrush, supports eraser/draw-behind/alpha-lock compositing; `stampFootprint` draws sub-2px stamps at 2px with reduced alpha (smaller tips downsample to nothing)
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
 - `layers.ts` — tree-based layer/group management with per-layer undo history, lock, alpha lock, duplicate, merge down
@@ -161,4 +164,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 
 - UI settings saved to localStorage (debounced)
-- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings, eraser settings, keep proportions, Fill enclosed bridge
+- Includes: tool, brush type, size, opacity, smoothing, color, size range, pressure curve, draw-behind, fill settings, eraser settings, keep proportions, Fill enclosed bridge, nib angle/flatness, ink dwell

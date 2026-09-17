@@ -7,7 +7,7 @@
     PaintBucket,
     Undo2,
     Redo2,
-    Spline,
+    Settings2,
     Pipette,
   } from "@lucide/svelte";
   import { app, pressureCurve, type Tool } from "../appState.svelte.js";
@@ -16,6 +16,7 @@
   import { clickOutside } from "./click-outside";
   import ToolbarMenu from "./ToolbarMenu.svelte";
   import { MAX_GAP } from "../fill-holes";
+  import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
 
   let {
     setTool,
@@ -92,9 +93,10 @@
 
   const sizePresets = [1, 2, 3, 5, 8, 12, 20, 40, 80];
 
-  // Pressure curve popup
+  // Brush settings popover (holds the set-once options, incl. the pressure curve editor)
   let curvePopupEl = $state<HTMLDivElement | null>(null);
-  let curveOpen = $state(false);
+  let settingsOpen = $state(false);
+  let colorOpen = $state(false);
   let curveEditorEl: (HTMLElement & { redraw: () => void }) | null = null;
 
   // The popup element is recreated whenever the brush options come back after another tool, so
@@ -121,6 +123,11 @@
     onSettingsChange();
   }
 
+  function onNibFlatnessInput(e: Event) {
+    app.brushSettings.nibFlatness = Number((e.target as HTMLInputElement).value) / 100;
+    onSettingsChange();
+  }
+
   function onSizeRangeInput(e: Event) {
     app.sizeRange = Number((e.target as HTMLInputElement).value) / 100;
     onSettingsChange();
@@ -142,6 +149,9 @@
   const menuItem =
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
+  const rowCls = "flex items-center gap-2 text-xs text-text-secondary";
+  const labelCls = "w-20 shrink-0";
+  const valueCls = "w-10 shrink-0 text-right text-[11px] text-text-muted";
 </script>
 
 <!-- Row 1: tools, history, zoom readout, menus. Fixed height. -->
@@ -318,6 +328,8 @@
         onchange={onBrushTypeChange}
       >
         <option value="smooth">Smooth</option>
+        <option value="ink">Ink</option>
+        <option value="calligraphy">Calligraphy</option>
         <option value="pencil">Pencil</option>
         <option value="charcoal">Charcoal</option>
         <option value="airbrush">Airbrush</option>
@@ -392,64 +404,118 @@
   {/if}
 
   {#if showBrush}
-    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
-      Smoothing
-      <input
-        type="range"
-        min="0"
-        max="100"
-        class="w-20"
-        bind:value={app.brushSettings.smoothing}
-        oninput={onSettingsChange}
-      />
-    </label>
-
-    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
-      Streamline
-      <input
-        type="range"
-        min="0"
-        max="100"
-        class="w-20"
-        bind:value={app.streamline}
-        oninput={onSettingsChange}
-      />
-    </label>
-
-    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
-      <input
-        type="checkbox"
-        bind:checked={app.brushSettings.drawBehind}
-        onchange={onSettingsChange}
-      />
-      Behind
-    </label>
-
-    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
-      Size range
-      <input
-        type="range"
-        min="100"
-        max="5000"
-        value={app.sizeRange * 100}
-        oninput={onSizeRangeInput}
-        class="w-20"
-      />
-      <span class="min-w-7 text-[11px] text-text-muted">{sizeRangeDisplay}</span>
-    </label>
-
-    <div class="relative" use:clickOutside={() => (curveOpen = false)}>
+    <!-- Set-once settings live behind the gear so the bar keeps room for what is adjusted while
+         drawing (type, size, opacity, colour). -->
+    <div class="relative" use:clickOutside={() => (settingsOpen = false)}>
       <button
-        class="{actionBtnClass} {curveOpen ? 'ui-on' : ''}"
-        aria-pressed={curveOpen}
-        onclick={() => {
-          curveOpen = !curveOpen;
-        }}
-        title="Pressure Curve"
+        class="{actionBtnClass} {settingsOpen ? 'ui-on' : ''}"
+        aria-pressed={settingsOpen}
+        aria-haspopup="dialog"
+        onclick={() => (settingsOpen = !settingsOpen)}
+        title="Brush settings — smoothing, pressure, and brush-specific options"
       >
-        <Spline size={20} />
+        <Settings2 size={20} />
       </button>
-      <div class="curve-popup" class:open={curveOpen} bind:this={curvePopupEl}></div>
+      {#if settingsOpen}
+        <div
+          class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
+        >
+          <label class={rowCls}>
+            <span class={labelCls}>Smoothing</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              class="min-w-0 flex-1"
+              bind:value={app.brushSettings.smoothing}
+              oninput={onSettingsChange}
+            />
+            <span class={valueCls}>{app.brushSettings.smoothing}</span>
+          </label>
+
+          <label class={rowCls}>
+            <span class={labelCls}>Streamline</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              class="min-w-0 flex-1"
+              bind:value={app.streamline}
+              oninput={onSettingsChange}
+            />
+            <span class={valueCls}>{app.streamline}</span>
+          </label>
+
+          <label class={rowCls}>
+            <span class={labelCls}>Size range</span>
+            <input
+              type="range"
+              min="100"
+              max="5000"
+              value={app.sizeRange * 100}
+              oninput={onSizeRangeInput}
+              class="min-w-0 flex-1"
+            />
+            <span class={valueCls}>{sizeRangeDisplay}</span>
+          </label>
+
+          {#if app.brushType === "calligraphy"}
+            <label class={rowCls}>
+              <span class={labelCls}>Nib angle</span>
+              <input
+                type="range"
+                min="0"
+                max="180"
+                bind:value={app.brushSettings.nibAngle}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.nibAngle}°</span>
+            </label>
+            <label class={rowCls}>
+              <span class={labelCls}>Nib flatness</span>
+              <input
+                type="range"
+                min="0"
+                max={MAX_NIB_FLATNESS * 100}
+                value={(app.brushSettings.nibFlatness ?? 0) * 100}
+                oninput={onNibFlatnessInput}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{Math.round((app.brushSettings.nibFlatness ?? 0) * 100)}</span>
+            </label>
+          {/if}
+
+          {#if app.brushType === "ink"}
+            <label class={rowCls} title="Swell the mark where the pen lingers">
+              <span class={labelCls}>Dwell</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                bind:value={app.brushSettings.dwellPool}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.dwellPool}</span>
+            </label>
+          {/if}
+
+          <label class="flex items-center gap-2 text-xs text-text-secondary">
+            <input
+              type="checkbox"
+              bind:checked={app.brushSettings.drawBehind}
+              onchange={onSettingsChange}
+            />
+            Draw behind existing pixels
+          </label>
+
+          <div class="mt-1 flex flex-col gap-1 border-t border-border pt-2">
+            <span class="text-xs text-text-secondary">Pressure curve</span>
+            <div bind:this={curvePopupEl} class="curve-editor flex flex-col items-center"></div>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -503,29 +569,49 @@
     >
   {/if}
 
-  <!-- Color -->
+  <!-- Color: one swatch showing the current colour, palette behind it — the bar has to fit a
+       portrait iPad, and the 8 swatches plus the native picker were its widest block. -->
   {#if showBrush || showFill}
-    <div class="flex items-center gap-1">
-      <input
-        type="color"
-        bind:value={app.brushSettings.color}
-        oninput={onSettingsChange}
-        title="Color"
-      />
-      <div class="flex gap-0.5">
-        {#each swatches as { color, name }}
-          <button
-            class="h-[22px] w-[22px] cursor-pointer rounded-full border-2 border-border transition-transform hover:scale-120"
-            class:border-text-muted={color === "#ffffff"}
-            style:background={color}
-            title={name}
-            onclick={() => {
-              app.brushSettings.color = color;
-              onSettingsChange();
-            }}
-          ></button>
-        {/each}
-      </div>
+    <div class="relative flex items-center" use:clickOutside={() => (colorOpen = false)}>
+      <button
+        class="size-9 shrink-0 rounded-md border-2 border-border transition-colors hover:border-text-muted"
+        style:background={app.brushSettings.color}
+        aria-haspopup="dialog"
+        aria-expanded={colorOpen}
+        onclick={() => (colorOpen = !colorOpen)}
+        title="Color — {app.brushSettings.color}"
+      ></button>
+      {#if colorOpen}
+        <div
+          class="absolute top-full right-0 z-30 mt-1 flex w-56 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
+        >
+          <div class="grid grid-cols-4 gap-2">
+            {#each swatches as { color, name }}
+              <button
+                class="h-8 w-full cursor-pointer rounded-md border-2 transition-transform hover:scale-105 {color ===
+                app.brushSettings.color
+                  ? 'border-accent'
+                  : 'border-border'}"
+                style:background={color}
+                title={name}
+                onclick={() => {
+                  app.brushSettings.color = color;
+                  onSettingsChange();
+                }}
+              ></button>
+            {/each}
+          </div>
+          <label class="flex items-center gap-2 text-xs text-text-secondary">
+            Custom
+            <input
+              type="color"
+              bind:value={app.brushSettings.color}
+              oninput={onSettingsChange}
+              title="Pick any color"
+            />
+          </label>
+        </div>
+      {/if}
     </div>
   {/if}
 

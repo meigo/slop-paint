@@ -7,6 +7,8 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { drawStroke } from "./brush";
+  import { drawInkStroke } from "./ink-brush";
+  import { drawCalligraphyStroke } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
   import {
@@ -31,8 +33,8 @@
     bumpSelectionVersion,
     flashStatus,
     type Tool,
+    type BrushKind,
   } from "./appState.svelte.js";
-  import type { BrushType } from "./brush-textures";
   import {
     allSlots,
     parseSlot,
@@ -236,6 +238,9 @@
     fillExpand?: number;
     keepProportions?: boolean;
     fillEnclosedGap?: number;
+    nibAngle?: number;
+    nibFlatness?: number;
+    dwellPool?: number;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
   }
@@ -260,6 +265,9 @@
       fillExpand: app.fillSettings.expand,
       keepProportions: app.keepProportions,
       fillEnclosedGap: app.fillEnclosedGap,
+      nibAngle: app.brushSettings.nibAngle,
+      nibFlatness: app.brushSettings.nibFlatness,
+      dwellPool: app.brushSettings.dwellPool,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -281,7 +289,7 @@
       const data: SavedSettings = JSON.parse(raw);
 
       if (data.tool) app.currentTool = data.tool as Tool;
-      if (data.brushType) app.brushType = data.brushType as BrushType;
+      if (data.brushType) app.brushType = data.brushType as BrushKind;
       if (data.size != null) app.brushSettings.size = data.size;
       if (data.opacity != null) app.brushSettings.opacity = data.opacity;
       if (data.smoothing != null) app.brushSettings.smoothing = data.smoothing;
@@ -294,6 +302,9 @@
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (data.fillEnclosedGap != null) app.fillEnclosedGap = clampGap(data.fillEnclosedGap);
+      if (data.nibAngle != null) app.brushSettings.nibAngle = data.nibAngle;
+      if (data.nibFlatness != null) app.brushSettings.nibFlatness = data.nibFlatness;
+      if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurve.cp1 = data.curveCp1;
         pressureCurve.cp2 = data.curveCp2;
@@ -665,16 +676,30 @@
     }
 
     // Brush stroke
+    const kind = app.brushType;
+    // smooth / ink / calligraphy redraw the whole stroke each frame from a pre-stroke copy; the
+    // stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
+    // harden the antialiased edges (see the engines' own notes).
+    const fullRedraw = kind === "smooth" || kind === "ink" || kind === "calligraphy";
+    // Mouse input has no pressure: draw at the nominal width instead of the widest.
+    const sizeRange = (points[0]?.hasPressure ?? true) ? app.sizeRange : 1;
+    const strokeSettings = { ...app.brushSettings, alphaLock: layer.alphaLock };
+
+    function drawFullStroke(ctx: CanvasRenderingContext2D, pts: InputPoint[], finished: boolean) {
+      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange);
+      else if (kind === "calligraphy") drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange);
+      else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);
+    }
+
     if (points.length <= 1 && !done) {
       preStrokeSnapshot = layers.getSnapshot();
-      if (app.brushType === "smooth") {
+      if (fullRedraw) {
         saveLayerToCanvas(layer);
       }
       resetStampState();
     }
 
-    if (app.brushType === "smooth") {
-      // Perfect-freehand: redraws entire stroke each frame (not incremental).
+    if (fullRedraw) {
       // Batch restore+draw+composite to once per frame — Apple Pencil fires at
       // 240Hz but screen refreshes at 60-120Hz, so most events are wasted work.
       if (done) {
@@ -682,13 +707,7 @@
         restoreLayerFromCanvas(layer);
         layer.ctx.save();
         selection?.applyClip(layer.ctx);
-        drawStroke(
-          layer.ctx,
-          points,
-          { ...app.brushSettings, alphaLock: layer.alphaLock },
-          true,
-          app.sizeRange,
-        );
+        drawFullStroke(layer.ctx, points, true);
         layer.ctx.restore();
         layers.composite();
         if (preStrokeSnapshot) {
@@ -708,13 +727,7 @@
           restoreLayerFromCanvas(active);
           active.ctx.save();
           selection?.applyClip(active.ctx);
-          drawStroke(
-            active.ctx,
-            latest,
-            { ...app.brushSettings, alphaLock: active.alphaLock },
-            false,
-            app.sizeRange,
-          );
+          drawFullStroke(active.ctx, latest, false);
           active.ctx.restore();
           layers.composite();
         });
@@ -726,8 +739,8 @@
       drawStampStrokeIncremental(
         layer.ctx,
         points,
-        { ...app.brushSettings, brushType: app.brushType, alphaLock: layer.alphaLock },
-        app.sizeRange,
+        { ...strokeSettings, brushType: kind },
+        sizeRange,
       );
       layer.ctx.restore();
       scheduleComposite();

@@ -37,6 +37,11 @@ export interface BrushSettings {
   isEraser: boolean;
   drawBehind: boolean;
   alphaLock: boolean;
+  /** Calligraphy nib only: angle in degrees, and how flat the nib is (0 = round). */
+  nibAngle?: number;
+  nibFlatness?: number;
+  /** Ink only: 0-100, how much the mark swells where the nib lingers (0 = off). */
+  dwellPool?: number;
 }
 
 /**

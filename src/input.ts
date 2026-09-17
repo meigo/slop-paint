@@ -3,6 +3,8 @@ export interface InputPoint {
   y: number;
   pressure: number;
   timestamp: number;
+  /** False for mouse input, which has no pressure sensor — those strokes draw at a constant width. */
+  hasPressure?: boolean;
 }
 
 export type StrokeHandler = (points: InputPoint[], done: boolean) => void;
@@ -67,6 +69,7 @@ export function setupInput(
       // size slider value IS the stroke width, with sizeRange only widening pen strokes
       // *up* from there at higher pressure.
       pressure: e.pointerType === "mouse" ? 0 : e.pressure,
+      hasPressure: e.pointerType !== "mouse",
       timestamp: e.timeStamp,
     };
   }
