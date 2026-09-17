@@ -87,6 +87,7 @@
         <div class="grid grid-cols-3 gap-1 w-16">
           {#each anchors as a}
             <button
+              aria-label="Anchor {a.x},{a.y}"
               class="w-4 h-4 rounded-sm border transition-colors
                      {anchorX === a.x && anchorY === a.y
                        ? 'bg-accent border-accent'

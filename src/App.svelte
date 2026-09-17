@@ -22,14 +22,14 @@
   let canvasContainerEl: HTMLDivElement;
   let canvasEl: HTMLCanvasElement;
   let selectionOverlayEl: HTMLCanvasElement;
-  let canvasClipEl: HTMLDivElement;
+  let canvasClipEl = $state() as HTMLDivElement;
   let workspaceEl: HTMLDivElement;
   let fileInputEl: HTMLInputElement;
 
   // --- Core objects (imperative, not $state) ---
-  let viewport: Viewport;
-  let layers: LayerManager;
-  let selection: Selection;
+  let viewport = $state.raw() as Viewport;
+  let layers = $state.raw() as LayerManager;
+  let selection = $state.raw() as Selection;
 
   // --- Expose layers for child components ---
   let layersReady = $state(false);
@@ -701,11 +701,16 @@
       viewport.setZoom(viewport.zoom / 1.2);
       updateZoomDisplay();
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "0") {
+    // Plain digits, matching slop-animator's `0` for fit. These were Cmd/Ctrl+0 and +1, which
+    // browsers reserve for page-zoom-reset and switch-to-tab-N: they are handled ahead of the page,
+    // so preventDefault could not claim them — the app command never ran and the browser did
+    // something disruptive instead. No digit shortcuts existed to collide with, and this handler
+    // already bails inside INPUT/SELECT.
+    if (!e.ctrlKey && !e.metaKey && e.key === "0") {
       e.preventDefault();
       resetView();
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "1") {
+    if (!e.ctrlKey && !e.metaKey && e.key === "1") {
       e.preventDefault();
       resetTo100Percent();
     }
