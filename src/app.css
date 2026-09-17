@@ -71,7 +71,9 @@ body,
 /* Base resets */
 body {
   overflow: hidden;
-  font-family: "JetBrains Mono", monospace;
+  font-family: system-ui, sans-serif;
+  /* Digits stay fixed-width (JetBrains Mono gave this for free) so readouts don't jitter. */
+  font-variant-numeric: tabular-nums;
   touch-action: none;
   overscroll-behavior: none;
   color: var(--color-text);
