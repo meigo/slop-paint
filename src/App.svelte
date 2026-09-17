@@ -9,7 +9,7 @@
   import { drawStroke } from "./brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager } from "./layers";
-  import { floodFill, hexToRgba } from "./fill";
+  import { floodFill, hexToRgba, rgbToHex } from "./fill";
   import { Selection } from "./selection";
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
@@ -155,12 +155,40 @@
     }
   }
 
+  // --- Eyedropper ---
+  let eyedropperSwatchEl: HTMLDivElement;
+
+  /** Colour of the composited document at canvas coords, or null off-canvas / on transparency. */
+  function sampleColor(x: number, y: number): string | null {
+    const dpr = window.devicePixelRatio || 1;
+    const px = Math.floor(x * dpr);
+    const py = Math.floor(y * dpr);
+    if (px < 0 || py < 0 || px >= canvasEl.width || py >= canvasEl.height) return null;
+    const [r, g, b, a] = canvasEl.getContext("2d")!.getImageData(px, py, 1, 1).data;
+    return a === 0 ? null : rgbToHex(r, g, b);
+  }
+
+  function showEyedropperSwatch(x: number, y: number, color: string | null) {
+    if (!color) {
+      eyedropperSwatchEl.style.display = "none";
+      return;
+    }
+    const s = viewport.canvasToScreen(x, y);
+    const rect = canvasClipEl.getBoundingClientRect();
+    // Above-left of the point so a finger or Pencil tip doesn't cover it
+    eyedropperSwatchEl.style.left = s.x - rect.left - 48 + "px";
+    eyedropperSwatchEl.style.top = s.y - rect.top - 48 + "px";
+    eyedropperSwatchEl.style.background = color;
+    eyedropperSwatchEl.style.display = "block";
+  }
+
   // --- Panning state ---
   let spaceHeld = false;
 
   // --- Temporary eraser ---
   let toolBeforeEraser: Tool | null = null;
   let toolBeforePencilToggle: Tool | null = null;
+  let toolBeforeEyedropper: Tool = "brush";
 
   // --- Settings persistence ---
   const STORAGE_KEY = "drawingAppSettings";
@@ -183,7 +211,8 @@
 
   function saveSettings() {
     const data: SavedSettings = {
-      tool: app.currentTool,
+      // The eyedropper is transient; reopen on the tool it will return to.
+      tool: app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool,
       brushType: app.brushType,
       size: app.brushSettings.size,
       opacity: app.brushSettings.opacity,
@@ -485,6 +514,23 @@
       pressure: pressureCurve.evaluate(p.pressure),
     }));
 
+    // Eyedropper: reads the composite, so it ignores the active layer's lock.
+    // Picks on RELEASE — drag to slide the sample point out from under the pen tip.
+    if (app.currentTool === "eyedropper") {
+      const p = points[points.length - 1];
+      const color = sampleColor(p.x, p.y);
+      if (!done) {
+        showEyedropperSwatch(p.x, p.y, color);
+        return;
+      }
+      eyedropperSwatchEl.style.display = "none";
+      if (color) {
+        app.brushSettings.color = color;
+        setTool(toolBeforeEyedropper);
+      }
+      return;
+    }
+
     const layer = layers.active;
     const dpr = window.devicePixelRatio || 1;
 
@@ -645,6 +691,9 @@
     if (selection?.hasFloating && tool !== app.currentTool) {
       selection.commit();
     }
+    if (tool === "eyedropper" && app.currentTool !== "eyedropper") {
+      toolBeforeEyedropper = app.currentTool;
+    }
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";
     if (tool === "select") selection.mode = "rect";
@@ -722,6 +771,7 @@
     if (e.key === "s") setTool("select");
     if (e.key === "l") setTool("lasso");
     if (e.key === "g") setTool("fill");
+    if (e.key === "i") setTool("eyedropper");
 
     if (e.key === "r" || e.key === "R") {
       const step = (15 * Math.PI) / 180;
@@ -1006,6 +1056,11 @@
         bind:this={brushCursorEl}
         class="pointer-events-none absolute rounded-full border"
         style="display: none; border-color: rgba(0,0,0,0.5); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); mix-blend-mode: difference;"
+      ></div>
+      <div
+        bind:this={eyedropperSwatchEl}
+        class="pointer-events-none absolute h-9 w-9 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
+        style="display: none;"
       ></div>
       {#if layersReady}
         <SelectionActions

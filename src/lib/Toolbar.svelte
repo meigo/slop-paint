@@ -15,6 +15,7 @@
     Spline,
     FileDown,
     FilePlus,
+    Pipette,
   } from "@lucide/svelte";
   import { app, pressureCurve, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
@@ -135,6 +136,7 @@
     { tool: "select", icon: BoxSelect, title: "Rect Select (S)" },
     { tool: "lasso", icon: Lasso, title: "Lasso Select (L)" },
     { tool: "fill", icon: PaintBucket, title: "Paint Bucket (G)" },
+    { tool: "eyedropper", icon: Pipette, title: "Eyedropper (I) — drag to aim, release to pick" },
   ];
 
   const actionBtnClass =

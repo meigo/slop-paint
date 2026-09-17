@@ -3,7 +3,7 @@ import type { BrushType } from "./brush-textures";
 import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 
-export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso";
+export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedropper";
 
 interface AppStateShape {
   currentTool: Tool;
