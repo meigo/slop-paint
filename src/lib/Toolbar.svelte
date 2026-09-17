@@ -7,19 +7,14 @@
     PaintBucket,
     Undo2,
     Redo2,
-    Trash2,
-    Download,
-    Save,
-    FolderOpen,
-    RotateCcw,
     Spline,
-    FileDown,
-    FilePlus,
     Pipette,
   } from "@lucide/svelte";
   import { app, pressureCurve, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
   import { createCurveEditor } from "../pressure-curve";
+  import { clickOutside } from "./click-outside";
+  import ToolbarMenu from "./ToolbarMenu.svelte";
 
   let {
     setTool,
@@ -91,23 +86,13 @@
   let curveOpen = $state(false);
   let curveEditorEl: (HTMLElement & { redraw: () => void }) | null = null;
 
+  // The popup element is recreated whenever the brush options come back after another tool, so
+  // re-attach the (single, long-lived) editor to whichever popup currently exists.
   $effect(() => {
-    if (curvePopupEl && !curveEditorEl) {
-      curveEditorEl = createCurveEditor(pressureCurve, onSettingsChange);
-      curvePopupEl.appendChild(curveEditorEl);
-    }
+    if (!curvePopupEl) return;
+    curveEditorEl ??= createCurveEditor(pressureCurve, onSettingsChange);
+    if (curveEditorEl.parentElement !== curvePopupEl) curvePopupEl.appendChild(curveEditorEl);
   });
-
-  // Close curve popup when clicking outside — use mousedown (not pointerdown)
-  // and check with a flag to avoid closing on the same click that opens
-  let curveButtonEl = $state<HTMLButtonElement | null>(null);
-
-  function handleDocumentClick(e: MouseEvent) {
-    if (!curveOpen || !curvePopupEl || !curveButtonEl) return;
-    if (!curvePopupEl.contains(e.target as Node) && !curveButtonEl.contains(e.target as Node)) {
-      curveOpen = false;
-    }
-  }
 
   const swatches = [
     { color: "#1a1a1a", name: "Black" },
@@ -141,15 +126,16 @@
 
   const actionBtnClass =
     "w-9 h-9 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors";
+  const iconBtnClass =
+    "size-9 shrink-0 rounded-md flex items-center justify-center text-text-secondary hover:bg-surface-hover transition-colors";
+  const menuItem =
+    "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
+  const kbd = "text-[11px] text-text-muted";
 </script>
 
-<svelte:document onclick={handleDocumentClick} />
-
-<div
-  class="z-10 flex min-h-12 flex-wrap items-center gap-4 border-b border-border bg-surface px-4 py-2 shadow-sm"
->
-  <!-- Tool buttons -->
-  <div class="flex items-center gap-1">
+<!-- Row 1: tools, history, zoom readout, menus. Fixed height. -->
+<div class="z-20 flex h-12 shrink-0 items-center gap-1 border-b border-border bg-surface px-4">
+  <div class="flex shrink-0 items-center gap-1">
     {#each tools as { tool, icon: Icon, title }}
       <button
         class="flex h-9 w-9 items-center justify-center rounded-md border transition-colors {activeTool ===
@@ -165,6 +151,119 @@
     {/each}
   </div>
 
+  <div class="mx-2 h-6 w-px shrink-0 bg-border"></div>
+
+  <button class={iconBtnClass} onclick={undo} title="Undo (Ctrl+Z)"><Undo2 size={20} /></button>
+  <button class={iconBtnClass} onclick={redo} title="Redo (Ctrl+Shift+Z)"
+    ><Redo2 size={20} /></button
+  >
+
+  <div class="mx-2 h-6 w-px shrink-0 bg-border"></div>
+
+  <span class="min-w-12 shrink-0 text-center text-[11px] text-text-muted" title="Zoom"
+    >{app.zoomText}</span
+  >
+
+  <div class="ml-auto flex shrink-0 items-center gap-1">
+    <ToolbarMenu label="File">
+      {#snippet children(close)}
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            newDoc();
+            close();
+          }}>New…</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            openPsd();
+            close();
+          }}>Open project… <span class={kbd}>Ctrl+O</span></button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            savePsd();
+            close();
+          }}>Save project <span class={kbd}>Ctrl+S</span></button
+        >
+        <div class="my-1 h-px bg-border"></div>
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            resizeDoc();
+            close();
+          }}>Resize canvas… <span class={kbd}>{app.docWidth} × {app.docHeight}</span></button
+        >
+      {/snippet}
+    </ToolbarMenu>
+    <ToolbarMenu label="Edit">
+      {#snippet children(close)}
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            clearLayer();
+            close();
+          }}>Clear layer</button
+        >
+      {/snippet}
+    </ToolbarMenu>
+    <ToolbarMenu label="Export">
+      {#snippet children(close)}
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            saveImage();
+            close();
+          }}>PNG image</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          title="Layered PSD for Photoshop / Spine"
+          onclick={() => {
+            exportPsd();
+            close();
+          }}>PSD (layers)</button
+        >
+      {/snippet}
+    </ToolbarMenu>
+    <ToolbarMenu label="View">
+      {#snippet children(close)}
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            resetView();
+            close();
+          }}>Fit to view <span class={kbd}>0</span></button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            reset100();
+            close();
+          }}>Actual size <span class={kbd}>1</span></button
+        >
+      {/snippet}
+    </ToolbarMenu>
+  </div>
+</div>
+
+<!-- Row 2: options for the active tool. Keeps its minimum height when a tool has no options, so
+     switching tools doesn't move the canvas. Wraps (rather than scrolling) so the pressure-curve
+     popup isn't clipped; a very narrow window can still make it taller. -->
+<div
+  class="z-10 flex min-h-12 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
+>
   <!-- Brush options -->
   {#if showBrush}
     <div class="flex items-center gap-1">
@@ -223,7 +322,7 @@
         {#each sizePresets as s}
           <button
             class="rounded px-1 py-0.5 text-[10px] transition-colors
-                   {app.brushSettings.size === s
+                     {app.brushSettings.size === s
               ? 'bg-accent text-accent-text'
               : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
             onclick={() => setSize(s)}>{s}</button
@@ -295,10 +394,10 @@
       <span class="min-w-7 text-[11px] text-text-muted">{sizeRangeDisplay}</span>
     </label>
 
-    <div class="relative">
+    <div class="relative" use:clickOutside={() => (curveOpen = false)}>
       <button
-        class={actionBtnClass}
-        bind:this={curveButtonEl}
+        class="{actionBtnClass} {curveOpen ? 'ui-on' : ''}"
+        aria-pressed={curveOpen}
         onclick={() => {
           curveOpen = !curveOpen;
         }}
@@ -364,53 +463,18 @@
     </div>
   {/if}
 
-  <!-- Zoom + reset -->
-  <div class="flex items-center gap-1">
-    <span class="min-w-9 cursor-default text-center text-[11px] text-text-muted"
-      >{app.zoomText}</span
+  {#if activeTool === "eyedropper"}
+    <div class="flex items-center gap-2 text-xs text-text-secondary">
+      <span
+        class="h-5 w-5 rounded-full border border-text-muted"
+        style:background={app.brushSettings.color}
+        title="Current color"
+      ></span>
+      <span class="text-text-muted">Drag to aim, release to pick a color</span>
+    </div>
+  {:else if activeTool === "select" || activeTool === "lasso"}
+    <span class="text-xs text-text-muted"
+      >{activeTool === "select" ? "Drag a rectangle" : "Draw around an area"} to select</span
     >
-    <button class={actionBtnClass} onclick={resetView} title="Fit to View (Ctrl+0)">
-      <RotateCcw size={20} />
-    </button>
-    <button
-      class="h-9 rounded-md border border-border bg-surface px-2 font-mono text-[11px] text-text-secondary transition-colors hover:bg-surface-hover"
-      onclick={reset100}
-      title="Actual Size — 100% (Ctrl+1)"
-    >
-      1:1
-    </button>
-  </div>
-
-  <!-- Doc size (click to resize) -->
-  <button
-    class="rounded px-1 py-0.5 text-[11px] whitespace-nowrap text-text-muted hover:bg-surface-hover hover:text-text"
-    onclick={resizeDoc}
-    title="Resize Canvas">{app.docWidth} x {app.docHeight}</button
-  >
-
-  <!-- Actions -->
-  <div class="ml-auto flex items-center gap-1">
-    <button class={actionBtnClass} onclick={undo} title="Undo (Ctrl+Z)"><Undo2 size={20} /></button>
-    <button class={actionBtnClass} onclick={redo} title="Redo (Ctrl+Shift+Z)"
-      ><Redo2 size={20} /></button
-    >
-    <button class={actionBtnClass} onclick={clearLayer} title="Clear Layer"
-      ><Trash2 size={20} /></button
-    >
-    <button class={actionBtnClass} onclick={newDoc} title="New Document"
-      ><FilePlus size={20} /></button
-    >
-    <button class={actionBtnClass} onclick={saveImage} title="Save as PNG"
-      ><Download size={20} /></button
-    >
-    <button class={actionBtnClass} onclick={exportPsd} title="Export as PSD"
-      ><FileDown size={20} /></button
-    >
-    <button class={actionBtnClass} onclick={savePsd} title="Save Project (Ctrl+S)"
-      ><Save size={20} /></button
-    >
-    <button class={actionBtnClass} onclick={openPsd} title="Open Project (Ctrl+O)"
-      ><FolderOpen size={20} /></button
-    >
-  </div>
+  {/if}
 </div>

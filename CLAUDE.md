@@ -42,7 +42,9 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `main.ts` — bootstraps Svelte app (mounts `App.svelte`)
 - `App.svelte` — root component: canvas setup, input/gesture wiring, keyboard shortcuts, settings persistence
 - `appState.svelte.ts` — shared reactive state using Svelte 5 runes (`$state`): tool, brush/fill settings, layer version counter
-- `lib/Toolbar.svelte` — tool buttons, brush/fill options (size presets, click-to-edit size), color picker, zoom display, action buttons
+- `lib/Toolbar.svelte` — two rows. Row 1 (fixed 48px): tool buttons, undo/redo, zoom readout, and File / Edit / Export / View menus. Row 2 (min 48px, wraps): options for the active tool (brush/fill options, size presets, click-to-edit size, color, pressure curve popup; eyedropper color readout; select hints). Row 2 keeps its height across tools so the canvas doesn't jump — keep its controls ≤ 36px tall. Row 1 must not get `overflow` (it would clip the menus)
+- `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
+- `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
 - `lib/LayerPanel.svelte` — layer tree with recursive snippets, SortableJS integration, thumbnails, inline rename
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
