@@ -10,7 +10,6 @@
     Lock,
     LockOpen,
     Blend,
-    Tag,
     ChevronRight,
     ChevronDown,
     GripVertical,
@@ -19,19 +18,10 @@
   import { structuralEdit } from "../undo";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
-  import { clickOutside } from "./click-outside";
+  import LayerProps from "./LayerProps.svelte";
   import { clampPanelWidth } from "../panel-layout";
-  import { sliderFill } from "./slider-fill";
   import { isDoubleTap, type Tap } from "./double-tap";
-  import {
-    parseTags,
-    buildName,
-    toggleTag,
-    tagsForNodeType,
-    tagConflictReason,
-    TAG_DESCRIPTIONS,
-    type SpineTag,
-  } from "../spine-tags";
+  import { parseTags, buildName } from "../spine-tags";
 
   let {
     layers,
@@ -76,7 +66,6 @@
 
   let editingId = $state<number | null>(null);
   let draft = $state("");
-  let tagPopoverFor = $state<number | null>(null);
   let lastTap: Tap | null = null;
 
   // --- Header actions ---
@@ -219,11 +208,6 @@
 
   // --- Spine tags ---
 
-  function toggleNodeTag(node: LayerNode, tag: SpineTag) {
-    node.name = toggleTag(node.name, tag);
-    bumpLayerVersion();
-  }
-
   // Every row toggle gets a real 20px box: these were bare 12-14px icons, the smallest targets in
   // an iPad-first app.
   const rowBtn =
@@ -266,69 +250,15 @@
   {/if}
 {/snippet}
 
-{#snippet tagRow(node: LayerNode)}
-  {#each parseTags(node.name).tags as t (t)}
-    <button
-      class="shrink-0 cursor-pointer rounded border border-border bg-surface-raised px-1 font-mono text-[9px] leading-[11px] text-text-secondary hover:bg-surface-hover"
-      title="[{t}] — click to remove"
-      onclick={(e) => {
-        e.stopPropagation();
-        toggleNodeTag(node, t);
-      }}>{t}</button
-    >
-  {/each}
-  <div class="relative flex shrink-0 items-center" use:clickOutside={() => (tagPopoverFor = null)}>
-    <button
-      class="{rowBtn} flex items-center opacity-50 hover:opacity-100"
-      title="Spine tags"
-      onclick={(e) => {
-        e.stopPropagation();
-        tagPopoverFor = tagPopoverFor === node.id ? null : node.id;
-      }}
-    >
-      <Tag size={14} />
-    </button>
-    {#if tagPopoverFor === node.id}
-      <div
-        class="absolute top-full left-0 z-50 mt-1 flex min-w-[200px] flex-col gap-0.5 rounded-md border border-border bg-surface p-1 text-xs shadow-lg"
-      >
-        {#each tagsForNodeType(node.type) as t (t)}
-          {@const tags = parseTags(node.name).tags}
-          {@const conflict = tagConflictReason(t, tags)}
-          <button
-            class="flex items-center gap-2 rounded px-2 py-1 text-left {conflict
-              ? 'cursor-not-allowed text-text-muted opacity-50'
-              : 'cursor-pointer text-text-secondary hover:bg-surface-hover'}"
-            disabled={!!conflict}
-            title={conflict ?? TAG_DESCRIPTIONS[t]}
-            onclick={(e) => {
-              e.stopPropagation();
-              toggleNodeTag(node, t);
-            }}
-          >
-            <span
-              class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-border text-[9px] {tags.includes(
-                t,
-              )
-                ? 'ui-on'
-                : ''}">{tags.includes(t) ? "✓" : ""}</span
-            >
-            <span class="flex-1 font-mono text-text">[{t}]</span>
-            <span class="truncate text-[10px] text-text-muted"
-              >{conflict ?? TAG_DESCRIPTIONS[t]}</span
-            >
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-{/snippet}
-
 {#snippet layerRow(layer: AppLayer, nested: boolean)}
+  <!-- ONE line. Left is identity (grip, thumbnail, name); right is state you scan ACROSS rows in
+       fixed 20px columns — lock, alpha lock, eye — so they line up whatever the nesting. The
+       per-layer CONTROLS (opacity, tags) live in the properties strip above the list, so a row
+       never grows when selected and the row under the Pencil never moves. -->
   <div
     class="layer-item {nested
       ? 'group-rail'
-      : ''} flex cursor-pointer flex-col gap-0.5 border-b border-border-light px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-hover {layer.id ===
+      : ''} flex min-w-0 cursor-pointer items-center gap-1.5 border-b border-border-light px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-hover {layer.id ===
     layers.activeId
       ? 'ui-selected'
       : ''}"
@@ -340,72 +270,50 @@
     }}
     role="presentation"
   >
-    <div class="flex min-w-0 items-center gap-1.5">
-      <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
-        ><GripVertical size={14} /></span
-      >
-      <button
-        class="{rowBtn} {layer.visible ? 'opacity-60 hover:opacity-100' : 'text-warn opacity-100'}"
-        title={layer.visible ? "Hide layer" : "Show layer"}
-        onclick={(e) => {
-          e.stopPropagation();
-          layers.toggleVisibility(layer.id);
-          bumpLayerVersion();
-        }}
-      >
-        {#if layer.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
-      </button>
-      <canvas
-        class="thumb-checkerboard h-7 w-7 shrink-0 rounded-sm border border-border"
-        style="image-rendering: pixelated"
-        width="28"
-        height="28"
-        use:thumbnail={layer}
-      ></canvas>
-      {@render nameCell(layer)}
-      <!-- Fixed columns: after a variable-length tag list these landed at a different x on every
-           row. Locked/alpha-locked use `warn` — state that explains why an edit won't land. -->
-      <button
-        class="{rowBtn} {layer.locked ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
-        title={layer.locked ? "Unlock layer" : "Lock layer (no drawing)"}
-        onclick={(e) => {
-          e.stopPropagation();
-          layer.locked = !layer.locked;
-          bumpLayerVersion();
-        }}
-      >
-        {#if layer.locked}<Lock size={14} />{:else}<LockOpen size={14} />{/if}
-      </button>
-      <button
-        class="{rowBtn} {layer.alphaLock ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
-        title="Alpha lock — paint only where this layer already has pixels"
-        onclick={(e) => {
-          e.stopPropagation();
-          layer.alphaLock = !layer.alphaLock;
-          bumpLayerVersion();
-        }}
-      >
-        <Blend size={14} />
-      </button>
-    </div>
-
-    <div class="flex min-w-0 items-center gap-1.5 pl-9 leading-none">
-      {@render tagRow(layer)}
-      <input
-        type="range"
-        class="h-3 min-w-0 flex-1"
-        title="Opacity"
-        min="0"
-        max="100"
-        style={sliderFill(layer.opacity, 0, 100)}
-        value={layer.opacity}
-        oninput={(e) => {
-          e.stopPropagation();
-          layers.setOpacity(layer.id, Number(e.currentTarget.value));
-        }}
-        onclick={(e) => e.stopPropagation()}
-      />
-    </div>
+    <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
+      ><GripVertical size={14} /></span
+    >
+    <canvas
+      class="thumb-checkerboard h-7 w-7 shrink-0 rounded-sm border border-border"
+      style="image-rendering: pixelated"
+      width="28"
+      height="28"
+      use:thumbnail={layer}
+    ></canvas>
+    {@render nameCell(layer)}
+    <button
+      class="{rowBtn} {layer.locked ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
+      title={layer.locked ? "Unlock layer" : "Lock layer (no drawing)"}
+      onclick={(e) => {
+        e.stopPropagation();
+        layer.locked = !layer.locked;
+        bumpLayerVersion();
+      }}
+    >
+      {#if layer.locked}<Lock size={14} />{:else}<LockOpen size={14} />{/if}
+    </button>
+    <button
+      class="{rowBtn} {layer.alphaLock ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
+      title="Alpha lock — paint only where this layer already has pixels"
+      onclick={(e) => {
+        e.stopPropagation();
+        layer.alphaLock = !layer.alphaLock;
+        bumpLayerVersion();
+      }}
+    >
+      <Blend size={14} />
+    </button>
+    <button
+      class="{rowBtn} {layer.visible ? 'opacity-60 hover:opacity-100' : 'text-warn opacity-100'}"
+      title={layer.visible ? "Hide layer" : "Show layer"}
+      onclick={(e) => {
+        e.stopPropagation();
+        layers.toggleVisibility(layer.id);
+        bumpLayerVersion();
+      }}
+    >
+      {#if layer.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+    </button>
   </div>
 {/snippet}
 
@@ -415,7 +323,7 @@
     data-node-id={group.id}
   >
     <div
-      class="flex cursor-default flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
+      class="flex min-w-0 cursor-default items-center gap-1 px-1.5 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
       layers.activeId
         ? 'ui-selected'
         : 'bg-group-bg hover:bg-group-hover'}"
@@ -426,55 +334,32 @@
       }}
       role="presentation"
     >
-      <div class="flex min-w-0 items-center gap-1">
-        <span
-          class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
-          ><GripVertical size={14} /></span
-        >
-        <button
-          class="{rowBtn} text-text-muted"
-          title={group.collapsed ? "Expand group" : "Collapse group"}
-          onclick={(e) => {
-            e.stopPropagation();
-            group.collapsed = !group.collapsed;
-            bumpLayerVersion();
-          }}
-        >
-          {#if group.collapsed}<ChevronRight size={12} />{:else}<ChevronDown size={12} />{/if}
-        </button>
-        <button
-          class="{rowBtn} {group.visible
-            ? 'opacity-60 hover:opacity-100'
-            : 'text-warn opacity-100'}"
-          title={group.visible ? "Hide group" : "Show group"}
-          onclick={(e) => {
-            e.stopPropagation();
-            layers.toggleVisibility(group.id);
-            bumpLayerVersion();
-          }}
-        >
-          {#if group.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
-        </button>
-        {@render nameCell(group)}
-      </div>
-
-      <div class="flex min-w-0 items-center gap-1.5 pl-7 leading-none">
-        {@render tagRow(group)}
-        <input
-          type="range"
-          class="h-3 min-w-0 flex-1"
-          title="Group opacity"
-          min="0"
-          max="100"
-          style={sliderFill(group.opacity, 0, 100)}
-          value={group.opacity}
-          oninput={(e) => {
-            e.stopPropagation();
-            layers.setOpacity(group.id, Number(e.currentTarget.value));
-          }}
-          onclick={(e) => e.stopPropagation()}
-        />
-      </div>
+      <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
+        ><GripVertical size={14} /></span
+      >
+      <button
+        class="{rowBtn} text-text-muted"
+        title={group.collapsed ? "Expand group" : "Collapse group"}
+        onclick={(e) => {
+          e.stopPropagation();
+          group.collapsed = !group.collapsed;
+          bumpLayerVersion();
+        }}
+      >
+        {#if group.collapsed}<ChevronRight size={12} />{:else}<ChevronDown size={12} />{/if}
+      </button>
+      {@render nameCell(group)}
+      <button
+        class="{rowBtn} {group.visible ? 'opacity-60 hover:opacity-100' : 'text-warn opacity-100'}"
+        title={group.visible ? "Hide group" : "Show group"}
+        onclick={(e) => {
+          e.stopPropagation();
+          layers.toggleVisibility(group.id);
+          bumpLayerVersion();
+        }}
+      >
+        {#if group.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+      </button>
     </div>
 
     <!-- Always rendered (hidden when collapsed) so rows can still be dropped into a collapsed
@@ -545,6 +430,8 @@
       </button>
     </div>
   </div>
+
+  <LayerProps {layers} onSettingsChange={() => bumpLayerVersion()} />
 
   <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
   {#key `${version}:${dragNonce}`}
