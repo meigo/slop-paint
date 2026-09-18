@@ -15,7 +15,7 @@
     GripVertical,
   } from "@lucide/svelte";
   import { app, bumpLayerVersion } from "../appState.svelte.js";
-  import { pushNameEdit, structuralEdit } from "../undo";
+  import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
   import LayerProps from "./LayerProps.svelte";
@@ -289,6 +289,7 @@
       onclick={(e) => {
         e.stopPropagation();
         layer.locked = !layer.locked;
+        pushNodeFieldEdit(layers, layer.id, "locked", !layer.locked, layer.locked);
         bumpLayerVersion();
       }}
     >
@@ -300,6 +301,7 @@
       onclick={(e) => {
         e.stopPropagation();
         layer.alphaLock = !layer.alphaLock;
+        pushNodeFieldEdit(layers, layer.id, "alphaLock", !layer.alphaLock, layer.alphaLock);
         bumpLayerVersion();
       }}
     >
@@ -311,6 +313,7 @@
       onclick={(e) => {
         e.stopPropagation();
         layers.toggleVisibility(layer.id);
+        pushNodeFieldEdit(layers, layer.id, "visible", !layer.visible, layer.visible);
         bumpLayerVersion();
       }}
     >
@@ -357,6 +360,7 @@
         onclick={(e) => {
           e.stopPropagation();
           layers.toggleVisibility(group.id);
+          pushNodeFieldEdit(layers, group.id, "visible", !group.visible, group.visible);
           bumpLayerVersion();
         }}
       >

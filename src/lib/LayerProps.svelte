@@ -7,7 +7,7 @@
   import { app, bumpLayerVersion } from "../appState.svelte.js";
   import type { LayerManager, LayerNode } from "../layers";
   import { clickOutside } from "./click-outside";
-  import { pushNameEdit } from "../undo";
+  import { pushNameEdit, pushNodeFieldEdit } from "../undo";
   import { sliderFill } from "./slider-fill";
   import {
     parseTags,
@@ -46,10 +46,22 @@
 
   let tagsOpen = $state(false);
 
-  function setOpacity(value: number) {
+  // A drag is ONE undo step: opened on the first `input`, closed on `change` (fired at release)
+  // or when focus leaves. Without this every pixel of slider travel would be its own step.
+  let opacityStart: number | null = null;
+
+  function onOpacityInput(value: number) {
     if (!target) return;
+    if (opacityStart === null) opacityStart = target.opacity;
     layers.setOpacity(target.id, value);
     onSettingsChange();
+  }
+
+  function commitOpacity() {
+    if (opacityStart === null || !target) return;
+    const before = opacityStart;
+    opacityStart = null;
+    pushNodeFieldEdit(layers, target.id, "opacity", before, target.opacity);
   }
 
   function toggleNodeTag(tag: SpineTag) {
@@ -76,7 +88,10 @@
         max="100"
         style={sliderFill(opacity, 0, 100)}
         value={opacity}
-        oninput={(e) => setOpacity(Number(e.currentTarget.value))}
+        oninput={(e) => onOpacityInput(Number(e.currentTarget.value))}
+        onchange={commitOpacity}
+        onpointerup={commitOpacity}
+        onblur={commitOpacity}
       />
       <span class="w-8 shrink-0 text-right text-text-muted">{opacity}%</span>
     </div>

@@ -80,3 +80,30 @@ export function pushNameEdit(layers: LayerManager, id: number, before: string, a
   };
   history.push({ undo: () => apply(before), redo: () => apply(after) });
 }
+
+/** Fields of a layer/group that undo one value at a time (not pixels, not the tree's shape). */
+export type NodeField = "visible" | "opacity" | "locked" | "alphaLock";
+
+/**
+ * Record a single-field change (visibility, opacity, lock, alpha lock). Resolved by id at apply
+ * time for the same reason as `pushNameEdit`.
+ *
+ * A slider drag must call this ONCE, with the value from before the drag started — see
+ * LayerProps, which opens the step on the first `input` and closes it on `change`/release.
+ */
+export function pushNodeFieldEdit(
+  layers: LayerManager,
+  id: number,
+  field: NodeField,
+  before: boolean | number,
+  after: boolean | number,
+) {
+  if (before === after) return;
+  const apply = (value: boolean | number) => {
+    const node = layers.findNode(id);
+    // `locked`/`alphaLock` only exist on layers; a group never records them.
+    if (node) (node as unknown as Record<NodeField, boolean | number>)[field] = value;
+    onHistoryApplied();
+  };
+  history.push({ undo: () => apply(before), redo: () => apply(after) });
+}
