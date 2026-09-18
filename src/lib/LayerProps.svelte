@@ -26,10 +26,21 @@
     onSettingsChange: () => void;
   } = $props();
 
-  // The layer tree is imperative; layerVersion is what re-derives this.
+  // The layer tree is imperative, so layerVersion is what re-derives all of this. The node's
+  // FIELDS need their own deriveds: editing opacity leaves the node object identical, so a template
+  // reading `target.opacity` would never re-run — the strip showed a stale value while the canvas
+  // already had the new one.
   const target = $derived.by<LayerNode | null>(() => {
     void app.layerVersion;
     return layers.findNode(layers.activeId);
+  });
+  const opacity = $derived.by(() => {
+    void app.layerVersion;
+    return target?.opacity ?? 100;
+  });
+  const tags = $derived.by(() => {
+    void app.layerVersion;
+    return target ? parseTags(target.name).tags : [];
   });
 
   let tagsOpen = $state(false);
@@ -52,7 +63,6 @@
   class="flex min-h-[3.25rem] flex-col justify-center gap-1 border-b border-border bg-surface px-2.5 py-1.5"
 >
   {#if target}
-    {@const tags = parseTags(target.name).tags}
     <div class="flex items-center gap-2 text-[11px] text-text-secondary">
       <span class="w-12 shrink-0 text-text-muted">Opacity</span>
       <input
@@ -61,11 +71,11 @@
         title="Opacity of the selected {target.type}"
         min="0"
         max="100"
-        style={sliderFill(target.opacity, 0, 100)}
-        value={target.opacity}
+        style={sliderFill(opacity, 0, 100)}
+        value={opacity}
         oninput={(e) => setOpacity(Number(e.currentTarget.value))}
       />
-      <span class="w-8 shrink-0 text-right text-text-muted">{target.opacity}%</span>
+      <span class="w-8 shrink-0 text-right text-text-muted">{opacity}%</span>
     </div>
 
     <div class="flex items-center gap-1.5">
