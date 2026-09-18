@@ -7,6 +7,7 @@
   import { app, bumpLayerVersion } from "../appState.svelte.js";
   import type { LayerManager, LayerNode } from "../layers";
   import { clickOutside } from "./click-outside";
+  import { pushNameEdit } from "../undo";
   import { sliderFill } from "./slider-fill";
   import {
     parseTags,
@@ -53,7 +54,9 @@
 
   function toggleNodeTag(tag: SpineTag) {
     if (!target) return;
+    const before = target.name;
     target.name = toggleTag(target.name, tag);
+    pushNameEdit(layers, target.id, before, target.name); // tags live in the name
     bumpLayerVersion();
   }
 </script>

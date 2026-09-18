@@ -151,8 +151,9 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Undo
 
-- One stack for the document: strokes, fills, clears, selection commits and structural edits (add, delete, duplicate, merge down, group, drag-reorder) undo in the order they were made, on whichever layer they touched
-- NOT undoable: rename, visibility, opacity, lock and alpha-lock toggles (a structural snapshot holds layers by reference, so their own fields aren't part of it)
+- One stack for the document: strokes, fills, clears, selection commits, structural edits (add, delete, duplicate, merge down, group, drag-reorder) and name edits (rename, Spine tags — tags live in the name) undo in the order they were made, on whichever layer they touched
+- NOT undoable: visibility, opacity, lock and alpha-lock toggles (a structural snapshot holds layers by reference, so those fields aren't part of it)
+- `pushNameEdit` looks its node up by id at apply time: `restoreStructure` rebuilds group nodes as fresh clones, so a captured group object can be detached by an unrelated structural undo
 - The stack is cleared by New, Open, autosave restore and canvas resize (its snapshots are the old canvas size)
 - Budget: 50 steps or 256 MB of pixel snapshots, whichever comes first
 

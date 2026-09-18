@@ -63,3 +63,20 @@ export function structuralEdit<T>(
   });
   return result;
 }
+
+/**
+ * Record a name change (rename, or a Spine tag toggle — tags live in the name).
+ *
+ * Looks the node up by id at apply time rather than holding it: `restoreStructure` rebuilds group
+ * nodes as fresh clones, so a captured group object can be detached by an unrelated structural
+ * undo, and writing to it would change nothing the user can see.
+ */
+export function pushNameEdit(layers: LayerManager, id: number, before: string, after: string) {
+  if (before === after) return;
+  const apply = (name: string) => {
+    const node = layers.findNode(id);
+    if (node) node.name = name;
+    onHistoryApplied();
+  };
+  history.push({ undo: () => apply(before), redo: () => apply(after) });
+}

@@ -15,7 +15,7 @@
     GripVertical,
   } from "@lucide/svelte";
   import { app, bumpLayerVersion } from "../appState.svelte.js";
-  import { structuralEdit } from "../undo";
+  import { pushNameEdit, structuralEdit } from "../undo";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
   import LayerProps from "./LayerProps.svelte";
@@ -183,7 +183,9 @@
   function commitEdit(node: LayerNode) {
     const base = draft.trim();
     if (base) {
+      const before = node.name;
       node.name = buildName(base, parseTags(node.name).tags);
+      pushNameEdit(layers, node.id, before, node.name);
       bumpLayerVersion();
     }
     editingId = null;
