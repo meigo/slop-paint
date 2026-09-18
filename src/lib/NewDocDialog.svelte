@@ -39,23 +39,28 @@
     onConfirm(w, h);
   }
 
-  function handleKeydown(e: KeyboardEvent) {
+  function onWindowKey(e: KeyboardEvent) {
+    if (!open) return;
     if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
       confirm();
-    }
-    if (e.key === "Escape") {
+    } else if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       onCancel();
     }
   }
 </script>
 
+<!-- On the window, not the backdrop: the backdrop never has focus, so its keydown never fired.
+     Guarded by `open` so a closed dialog doesn't swallow the app's shortcuts. -->
+<svelte:window onkeydown={onWindowKey} />
+
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-    onkeydown={handleKeydown}
     onpointerdown={(e: PointerEvent) => {
       if (e.target === e.currentTarget) onCancel();
     }}
@@ -72,7 +77,9 @@
             max="8192"
             bind:value={width}
             class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
-            onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
+            onkeydown={(e: KeyboardEvent) => {
+              if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
+            }}
           />
           <span class="text-text-muted">px</span>
         </label>
@@ -84,7 +91,9 @@
             max="8192"
             bind:value={height}
             class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
-            onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
+            onkeydown={(e: KeyboardEvent) => {
+              if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
+            }}
           />
           <span class="text-text-muted">px</span>
         </label>
@@ -100,14 +109,17 @@
           {#each presets as preset}
             <button
               class="rounded border border-border px-2 py-1 text-[10px] text-text-secondary transition-colors hover:bg-surface-hover
-                     {width === preset.w && height === preset.h
-                ? 'border-accent bg-accent text-accent-text'
-                : 'bg-surface'}"
+                     {width === preset.w && height === preset.h ? 'ui-on' : 'bg-surface'}"
               onclick={() => applyPreset(preset)}>{preset.label}</button
             >
           {/each}
         </div>
       </div>
+
+      <p class="text-[11px] text-warn">
+        Replaces the current drawing, its undo history and the autosaved copy. Save first (File ▸
+        Save project) to keep it.
+      </p>
 
       <div class="flex justify-end gap-2 pt-1">
         <button

@@ -837,6 +837,8 @@
   // --- Keyboard shortcuts ---
   function handleKeyDown(e: KeyboardEvent) {
     if (selection) selection.shiftHeld = e.shiftKey;
+    // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
+    if (showNewDocDialog || showResizeDialog || shareFileReady) return;
     if (
       (e.target as HTMLElement).tagName === "INPUT" ||
       (e.target as HTMLElement).tagName === "SELECT"
@@ -1162,6 +1164,24 @@
     }
   }
 
+  // Mirrors of imperative state, so buttons can dim when they would do nothing.
+  const undoAvailable = $derived.by(() => {
+    void app.historyVersion;
+    return history.canUndo;
+  });
+  const redoAvailable = $derived.by(() => {
+    void app.historyVersion;
+    return history.canRedo;
+  });
+  const selectionActive = $derived.by(() => {
+    void app.selectionVersion;
+    return selection?.state === "selected";
+  });
+  const clipboardFull = $derived.by(() => {
+    void app.layerVersion; // re-read after any edit; copying bumps nothing else
+    return pixelClipboard !== null;
+  });
+
   // --- Clipboard ---
   // Pixels at the layer's physical resolution, plus where they were copied from (doc units).
   let pixelClipboard: { canvas: HTMLCanvasElement; rect: SelectionRect } | null = null;
@@ -1296,6 +1316,8 @@
     selection = new Selection(selectionOverlayEl);
 
     // Undo/redo repaint: commands change pixels or the tree, then this refreshes the view.
+    history.onChange = () => app.historyVersion++;
+
     setOnHistoryApplied(() => {
       layers.composite();
       bumpLayerVersion();
@@ -1491,6 +1513,10 @@
       {redo}
       {clearLayer}
       fillEnclosed={fillAllEnclosed}
+      canUndo={undoAvailable}
+      canRedo={redoAvailable}
+      hasSelection={selectionActive}
+      hasClipboard={clipboardFull}
       copy={copySelection}
       cut={cutSelection}
       paste={() => void pasteFromMenu()}

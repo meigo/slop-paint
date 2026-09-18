@@ -25,6 +25,8 @@ interface AppStateShape {
   keepProportions: boolean;
   /** Fill enclosed: bridge outline breaks of about 2×this px (0..MAX_GAP). */
   fillEnclosedGap: number;
+  /** Bumped by the undo stack so canUndo/canRedo can drive the UI (a class getter is not reactive). */
+  historyVersion: number;
   /** Layer panel width in px (drag its left edge). */
   layerPanelWidth: number;
   /** Transient message for the status bar (see flashStatus). */
@@ -63,6 +65,7 @@ export const app: AppStateShape = $state({
   docHeight: 1080,
   keepProportions: true,
   fillEnclosedGap: 0,
+  historyVersion: 0,
   layerPanelWidth: DEFAULT_PANEL_WIDTH,
   statusMessage: "",
   statusHint: "",

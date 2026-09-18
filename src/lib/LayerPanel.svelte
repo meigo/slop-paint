@@ -4,7 +4,7 @@
     FolderPlus,
     Copy,
     ArrowDownToLine,
-    Minus,
+    Trash2,
     Eye,
     EyeOff,
     Lock,
@@ -224,7 +224,10 @@
     bumpLayerVersion();
   }
 
-  const rowBtn = "shrink-0 cursor-pointer text-text-secondary transition-opacity";
+  // Every row toggle gets a real 20px box: these were bare 12-14px icons, the smallest targets in
+  // an iPad-first app.
+  const rowBtn =
+    "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary transition-opacity";
   const headerBtn =
     "flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover";
 </script>
@@ -266,7 +269,7 @@
 {#snippet tagRow(node: LayerNode)}
   {#each parseTags(node.name).tags as t (t)}
     <button
-      class="shrink-0 cursor-pointer rounded border border-accent bg-accent px-1 font-mono text-[9px] leading-[11px] text-accent-text hover:opacity-70"
+      class="shrink-0 cursor-pointer rounded border border-border bg-surface-raised px-1 font-mono text-[9px] leading-[11px] text-text-secondary hover:bg-surface-hover"
       title="[{t}] — click to remove"
       onclick={(e) => {
         e.stopPropagation();
@@ -307,7 +310,7 @@
               class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-border text-[9px] {tags.includes(
                 t,
               )
-                ? 'border-accent bg-accent text-accent-text'
+                ? 'ui-on'
                 : ''}">{tags.includes(t) ? "✓" : ""}</span
             >
             <span class="flex-1 font-mono text-text">[{t}]</span>
@@ -321,9 +324,11 @@
   </div>
 {/snippet}
 
-{#snippet layerRow(layer: AppLayer)}
+{#snippet layerRow(layer: AppLayer, nested: boolean)}
   <div
-    class="layer-item flex cursor-pointer flex-col gap-0.5 border-b border-border-light px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-hover {layer.id ===
+    class="layer-item {nested
+      ? 'group-rail'
+      : ''} flex cursor-pointer flex-col gap-0.5 border-b border-border-light px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-hover {layer.id ===
     layers.activeId
       ? 'ui-selected'
       : ''}"
@@ -340,7 +345,7 @@
         ><GripVertical size={14} /></span
       >
       <button
-        class="{rowBtn} opacity-60 hover:opacity-100"
+        class="{rowBtn} {layer.visible ? 'opacity-60 hover:opacity-100' : 'text-warn opacity-100'}"
         title={layer.visible ? "Hide layer" : "Show layer"}
         onclick={(e) => {
           e.stopPropagation();
@@ -358,12 +363,10 @@
         use:thumbnail={layer}
       ></canvas>
       {@render nameCell(layer)}
-    </div>
-
-    <div class="flex min-w-0 items-center gap-1.5 pl-9 leading-none">
-      {@render tagRow(layer)}
+      <!-- Fixed columns: after a variable-length tag list these landed at a different x on every
+           row. Locked/alpha-locked use `warn` — state that explains why an edit won't land. -->
       <button
-        class="{rowBtn} {layer.locked ? 'opacity-100' : 'opacity-30 hover:opacity-60'}"
+        class="{rowBtn} {layer.locked ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
         title={layer.locked ? "Unlock layer" : "Lock layer (no drawing)"}
         onclick={(e) => {
           e.stopPropagation();
@@ -371,10 +374,10 @@
           bumpLayerVersion();
         }}
       >
-        {#if layer.locked}<Lock size={12} />{:else}<LockOpen size={12} />{/if}
+        {#if layer.locked}<Lock size={14} />{:else}<LockOpen size={14} />{/if}
       </button>
       <button
-        class="{rowBtn} {layer.alphaLock ? 'opacity-100' : 'opacity-30 hover:opacity-60'}"
+        class="{rowBtn} {layer.alphaLock ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
         title="Alpha lock — paint only where this layer already has pixels"
         onclick={(e) => {
           e.stopPropagation();
@@ -382,8 +385,12 @@
           bumpLayerVersion();
         }}
       >
-        <Blend size={12} />
+        <Blend size={14} />
       </button>
+    </div>
+
+    <div class="flex min-w-0 items-center gap-1.5 pl-9 leading-none">
+      {@render tagRow(layer)}
       <input
         type="range"
         class="h-3 min-w-0 flex-1"
@@ -402,8 +409,11 @@
   </div>
 {/snippet}
 
-{#snippet groupRow(group: LayerGroup)}
-  <div class="layer-group border-b border-border" data-node-id={group.id}>
+{#snippet groupRow(group: LayerGroup, nested: boolean)}
+  <div
+    class="layer-group {nested ? 'group-rail' : ''} border-b border-border"
+    data-node-id={group.id}
+  >
     <div
       class="flex cursor-default flex-col gap-0.5 px-1.5 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
       layers.activeId
@@ -433,7 +443,9 @@
           {#if group.collapsed}<ChevronRight size={12} />{:else}<ChevronDown size={12} />{/if}
         </button>
         <button
-          class="{rowBtn} opacity-60 hover:opacity-100"
+          class="{rowBtn} {group.visible
+            ? 'opacity-60 hover:opacity-100'
+            : 'text-warn opacity-100'}"
           title={group.visible ? "Hide group" : "Show group"}
           onclick={(e) => {
             e.stopPropagation();
@@ -468,22 +480,22 @@
     <!-- Always rendered (hidden when collapsed) so rows can still be dropped into a collapsed
          group's container and the DOM walk keeps seeing its members. -->
     <div
-      class="layer-group-children mt-0 ml-1 min-h-1 border-l border-border pl-2"
+      class="layer-group-children mt-0 ml-1 min-h-1 pl-2"
       style:display={group.collapsed ? "none" : "block"}
       use:sortable
     >
-      {@render nodeList(group.children)}
+      {@render nodeList(group.children, true)}
     </div>
   </div>
 {/snippet}
 
-{#snippet nodeList(nodes: LayerNode[])}
+{#snippet nodeList(nodes: LayerNode[], nested = false)}
   <!-- Top of the list is the top of the stack: render the array in reverse. -->
   {#each [...nodes].reverse() as node (node.id)}
     {#if node.type === "group"}
-      {@render groupRow(node)}
+      {@render groupRow(node, nested)}
     {:else}
-      {@render layerRow(node)}
+      {@render layerRow(node, nested)}
     {/if}
   {/each}
 {/snippet}
@@ -525,8 +537,11 @@
       <button class={headerBtn} onclick={mergeDown} title="Merge down onto the layer below">
         <ArrowDownToLine size={14} />
       </button>
+      <!-- Destructive action separated from the ones next to it, so a mis-tap on Merge can't
+           delete (SLOP-TIMELINE-UI.md §4). -->
+      <div class="mx-1 h-5 w-px self-center bg-border"></div>
       <button class={headerBtn} onclick={removeNode} title="Delete layer or group">
-        <Minus size={14} />
+        <Trash2 size={14} />
       </button>
     </div>
   </div>

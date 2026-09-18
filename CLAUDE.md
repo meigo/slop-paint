@@ -48,6 +48,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
 - `lib/SelectionActions.svelte` — floating panel over the selection: Free transform, Distort, Mesh, Flip H/V, keep proportions, Apply, Cancel. Buttons keep their positions when a plain selection is lifted (the panel is centred, so appearing/disappearing buttons would slide under the pen); Apply/Cancel are shown dimmed until there is a float
 - `lib/LayerPanel.svelte` — layer tree in Svelte markup: recursive snippets, Lucide icons, thumbnails via a canvas action, inline rename on double-click AND double-tap (`lib/double-tap.ts`; iPad doesn't fire dblclick reliably), Spine tag popover. Every control carries a `title`, which is also what the status bar shows on touch
+- Row layout: identity on line 1 (grip, eye, thumbnail, name, then lock and alpha-lock in fixed 20px columns at the right so they line up on every row); tags and opacity on line 2. Nested rows carry `.group-rail`, a background-image rail that the selected-row bar paints over (a border on the container drew a second line)
 - The panel is resizable by dragging its left edge (`panel-layout.ts`: min 184px, max half the viewport); the width is saved with the other settings
 - The list is rebuilt by `{#key version:dragNonce}` — the layer tree is imperative, so a `layerVersion` bump is what re-renders it. After a SortableJS drop: read the order back from the DOM, remove the node SortableJS relocated (a bottom drop lands past the `{#each}` anchor and would survive as a duplicate), then bump `dragNonce` to rebuild from state. A drop can fire `onEnd` twice (cross-list), so a latch runs the rebuild once
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
@@ -85,6 +86,11 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ### Styling
 
 - Tailwind CSS v4 with `@theme` for custom color tokens
+- Focus rings: `:focus-visible` gets a 2px accent outline (offset 1); `:focus:not(:focus-visible)` clears it, so a ring only appears for keyboard use. Never remove one outright
+- `--color-warn` (#d5b75d) means "here is why this won't behave as you expect": a locked or hidden layer, a warning in a dialog. Not for emphasis
+- Controls in a bar share ONE height (36px here — bigger than the family's 24px, for touch). The size presets are the documented exception at 24px
+- Radii: 6px controls, 8px panels/popovers/dialogs. Inputs sit on `surface-raised`, never on the same colour as the bar behind them
+- On-states use `.ui-on`; don't hand-roll `bg-accent text-accent-text`. `accent` means selection/active only — not document metadata like Spine tags
 - Dark only, on the shared slop palette (`../SLOP-TIMELINE-UI.md`, same hexes as slop-animator): zinc chrome (`surface`, `border`, `text`, `canvas-bg`), blue `accent` (#5b8cff) with near-black `accent-text`
 - On-states: `.ui-on` for an active tool/toggle (accent fill), `.ui-selected` for the current layer/group row (10% accent tint + 2px left edge). Use these instead of `class:bg-accent` directives — layered utilities lose to emit order
 - `#app` is `position: fixed` with `100dvh` height so iPad touch drags can't pan the page
@@ -150,6 +156,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Status Bar
 
+- Actions that can't act are dimmed with `aria-disabled` + a title saying why, never `disabled` (a disabled button dispatches no pointer events, so the status bar's hint could never read its title — and on iPad the hint is the only explanation)
 - Fixed height, `px-5` so text clears an iPad's rounded window corners. Right side: the active tool
 - Left side, in priority order: an explicit message (`flashStatus`, e.g. why an action did nothing), then `statusHint` — the `title` of the control under the pointer — then the selection/transform context
 - The hint is written on `pointerover` AND `pointerdown` (capture) in App.svelte, since iPad has no hover: touching a control explains it. A `pointerover` resolving to the same element is ignored, or pointer capture's boundary events would clear a message the press just wrote
@@ -163,6 +170,9 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Inside a selection or on an alpha-locked layer, the fill runs on a temp copy and is composited back (`copy` / `source-atop`); a fill that changes no pixels pushes no undo step
 
 ## New Document
+
+- The dialog warns (in `warn`) that it replaces the drawing, its undo history and the autosaved copy
+- Dialogs handle Enter/Escape on `window` (a backdrop never has focus, so a keydown there never fires), and App.svelte ignores app shortcuts while one is open
 
 - Creates a white-filled "Background" layer at the bottom and an empty "Layer 1" on top
 

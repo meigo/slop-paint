@@ -25,6 +25,10 @@
     redo,
     clearLayer,
     fillEnclosed,
+    canUndo,
+    canRedo,
+    hasSelection,
+    hasClipboard,
     copy,
     cut,
     paste,
@@ -45,6 +49,11 @@
     redo: () => void;
     clearLayer: () => void;
     fillEnclosed: () => void;
+    canUndo: boolean;
+    canRedo: boolean;
+    /** A plain marquee exists, so copy/cut/delete can act. */
+    hasSelection: boolean;
+    hasClipboard: boolean;
     copy: () => void;
     cut: () => void;
     paste: () => void;
@@ -159,6 +168,8 @@
   const menuItem =
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
+  const dimmable =
+    "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";
   const rowCls = "flex items-center gap-2 text-xs text-text-secondary";
   const labelCls = "w-20 shrink-0";
   const valueCls = "w-10 shrink-0 text-right text-[11px] text-text-muted";
@@ -184,9 +195,23 @@
 
   <div class="mx-2 h-6 w-px shrink-0 bg-border"></div>
 
-  <button class={iconBtnClass} onclick={undo} title="Undo (Ctrl+Z)"><Undo2 size={20} /></button>
-  <button class={iconBtnClass} onclick={redo} title="Redo (Ctrl+Shift+Z)"
-    ><Redo2 size={20} /></button
+  <!-- aria-disabled, not `disabled`: a disabled button dispatches no pointer events, so the status
+       bar's hint could never read its title — and on iPad the hint is the only explanation. -->
+  <button
+    class="{iconBtnClass} {dimmable}"
+    aria-disabled={!canUndo}
+    title={canUndo ? "Undo (Ctrl+Z)" : "Undo — nothing to undo"}
+    onclick={() => {
+      if (canUndo) undo();
+    }}><Undo2 size={20} /></button
+  >
+  <button
+    class="{iconBtnClass} {dimmable}"
+    aria-disabled={!canRedo}
+    title={canRedo ? "Redo (Ctrl+Shift+Z)" : "Redo — nothing to redo"}
+    onclick={() => {
+      if (canRedo) redo();
+    }}><Redo2 size={20} /></button
   >
 
   <div class="mx-2 h-6 w-px shrink-0 bg-border"></div>
@@ -247,34 +272,42 @@
     <ToolbarMenu label="Edit">
       {#snippet children(close)}
         <button
-          class={menuItem}
+          class="{menuItem} {dimmable}"
           role="menuitem"
+          aria-disabled={!hasSelection}
+          title={hasSelection ? "" : "Cut — nothing selected"}
           onclick={() => {
-            cut();
+            if (hasSelection) cut();
             close();
           }}>Cut <span class={kbd}>Ctrl+X</span></button
         >
         <button
-          class={menuItem}
+          class="{menuItem} {dimmable}"
           role="menuitem"
+          aria-disabled={!hasSelection}
+          title={hasSelection ? "" : "Copy — nothing selected"}
           onclick={() => {
-            copy();
+            if (hasSelection) copy();
             close();
           }}>Copy <span class={kbd}>Ctrl+C</span></button
         >
         <button
-          class={menuItem}
+          class="{menuItem} {dimmable}"
           role="menuitem"
+          aria-disabled={!hasClipboard}
+          title={hasClipboard ? "" : "Paste — nothing copied yet"}
           onclick={() => {
-            paste();
+            if (hasClipboard) paste();
             close();
           }}>Paste <span class={kbd}>Ctrl+V</span></button
         >
         <button
-          class={menuItem}
+          class="{menuItem} {dimmable}"
           role="menuitem"
+          aria-disabled={!hasSelection}
+          title={hasSelection ? "" : "Delete — nothing selected"}
           onclick={() => {
-            deleteSelection();
+            if (hasSelection) deleteSelection();
             close();
           }}>Delete selection <span class={kbd}>Del</span></button
         >
@@ -344,7 +377,7 @@
     <div class="flex items-center gap-1">
       <select
         id="brush-type"
-        class="h-[30px] cursor-pointer rounded-md border border-border bg-surface px-1.5 text-xs text-text-secondary"
+        class="h-9 cursor-pointer rounded-md border border-border bg-surface-raised px-1.5 text-xs text-text-secondary"
         value={app.brushType}
         onchange={onBrushTypeChange}
       >
@@ -372,7 +405,7 @@
       {#if editingSize}
         <!-- svelte-ignore a11y_autofocus -->
         <input
-          class="w-10 rounded border border-border bg-surface px-1 py-0.5 text-center text-[11px] text-text"
+          class="h-9 w-12 rounded-md border border-border bg-surface-raised px-1 text-center text-[11px] text-text"
           type="text"
           inputmode="decimal"
           bind:value={sizeInputValue}
@@ -391,7 +424,7 @@
         />
       {:else}
         <button
-          class="min-w-7 cursor-text rounded px-1 py-0.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+          class="h-9 w-12 cursor-text rounded-md text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
           onclick={startEditSize}
           title="Click to type exact size">{sizeDisplay}</button
         >
@@ -399,10 +432,10 @@
       <div class="flex gap-px">
         {#each sizePresets as s}
           <button
-            class="rounded px-1 py-0.5 text-[10px] transition-colors
-                     {app.brushSettings.size === s
-              ? 'bg-accent text-accent-text'
+            class="size-6 rounded-md text-[10px] transition-colors {app.brushSettings.size === s
+              ? 'ui-on'
               : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+            title="Brush size {s}"
             onclick={() => setSize(s)}>{s}</button
           >
         {/each}
@@ -614,7 +647,7 @@
       <span class="min-w-4 text-[11px] text-text-muted">{app.fillEnclosedGap}</span>
     </label>
     <button
-      class="h-8 rounded-md border border-border bg-surface px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover"
+      class="h-9 rounded-md border border-border bg-surface-raised px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover"
       onclick={fillEnclosed}
       title="Fill every area the outlines on this layer enclose, behind the lines"
       >Fill enclosed</button

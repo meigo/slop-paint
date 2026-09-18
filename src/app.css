@@ -21,6 +21,9 @@
   --color-group-bg: #252830;
   --color-group-hover: #2d3040;
   --color-selection: #5b8cff;
+  /* The caution colour, from the family: a warning you should read before acting, and state that
+     explains why something won't behave as expected (hidden or locked layer, a failed save). */
+  --color-warn: #d5b75d;
 }
 
 /* Native controls (checkbox, spinners, color swatch, scrollbars) follow the dark scheme. */
@@ -49,6 +52,28 @@ body,
   position: fixed;
   inset: 0;
   overflow: hidden;
+}
+
+/* Focus rings are a KEYBOARD affordance: a ring after a pointer click is noise, so the pair below
+   keeps it for tabbing only. Never remove them outright (SLOP-TIMELINE-UI.md §3). */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* A group's rail, painted as a background IMAGE on each row rather than a border on the container:
+   background images paint over the row's hover background-COLOR (so the rail survives hover), while
+   `.ui-selected`'s inset shadow paints above both — so the accent bar lands ON the rail instead of
+   drawing a second line beside it. */
+.group-rail {
+  --rail: color-mix(in srgb, var(--color-text-muted) 45%, transparent);
+  background-image: linear-gradient(var(--rail), var(--rail));
+  background-size: 2px 100%;
+  background-position: 0 0;
+  background-repeat: no-repeat;
 }
 
 /* On-states, defined once (SLOP-TIMELINE-UI.md §6). `.ui-on` = a toggle/tool that is on;
@@ -194,9 +219,8 @@ input[type="color"] {
   font-size: 12px;
   padding: 1px 4px;
   border: 1px solid var(--color-selection);
-  border-radius: 3px;
-  outline: none;
-  background: var(--color-surface);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
   color: var(--color-text);
 }
 
