@@ -5,6 +5,9 @@ save/export that imports cleanly into [Spine 2D](https://esotericsoftware.com/sp
 Designed **iPad-first for Apple Pencil**; mouse, trackpad and keyboard work too. A sibling of
 slop-animator, sharing its brush engines, selection tools and look.
 
+**▶ Try it: [slop-paint.meigo.workers.dev](https://slop-paint.meigo.workers.dev)** — on an iPad,
+use Share → Add to Home Screen for a full-screen app.
+
 Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, tested with Vitest.
 
 ## Features
@@ -112,6 +115,7 @@ npm run test         # Vitest, once (test:watch to keep watching)
 npm run lint         # ESLint
 npm run check        # svelte-check
 npm run format       # Prettier (format:check to only check)
+npm run deploy       # build, then deploy to Cloudflare Workers (static assets only)
 node tools/make-icons.mjs  # regenerate the PNG icons from public/favicon.svg
 ```
 

@@ -1,0 +1,16 @@
+{
+  // Cloudflare Workers static-assets deploy, as slop-animator does it. There is deliberately no
+  // `main`/Worker script: the app is 100% static (Vite -> dist/), so this is an assets-only Worker.
+  // Requests to static assets are free and unlimited on every plan; only requests that invoke a
+  // Worker script are billed, so adding a `main` would start metering traffic for no benefit.
+  //
+  // `name` is the Worker first created from the Cloudflare dashboard, so a deploy replaces it in
+  // place and keeps its URL. `not_found_handling` is omitted: there is no client-side router
+  // (everything lives at "/"), so the default 404 behaviour is correct.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "slop-paint",
+  "compatibility_date": "2026-09-25",
+  "assets": {
+    "directory": "./dist",
+  },
+}
