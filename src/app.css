@@ -99,12 +99,27 @@ body {
   font-family: system-ui, sans-serif;
   /* Digits stay fixed-width (JetBrains Mono gave this for free) so readouts don't jitter. */
   font-variant-numeric: tabular-nums;
-  touch-action: none;
   overscroll-behavior: none;
   color: var(--color-text);
   background: var(--color-surface);
-  user-select: none;
+}
+
+/* As slop-animator's. UI chrome isn't selectable (no accidental selection while dragging on touch);
+   editable fields opt back in. `touch-action: manipulation` on the app, NOT `none` on the whole
+   body: `none` everywhere made iOS treat every tap as a custom gesture, and Chrome on iPad then
+   refused `navigator.clipboard.read()` from a menu tap (the animator's identical read worked), and
+   the layer list could not be scrolled with a finger. The canvas area is `touch-none` itself, so
+   its pan/pinch gestures are unaffected. */
+#app {
   -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+input,
+textarea,
+[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* Canvas checkerboard pattern */

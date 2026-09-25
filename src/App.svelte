@@ -1740,8 +1740,14 @@
     try {
       if (!navigator.clipboard?.read) throw new Error("unsupported");
       items = await navigator.clipboard.read();
-    } catch {
-      return flashStatus("Can't read the clipboard here — use File ▸ Import reference image…");
+    } catch (e) {
+      // Say what the browser said: iOS refuses for several reasons (the Paste callout dismissed, no
+      // tap to count the read as the user's, no support), and each has a different remedy.
+      const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      return flashStatus(
+        `Can't read the clipboard (${why}) — try File ▸ Import reference image…`,
+        0,
+      );
     }
     for (const item of items) {
       const type = item.types.find((t) => t.startsWith("image/"));
