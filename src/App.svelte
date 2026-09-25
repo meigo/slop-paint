@@ -10,7 +10,7 @@
   import { drawInkStroke } from "./ink-brush";
   import { drawCalligraphyStroke } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
-  import { LayerManager } from "./layers";
+  import { LayerManager, type Layer } from "./layers";
   import {
     enclosedFillRegion,
     fillRegionBehind,
@@ -20,6 +20,16 @@
     sameImageData,
   } from "./fill";
   import { clampGap } from "./fill-holes";
+  import {
+    alphaBounds,
+    bleedColor,
+    buildNoisePlanes,
+    localDepth,
+    outlineMask,
+    signedDistanceField,
+    OUTLINE_MARGIN,
+    type OutlineNoisePlanes,
+  } from "./outline";
   import { clampPanelWidth } from "./panel-layout";
   import { Selection, type SelectionRect } from "./selection";
   import { placeExternalImage, placeInternalPaste } from "./paste";
@@ -92,6 +102,9 @@
   // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
   // Null once the stroke ends, so a frame still pending at pen-up can't redraw the unfinished stroke.
   let smoothPendingPoints: InputPoint[] | null = null;
+  // Raw points of the brush/eraser stroke in progress, null between strokes.
+  let openStrokePoints: InputPoint[] | null = null;
+  let dropStrokeUntilUp = false;
 
   function saveLayerToCanvas(layer: {
     canvas: HTMLCanvasElement;
@@ -218,6 +231,7 @@
   let toolBeforeEraser: Tool | null = null;
   let toolBeforePencilToggle: Tool | null = null;
   let toolBeforeEyedropper: Tool = "brush";
+  let toolBeforeOutline: Tool = "brush";
 
   // --- Per-tool stroke settings ---
   // The active tool's values live in `app` (the toolbar binds there); this holds the other tool's.
@@ -260,8 +274,13 @@
   function saveSettings() {
     const slots = allSlots(app, strokeSlots, app.currentTool);
     const data: SavedSettings = {
-      // The eyedropper is transient; reopen on the tool it will return to.
-      tool: app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool,
+      // The eyedropper and Outline are transient; reopen on the tool they will return to.
+      tool:
+        app.currentTool === "eyedropper"
+          ? toolBeforeEyedropper
+          : app.currentTool === "outline"
+            ? toolBeforeOutline
+            : app.currentTool,
       brushType: slots.brush.brushType,
       size: slots.brush.size,
       opacity: slots.brush.opacity,
@@ -350,6 +369,12 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
+    // A live Outline preview looks like an edit already made, and undo is the artist taking it
+    // back. Cancel it and stop there, or the undo would also take back the edit before it.
+    if (outlineActive()) {
+      cancelOutline();
+      return;
+    }
     if (selection?.hasFloating) {
       selection.cancel();
       return;
@@ -359,6 +384,10 @@
 
   function redo() {
     if (!layers) return;
+    if (outlineActive()) {
+      cancelOutline();
+      return;
+    }
     if (selection?.hasFloating) {
       selection.cancel();
       return;
@@ -411,6 +440,7 @@
 
   function clearLayer() {
     if (!layers) return;
+    if (outlineActive()) cancelOutline();
     const layer = layers.active;
     const before = layers.snapshotOf(layer);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
@@ -480,6 +510,7 @@
 
   function newDocument(width: number, height: number) {
     if (!layers) return;
+    if (outlineActive()) cancelOutline();
     void clearAutosave().catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
     app.docHeight = height;
@@ -500,6 +531,7 @@
 
   function resizeDocument(width: number, height: number, anchorX: number, anchorY: number) {
     if (!layers) return;
+    if (outlineActive()) cancelOutline();
     app.docWidth = width;
     app.docHeight = height;
     layers.setDocumentSize(width, height, anchorX, anchorY);
@@ -521,6 +553,7 @@
     const reader = new FileReader();
     reader.onload = () => {
       const buffer = reader.result as ArrayBuffer;
+      if (outlineActive()) cancelOutline();
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = loadPsd(buffer, layers, dpr);
       history.clear(); // the stack's commands point at the layers this just replaced
@@ -601,6 +634,11 @@
   // --- Stroke handler ---
   function handleStroke(rawPoints: InputPoint[], done: boolean) {
     if (rawPoints.length === 0 || !layers) return;
+    // The rest of a stroke that a tool switch already committed (see setTool).
+    if (dropStrokeUntilUp) {
+      if (done) dropStrokeUntilUp = false;
+      return;
+    }
     isDrawing = !done;
     if (!done) hideBrushCursor();
     else if (done) {
@@ -628,6 +666,13 @@
         app.brushSettings.color = color;
         setTool(toolBeforeEyedropper);
       }
+      return;
+    }
+
+    // Outline is driven from the toolbar; a canvas press only (re)starts a preview when none is live
+    // (entering refused on a locked or empty layer, then the artist switched layers).
+    if (app.currentTool === "outline") {
+      if (!outlineActive() && points.length === 1 && !done) enterOutline();
       return;
     }
 
@@ -669,6 +714,10 @@
         if (selectionMode === "create") selection.updateCreate(p.x, p.y);
         else if (selectionMode === "drag") selection.updateDrag(p.x, p.y);
       } else {
+        // The pointerup sample is not a move event; skipping it left the handle or marquee edge
+        // where the last move landed, short of the Pencil.
+        if (selectionMode === "create") selection.updateCreate(p.x, p.y);
+        else if (selectionMode === "drag") selection.updateDrag(p.x, p.y);
         if (selectionMode === "create") selection.endCreate();
         selection.endDrag();
         selectionMode = null;
@@ -724,6 +773,7 @@
     }
 
     // Brush stroke
+    openStrokePoints = done ? null : rawPoints;
     const kind = app.brushType;
     // smooth / ink / calligraphy redraw the whole stroke each frame from a pre-stroke copy; the
     // stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
@@ -806,6 +856,12 @@
 
   // --- Set tool ---
   function setTool(tool: Tool) {
+    // The tool can change under an open stroke (X, a finger on the toolbar). Commit it now with the
+    // settings that STARTED it — setTool swaps them below — and ignore the rest of that stroke.
+    if (openStrokePoints && tool !== app.currentTool) {
+      handleStroke(openStrokePoints, true);
+      dropStrokeUntilUp = true;
+    }
     // A floating transform/warp must resolve before switching tools (it has uncommitted
     // pixels). A plain marquee survives — brush/fill/eraser will clip to it.
     if (selection?.hasFloating && tool !== app.currentTool) {
@@ -814,6 +870,14 @@
     if (tool === "eyedropper" && app.currentTool !== "eyedropper") {
       toolBeforeEyedropper = app.currentTool;
     }
+    // Leaving Outline cancels a live preview: entering it already rewrote the layer, so keeping
+    // it would outline the drawing on a stray tap. The knobs survive, so re-entering is cheap.
+    if (app.currentTool === "outline" && tool !== "outline" && outlineActive()) {
+      cancelOutline(false);
+    }
+    if (tool === "outline" && app.currentTool !== "outline") {
+      toolBeforeOutline = app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool;
+    }
     swapSlots(app, strokeSlots, app.currentTool, tool);
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";
@@ -821,6 +885,8 @@
     if (tool === "lasso") selection.mode = "lasso";
     updateCursor();
     debouncedSave();
+    // After the switch (a floating selection has been committed above), so the snapshot holds it.
+    if (tool === "outline") enterOutline();
   }
 
   function updateCursor() {
@@ -885,6 +951,16 @@
       return;
     }
 
+    if (e.key === "Enter" && outlineActive()) {
+      e.preventDefault();
+      applyOutline();
+      return;
+    }
+    if (e.key === "Escape" && outlineActive()) {
+      e.preventDefault();
+      cancelOutline();
+      return;
+    }
     if (e.key === "Enter" && selection?.active) {
       e.preventDefault();
       selection.commit();
@@ -992,6 +1068,14 @@
     autosaveTimer = setTimeout(flushAutosave, 3000);
   });
 
+  // A lift paints the active layer's own content on the selection overlay, so it has to fade with
+  // the layer's (and its groups') opacity, or it jumps to full strength until it is committed.
+  $effect(() => {
+    void app.layerVersion;
+    if (!layersReady || !selection) return;
+    selection.contentAlpha = layers.contentAlpha(layers.activeId);
+  });
+
   // A backgrounded tab can be killed at any moment (routinely on iPad), so don't wait out the
   // debounce. The write is async, so this shrinks the window rather than closing it.
   $effect(() => {
@@ -1068,6 +1152,201 @@
     layers.composite();
     bumpLayerVersion();
   }
+
+  // --- Outline tool (from slop-animator) ---
+  // The preview is written INTO the active layer and re-derived from the snapshot on every knob
+  // change, so what you see is the real compositor's output (layer and group opacity). Apply keeps
+  // it as one undo step; Cancel puts the snapshot back.
+  let outlineLayer: Layer | null = null;
+  let outlineBefore: ImageData | null = null; // the WHOLE layer, for Cancel and the undo entry
+  // Everything below works on `outlineRect` only: the ink's bounds grown by `OUTLINE_MARGIN`, the
+  // furthest the band can reach, so a small drawing on a big canvas doesn't pay for the full size.
+  let outlineRect: { x: number; y: number; w: number; h: number } | null = null; // device px
+  let outlineSrc: ImageData | null = null; // outlineBefore cut to outlineRect
+  let outlineAlpha: Uint8Array | null = null; // alpha plane of outlineSrc
+  let outlineField: Float32Array | null = null; // depends on the ART only — once per entry
+  let outlineDepth: Float32Array | null = null; // localDepth of the field — once per entry
+  let outlineCov: Uint8ClampedArray | null = null; // coverage buffer, reused across previews
+  // RGBA of outlineSrc with its colour bled outward (`bleedColor`); only its alpha changes per preview
+  let outlinePreviewImg: ImageData | null = null;
+  let outlineNoise: OutlineNoisePlanes | null = null; // depends on the seed only
+  let outlineNoiseSeed: number | null = null;
+  /** Holds the region's outline when a marquee clips the write: `putImageData` ignores clip paths,
+   *  so the clipped path has to arrive by `drawImage`. */
+  let outlineScratch: HTMLCanvasElement | null = null;
+  let outlineRaf = 0;
+
+  function outlineActive(): boolean {
+    return outlineBefore !== null;
+  }
+
+  function enterOutline() {
+    // Re-entry while a preview is live must no-op: snapshotting now would capture the PREVIEW, and
+    // Cancel would then restore an outline instead of the original art.
+    if (outlineActive() || !layers) return;
+    const layer = layers.active;
+    if (layer.locked) return flashStatus("Layer is locked — nothing to outline");
+    if (!layer.visible) return flashStatus("Layer is hidden — show it to outline it");
+    const cw = layer.canvas.width,
+      ch = layer.canvas.height;
+    const before = layer.ctx.getImageData(0, 0, cw, ch);
+    const ink = alphaBounds(before.data, cw, ch);
+    if (!ink) return flashStatus("Nothing to outline — this layer is empty");
+    const x0 = Math.max(0, ink.x - OUTLINE_MARGIN),
+      y0 = Math.max(0, ink.y - OUTLINE_MARGIN);
+    const x1 = Math.min(cw, ink.x + ink.w + OUTLINE_MARGIN),
+      y1 = Math.min(ch, ink.y + ink.h + OUTLINE_MARGIN);
+    outlineLayer = layer;
+    outlineBefore = before;
+    outlineRect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    outlineSrc = layer.ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+    app.outlineActive = true;
+    refreshOutlinePreview();
+  }
+
+  /** Coalesced to one animation frame: a slider drag fires an input per pointer event, and each
+   *  preview is a pass over the whole region. */
+  function scheduleOutlinePreview() {
+    if (outlineRaf) return;
+    outlineRaf = requestAnimationFrame(() => {
+      outlineRaf = 0;
+      refreshOutlinePreview();
+    });
+  }
+
+  function refreshOutlinePreview() {
+    const layer = outlineLayer,
+      src = outlineSrc,
+      r = outlineRect;
+    if (!layer || !src || !r || !layers) return;
+    const { w, h } = r;
+    const ctx = layer.ctx;
+    if (!outlineAlpha) {
+      outlineAlpha = new Uint8Array(w * h);
+      for (let i = 0, p = 3; i < outlineAlpha.length; i++, p += 4) outlineAlpha[i] = src.data[p];
+    }
+    const alpha = outlineAlpha;
+    outlineField ??= signedDistanceField(alpha, w, h);
+    outlineDepth ??= localDepth(outlineField, w, h);
+    // Sampled at CANVAS coordinates, so the region's cut does not move the wobble.
+    if (outlineNoise === null || outlineNoiseSeed !== app.outline.seed) {
+      outlineNoise = buildNoisePlanes(w, h, app.outline.seed, r.x, r.y);
+      outlineNoiseSeed = app.outline.seed;
+    }
+    outlineCov ??= new Uint8ClampedArray(w * h);
+    const cov = outlineMask(
+      alpha,
+      w,
+      h,
+      { ...app.outline },
+      outlineField,
+      outlineNoise,
+      outlineDepth,
+      outlineCov,
+    );
+    // Only alpha changes, so coloured art keeps its colour — bled outward first, because an outward
+    // wobble lands on transparent pixels whose stored RGB is black.
+    outlinePreviewImg ??= new ImageData(bleedColor(src.data, w, h), w, h);
+    const next = outlinePreviewImg;
+    // Alpha lock: the outline may hollow the art but never put ink where there was none.
+    const lock = layer.alphaLock;
+    for (let i = 0, p = 3; i < cov.length; i++, p += 4)
+      next.data[p] = lock ? Math.min(cov[i], alpha[i]) : cov[i];
+    // A marquee clips the WRITE, not the maths: the field is built from the whole drawing, so where
+    // the line meets the cut it is simply truncated — no line is drawn along the marquee itself.
+    if (selection?.state === "selected") {
+      const dpr = window.devicePixelRatio || 1;
+      ctx.putImageData(src, r.x, r.y); // outside the marquee nothing changes
+      if (!outlineScratch) {
+        outlineScratch = document.createElement("canvas");
+        outlineScratch.width = w;
+        outlineScratch.height = h;
+      }
+      outlineScratch.getContext("2d")!.putImageData(next, 0, 0);
+      ctx.save();
+      try {
+        selection.applyClip(ctx); // layer.ctx carries the dpr transform applyClip expects
+        // Inside the marquee the outline REPLACES the art: drawing over it would leave the solid
+        // fill showing through the hollowed middle.
+        ctx.clearRect(r.x / dpr, r.y / dpr, w / dpr, h / dpr);
+        ctx.drawImage(outlineScratch, r.x / dpr, r.y / dpr, w / dpr, h / dpr);
+      } finally {
+        ctx.restore();
+      }
+    } else {
+      ctx.putImageData(next, r.x, r.y);
+    }
+    layers.composite();
+  }
+
+  function applyOutline() {
+    const layer = outlineLayer,
+      before = outlineBefore;
+    if (!layer || !before || !layers) return;
+    if (outlineRaf) {
+      cancelAnimationFrame(outlineRaf);
+      outlineRaf = 0;
+      refreshOutlinePreview(); // the pending frame's settings are the ones being applied
+    }
+    clearOutline();
+    // A shape thinner than the line stays solid, so an outline can change nothing: no empty step.
+    if (!sameImageData(before, layers.snapshotOf(layer))) {
+      pushPixelEdit(layers, layer, before);
+      bumpLayerVersion();
+    } else {
+      flashStatus("Nothing changed — the shapes are thinner than the line");
+    }
+    if (app.currentTool === "outline") setTool(toolBeforeOutline); // one-shot: hand the tool back
+  }
+
+  /** Put the art back. `handBack` returns to the tool Outline was entered from; setTool passes
+   *  false, being mid-switch already. */
+  function cancelOutline(handBack = true) {
+    if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
+    clearOutline();
+    layers?.composite();
+    if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline);
+  }
+
+  function clearOutline() {
+    if (outlineRaf) {
+      cancelAnimationFrame(outlineRaf);
+      outlineRaf = 0;
+    }
+    outlineLayer = null;
+    outlineBefore = null;
+    outlineRect = null;
+    outlineSrc = null;
+    outlineAlpha = null;
+    outlineField = null;
+    outlineDepth = null;
+    outlineCov = null;
+    outlinePreviewImg = null;
+    outlineNoise = null;
+    outlineNoiseSeed = null;
+    outlineScratch = null;
+    app.outlineActive = false;
+  }
+
+  // A knob change re-derives the preview from the untouched snapshot, once per frame.
+  $effect(() => {
+    void app.outline.thickness;
+    void app.outline.wobble;
+    void app.outline.variation;
+    void app.outline.seed;
+    if (untrack(outlineActive)) scheduleOutlinePreview();
+  });
+
+  // The preview belongs to the layer it started on: selecting another layer (which add, duplicate
+  // and merge also do) or locking this one cancels it rather than leaving it baked in.
+  $effect(() => {
+    void app.layerVersion;
+    untrack(() => {
+      if (outlineLayer && (layers.activeId !== outlineLayer.id || outlineLayer.locked)) {
+        cancelOutline();
+      }
+    });
+  });
 
   // iPad shows no tooltips, so a control's `title` goes to the status bar: on hover (desktop) and
   // on press (touch), read from the nearest ancestor that has one.
@@ -1210,6 +1489,7 @@
 
   function copySelection() {
     if (!selection || selection.state !== "selected" || !selection.rect || !layers) return;
+    if (outlineActive()) cancelOutline(); // copy the art, not the preview
     const dpr = window.devicePixelRatio || 1;
     const pixels = selection.copyPixels(layers.active.ctx, dpr);
     if (!pixels) return;
@@ -1219,6 +1499,7 @@
 
   function deleteSelection() {
     if (!selection || selection.state !== "selected" || !layers) return;
+    if (outlineActive()) cancelOutline();
     const layer = layers.active;
     if (layer.locked) return;
     const dpr = window.devicePixelRatio || 1;
@@ -1349,6 +1630,7 @@
 
     selection.onStateChange = () => {
       bumpSelectionVersion();
+      if (outlineActive()) scheduleOutlinePreview(); // a marquee made or cleared re-clips it
     };
 
     // Keep selection's hit areas at a constant screen size by feeding it the viewport zoom.
@@ -1383,7 +1665,10 @@
       handleStroke,
       (sx, sy) => viewport.screenToCanvas(sx, sy),
       {
-        streamline: () => app.streamline / 100,
+        // Streamline is a brush preference. On select and lasso it made handles trail the Pencil
+        // and stop short of the lift.
+        streamline: () =>
+          app.currentTool === "brush" || app.currentTool === "eraser" ? app.streamline / 100 : 0,
         onPencilDoubleTap: () => {
           if (app.currentTool === "eraser") {
             setTool(toolBeforePencilToggle ?? "brush");
@@ -1513,6 +1798,8 @@
       {redo}
       {clearLayer}
       fillEnclosed={fillAllEnclosed}
+      {applyOutline}
+      {cancelOutline}
       canUndo={undoAvailable}
       canRedo={redoAvailable}
       hasSelection={selectionActive}

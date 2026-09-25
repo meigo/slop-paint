@@ -32,6 +32,7 @@ export function setupInput(
   options?: Omit<InputOptions, "onStroke" | "transformCoords">,
 ) {
   let isDrawing = false;
+  let drawPointer = -1;
   let currentPoints: InputPoint[] = [];
 
   // Streamline: interpolate toward raw input with factor t.
@@ -82,9 +83,12 @@ export function setupInput(
 
   function onPointerDown(e: PointerEvent) {
     if (e.button !== 0 || !shouldDraw(e)) return;
+    // A second pen or mouse contact must not restart the stroke the first one owns.
+    if (isDrawing) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     isDrawing = true;
+    drawPointer = e.pointerId;
     const first = getPoint(e);
     lastStreamlined = first;
     currentPoints = [first];
@@ -100,7 +104,9 @@ export function setupInput(
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (!isDrawing) return;
+    // Finger contacts share this element with the Pencil. Only the pointer that started the
+    // stroke may extend it — a resting finger otherwise spikes the stroke and ends it.
+    if (!isDrawing || e.pointerId !== drawPointer) return;
     e.preventDefault();
 
     // Track pen movement for tap detection
@@ -158,9 +164,10 @@ export function setupInput(
   }
 
   function onPointerUp(e: PointerEvent) {
-    if (!isDrawing) return;
+    if (!isDrawing || e.pointerId !== drawPointer) return;
     e.preventDefault();
     isDrawing = false;
+    drawPointer = -1;
     lastStreamlined = null;
     // Pen pointerup reports pressure 0; keep the last move's pressure so the stroke doesn't taper
     const up = getPoint(e);
@@ -191,6 +198,9 @@ export function setupInput(
   canvas.addEventListener("pointerleave", onPointerUp);
   // iPad palm rejection cancels the stream with no pointerup; end the stroke instead of leaving it open
   canvas.addEventListener("pointercancel", onPointerUp);
+  // Capture lost without an up (the element or capture went away) must still end the stroke, or
+  // the `isDrawing` guard in onPointerDown refuses every later press. After a normal up it no-ops.
+  canvas.addEventListener("lostpointercapture", onPointerUp);
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
   return () => {
@@ -199,5 +209,6 @@ export function setupInput(
     canvas.removeEventListener("pointerup", onPointerUp);
     canvas.removeEventListener("pointerleave", onPointerUp);
     canvas.removeEventListener("pointercancel", onPointerUp);
+    canvas.removeEventListener("lostpointercapture", onPointerUp);
   };
 }

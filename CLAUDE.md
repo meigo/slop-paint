@@ -29,7 +29,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - Run `npm run check` to verify Svelte components
@@ -57,7 +57,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ### Canvas Engine (pure TypeScript, no Svelte)
 
-- `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) ends the stroke like `pointerup`; the lift point reuses the last move's pressure (pen `pointerup` reports 0)
+- `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) and `lostpointercapture` end the stroke like `pointerup`; only the pointer that started a stroke can extend or end it (a resting finger can't); the lift point reuses the last move's pressure (pen `pointerup` reports 0)
 - `brush.ts` — BrushSettings, `widthRange` (size = thinnest width, × sizeRange at full pressure), and the Smooth brush (perfect-freehand). pf's `size` is a RADIUS basis, so it gets `maxSize / 2`; `decimationSmoothing` caps pf's point spacing so thin sections don't leave holes
 - `ink-brush.ts` — Ink/marker: full-stroke redraw, segments batched into runs of similar width; optional dwell swell (from slop-animator)
 - `calligraphy-brush.ts` — broad-nib ribbon with nib angle/flatness; smooths and decimates points first (from slop-animator)
@@ -73,6 +73,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `tool-settings.ts` — brush/eraser stroke-setting slots (size, opacity, smoothing, streamline, size range, brush type); the active tool's values live in `app`, the other tool's in a slot, swapped in `setTool`
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content); `enclosedFillRegion` / `fillRegionBehind` for Fill enclosed
 - `fill-holes.ts` — Fill enclosed engine (from slop-animator): floods the outside from the border, so a leaking outline fills nothing; `gap` (clamped to `MAX_GAP` = 8, device px) bridges breaks via dilate → flood → erode
+- `outline.ts` — Outline tool engine (from slop-animator): signed distance field seeded sub-pixel from the alpha, a band of `thickness` inside the edge whose position (Wobble) and width (Variation) come from two seeded noise planes; `bleedColor` keeps the colour under an outward wobble; `alphaBounds` for the working region
 - `mask-ops.ts` — circular dilate/erode on binary masks (shared by expand and Fill enclosed)
 - `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible); `psdBuffer()` is the buffer used by both the file writer and autosave
 - `persist/` — `db.ts` (IndexedDB helper), `autosave.ts` (single-slot project autosave), `generation.ts` (supersede guard)
@@ -110,7 +111,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Desktop Shortcuts
 
-- B/E/S/L/G/I — brush/eraser/select/lasso/fill/eyedropper
+- B/E/S/L/G/I — brush/eraser/select/lasso/fill/eyedropper (Outline has no key)
 - X (hold) — temporary eraser
 - R / Shift+R — rotate canvas 15° CW/CCW
 - 0 — reset view (zoom, pan, rotation); 1 — 100% zoom (plain keys: browsers reserve Ctrl/Cmd+digit)
@@ -164,6 +165,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Left side, in priority order: an explicit message (`flashStatus`, e.g. why an action did nothing), then `statusHint` — the `title` of the control under the pointer — then the selection/transform context
 - The hint is written on `pointerover` AND `pointerdown` (capture) in App.svelte, since iPad has no hover: touching a control explains it. A `pointerover` resolving to the same element is ignored, or pointer capture's boundary events would clear a message the press just wrote
 - Give every new control a `title`: on touch it is the only explanation the user gets
+
+## Outline Tool
+
+- Hollows the active layer's shapes to a line of `Thickness` (0.5–24 device px) inside the edge; Wobble moves it across the edge, Variation swells/thins it, the dice re-rolls the noise. Knobs are in toolbar row 2, session-only
+- Picking the tool previews at once, written INTO the layer (so layer/group opacity apply) and re-derived from a snapshot on each knob change, once per frame. Apply (✓ / Enter) is one undo step and hands back the previous tool; Cancel (✗ / Esc), undo, switching tool or layer, locking the layer, New/Open/Resize all restore the snapshot. Refused on locked, hidden or empty layers; with no live preview a canvas tap starts one
+- A marquee clips the write, not the maths (the line is truncated at the cut); alpha lock never adds ink
+- Clear layer, copy/cut/delete cancel a live preview first, so their snapshots hold the art
 
 ## Fill Tool
 

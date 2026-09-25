@@ -26,6 +26,7 @@
     lasso: "Lasso",
     fill: "Fill",
     eyedropper: "Eyedropper",
+    outline: "Outline",
   };
   const toolLabel = $derived(toolLabels[app.currentTool] ?? app.currentTool);
 

@@ -11,8 +11,8 @@
  * like calligraphy are exactly the ones that broke.
  *
  * So the nib is swept instead: for each segment, fill the convex hull of the nib ellipse at
- * both endpoints (a quad along the perpendicular offset, plus the ellipse itself at each
- * vertex, which is precisely the correct round join for a Minkowski sweep). Continuous by
+ * both endpoints (a quad between the nib's support points, plus the ellipse itself at a
+ * corner, which is precisely the correct join for a Minkowski sweep). Continuous by
  * construction at every flatness, exactly like `ink-brush.ts`'s stroked curve and `brush.ts`'s
  * filled outline are continuous by construction.
  */
@@ -46,11 +46,48 @@ export function nibSemiAxes(radius: number, flatness: number): { a: number; b: n
  * and every direction between interpolates.
  */
 export function nibSupport(a: number, b: number, angleRad: number, ux: number, uy: number): number {
-  const c = Math.cos(angleRad);
-  const s = Math.sin(angleRad);
+  const p = nibSupportPoint(a, b, angleRad, ux, uy);
+  return p.x * ux + p.y * uy;
+}
+
+/**
+ * WHERE the nib reaches farthest along (ux, uy): the support POINT, as an offset from the nib's
+ * centre. `nibSupport` is its projection on (ux, uy), so the ribbon keeps exactly the same width;
+ * what changes is that the edge sits at the point of the nib that actually touches it. For a flat
+ * nib that point lies out near its TIPS, not straight out to the side. The ribbon used to be
+ * offset along the normal (`p ± n·nibSupport`), which gave the right width but cut both ends
+ * square to the travel instead of along the nib (reported 2026-09-24 with a screenshot: a vertical
+ * stroke ending flat under a 45° nib), painted the square corners a real nib never reaches, and
+ * left the outside of every sharp corner short, because the tips that carry the edge round a turn
+ * were never on it.
+ */
+export function nibSupportPoint(
+  a: number,
+  b: number,
+  angleRad: number,
+  ux: number,
+  uy: number,
+): { x: number; y: number } {
+  return supportPoint(a, b, Math.cos(angleRad), Math.sin(angleRad), ux, uy);
+}
+
+/** `nibSupportPoint` with the nib angle's cos/sin precomputed — the stroke loop calls it once per
+ *  sample and the angle is constant for the whole stroke. */
+function supportPoint(
+  a: number,
+  b: number,
+  c: number,
+  s: number,
+  ux: number,
+  uy: number,
+): { x: number; y: number } {
   const alongMajor = ux * c + uy * s;
   const alongMinor = -ux * s + uy * c;
-  return Math.hypot(a * alongMajor, b * alongMinor);
+  const h = Math.hypot(a * alongMajor, b * alongMinor);
+  // Local support point (a²·α, b²·β) / h, rotated back into the page.
+  const lx = (a * a * alongMajor) / h;
+  const ly = (b * b * alongMinor) / h;
+  return { x: lx * c - ly * s, y: lx * s + ly * c };
 }
 
 /**
@@ -88,6 +125,44 @@ function smoothPositions(points: InputPoint[]): InputPoint[] {
 }
 
 /**
+ * How straight the baseline walk must stay: chord length as a fraction of path length.
+ *
+ * Without this the walk spans a HAIRPIN: at the apex it lands on one leg going back and on the
+ * other going forward, so the chord points across the turn and the normal comes out near-parallel
+ * to the travel. The ribbon twists there and leaves the apex uncovered — the corner holes reported
+ * on 2026-09-24. Measured on that shape, the apex normal sat 6° off the travel direction where it
+ * needs 90°. Stopping at the corner keeps the baseline (and so the damping) on one leg, which is
+ * the only place its jitter argument holds anyway: a real corner dwarfs the noise the baseline
+ * exists to suppress.
+ */
+const MIN_STRAIGHTNESS = 0.7;
+
+/**
+ * Turn angle (degrees) above which a VERTEX counts as a corner — a place where the path doubles
+ * back inside one sample, so no single normal is perpendicular to "the" travel direction, because
+ * there are two of them. TEST-ONLY: it names the vertices the `normals` perpendicularity test
+ * excuses. The renderer does not read it — what decides where a corner join is drawn is
+ * `CORNER_SKEW`, per segment. Changing this changes nothing on screen.
+ */
+export const CORNER_TURN_DEG = 60;
+
+/**
+ * |cos| between a segment's direction and a damped normal above which the segment counts as a
+ * CORNER and its piece becomes the hull of the nib at both ends — the exact sweep of that segment,
+ * which carries the join that fills the outside of the turn. The quads alone leave it short
+ * wherever the damped normal no longer describes the segment, which is only at real turns: along
+ * a leg the damped normal stays within a few degrees of perpendicular (see the `normals` tests),
+ * and measured on 2000-point jittery strokes this fires zero times. Still ONE subpath per segment,
+ * unlike the per-vertex footprint join rejected earlier (see the corner-holes CHANGELOG entries).
+ */
+const CORNER_SKEW = 0.5;
+
+/** How much travel the straightness test waits for before it trusts the ratio. Over one or two
+ *  samples the ratio is mostly jitter, and testing it there would stop the walk on noise — which
+ *  hands back exactly the per-segment normal this baseline exists to avoid. */
+const CHORD_SETTLE_PX = 2;
+
+/**
  * The unit normal at each sample, taken over a baseline long enough that jitter cannot rotate
  * it. Baseline length is measured in DISTANCE, not samples: sample density swings with drawing
  * speed, so a fixed sample count would smooth a fast stroke and barely touch a slow one. It
@@ -100,20 +175,44 @@ export function normals(
   reach: number,
 ): { nx: number; ny: number }[] {
   const target = Math.max(2, reach);
-  const walk = (i: number, dir: -1 | 1) => {
+  // Returns where the walk stopped, how far it got, and whether it stopped because the STROKE ran
+  // out (as opposed to reaching `want` or a corner).
+  const walk = (i: number, dir: -1 | 1, want: number) => {
     let j = i;
     let d = 0;
-    while (d < target) {
+    let ranOut = false;
+    while (d < want) {
       const k = j + dir;
-      if (k < 0 || k >= points.length) break;
-      d += Math.hypot(points[k].x - points[j].x, points[k].y - points[j].y);
+      if (k < 0 || k >= points.length) {
+        ranOut = true;
+        break;
+      }
+      const stepLen = Math.hypot(points[k].x - points[j].x, points[k].y - points[j].y);
+      const chord = Math.hypot(points[k].x - points[i].x, points[k].y - points[i].y);
+      const travelled = d + stepLen;
+      // STRAIGHTNESS, not direction: on a hairpin the chord from the start points much the same way
+      // before and after the apex (the legs are nearly antiparallel), so a direction test cannot see
+      // the corner at all — measured 0.93 alignment with one. What does change is that the path
+      // keeps growing while the chord stops. Jitter costs a few percent of this ratio; rounding a
+      // corner collapses it.
+      if (travelled >= CHORD_SETTLE_PX && chord < MIN_STRAIGHTNESS * travelled) break;
+      d = travelled;
       j = k;
     }
-    return points[j];
+    return { p: points[j], d, ranOut };
   };
   return points.map((p, i) => {
-    const a = walk(i, -1);
-    const b = walk(i, 1);
+    // Near an END of the stroke one side runs out of samples, which halves the baseline exactly
+    // where it matters most: with edges at the nib's support points, a normal error there moves
+    // the END CUT along the nib by about a²/b per radian (a flat nib turns 1° into ~5px), and the
+    // live end is redrawn on every Pencil move — measured at 1px jitter it jumped ~7px between
+    // frames. So the other side walks the shortfall instead, keeping the baseline its full length.
+    // Only running out of STROKE triggers this; a walk stopped by a corner stays stopped.
+    let back = walk(i, -1, target);
+    const fwd = walk(i, 1, target + (back.ranOut ? target - back.d : 0));
+    if (fwd.ranOut) back = walk(i, -1, target + (target - fwd.d));
+    const a = back.p;
+    const b = fwd.p;
     let dx = b.x - a.x;
     let dy = b.y - a.y;
     let len = Math.hypot(dx, dy);
@@ -194,17 +293,92 @@ function strokeExtent(points: { x: number; y: number }[]): number {
 }
 
 const NIB_SEGMENTS = 20;
-function nibRing(cx: number, cy: number, a: number, b: number, angleRad: number): number[][] {
+/** A corner join's nib outline is coarser than a dab's: it only fills the outside of a turn, and
+ *  its vertices are what a dense scribble pays for. Measured on a 6000-point hatch (534 joins):
+ *  20 points took a redraw from ~200ms to ~320ms, 8 to ~250ms, while leaving 7-20px² of a sharp
+ *  corner short against 4-9px² for 20 — facets on the outer edge, not holes. */
+const JOIN_SEGMENTS = 8;
+function nibRing(
+  cx: number,
+  cy: number,
+  a: number,
+  b: number,
+  angleRad: number,
+  segments = NIB_SEGMENTS,
+): number[][] {
   const ca = Math.cos(angleRad);
   const sa = Math.sin(angleRad);
   const ring: number[][] = [];
-  for (let k = 0; k < NIB_SEGMENTS; k++) {
-    const t = (k / NIB_SEGMENTS) * Math.PI * 2;
+  for (let k = 0; k < segments; k++) {
+    const t = (k / segments) * Math.PI * 2;
     const px = a * Math.cos(t);
     const py = b * Math.sin(t);
     ring.push([cx + px * ca - py * sa, cy + px * sa + py * ca]);
   }
   return ring;
+}
+
+/** Do all of a polygon's turns go the same way (it is convex, so it cannot cross itself)? */
+function isConvex(ring: number[][]): boolean {
+  let left = false;
+  let right = false;
+  for (let i = 0; i < ring.length; i++) {
+    const [ax, ay] = ring[i];
+    const [bx, by] = ring[(i + 1) % ring.length];
+    const [cx, cy] = ring[(i + 2) % ring.length];
+    const turn = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+    if (turn > 0) left = true;
+    else if (turn < 0) right = true;
+  }
+  return !(left && right);
+}
+
+/**
+ * Convex hull of a few points (monotone chain), counter-clockwise. Each segment piece goes through
+ * this because a quad built from two per-sample normals is NOT always a simple polygon: where the
+ * normal swings past 90° between two samples — every sharp turn — the quad twists into a BOWTIE.
+ * Its two lobes wind in opposite directions, `addRing` can only make one of them positive, and
+ * under nonzero fill the other CANCELS the ink of whatever piece it overlaps: the holes at corners
+ * reported (twice) on 2026-09-24. A hull cannot cross itself, so every piece winds positive and no
+ * overlap can ever cancel. On an untwisted quad it is the same quad (or a hair larger where the
+ * width changes fast); on a bowtie it is the untwisted quad, which is what the segment sweeps.
+ */
+function convexHull(pts: number[][]): number[][] {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: number[][] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0)
+      lower.pop();
+    lower.push(q);
+  }
+  const upper: number[][] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0)
+      upper.pop();
+    upper.push(q);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/** Does the path turn by more than `CORNER_TURN_DEG` at `b`? Coincident neighbours count as no turn:
+ *  a held pen delivers them in bursts and they carry no direction to compare. */
+export function isCorner(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+): boolean {
+  const ix = b.x - a.x;
+  const iy = b.y - a.y;
+  const ox = c.x - b.x;
+  const oy = c.y - b.y;
+  const il = Math.hypot(ix, iy);
+  const ol = Math.hypot(ox, oy);
+  if (il === 0 || ol === 0) return false;
+  const cos = (ix / il) * (ox / ol) + (iy / il) * (oy / ol);
+  return cos < Math.cos((CORNER_TURN_DEG * Math.PI) / 180);
 }
 
 /**
@@ -216,7 +390,8 @@ function nibRing(cx: number, cy: number, a: number, b: number, angleRad: number)
  *
  * The ribbon is a chain of quads, one per segment, and they TILE rather than overlap: quad i ends
  * on exactly the edge quad i+1 starts from (same point, same normal, same offset). That is why
- * only the two ends carry a nib footprint. Emitting one per sample — which the first version did —
+ * no interior sample carries a nib footprint, except inside a corner segment's own hull (see
+ * `CORNER_SKEW`). Emitting one per sample — which the first version did —
  * put N big overlapping ellipses into a single fill and made a long stroke quadratic: 1663ms for a
  * 6000-point redraw, against 13ms for this.
  */
@@ -238,7 +413,10 @@ export function drawCalligraphyStroke(
   // Reach scales with the widest nib the stroke reaches, so the damping matches the worst case
   // rather than whatever width happens to be under the pointer at one sample.
   const nrm = normals(pts, maxW / 2);
-  const offset = (i: number) => nibSupport(nib[i].a, nib[i].b, angle, nrm[i].nx, nrm[i].ny);
+  const cosA = Math.cos(angle);
+  const sinA = Math.sin(angle);
+  // Once per sample: each one is the end of one segment and the start of the next.
+  const off = pts.map((_, i) => supportPoint(nib[i].a, nib[i].b, cosA, sinA, nrm[i].nx, nrm[i].ny));
 
   ctx.save();
   if (settings.isEraser) {
@@ -266,21 +444,44 @@ export function drawCalligraphyStroke(
   // flatness that shape is a long thin sliver lying at the nib angle, and where it protrudes past
   // the ribbon's end it reads as a stray whisker rather than as the stroke ending (reported from a
   // Pencil stroke as "misrotated brush tip stamp"). Ending flush is the deliberate choice: the end
-  // cut still lands at the nib's own angle wherever the geometry calls for it, which is the chisel
+  // cut is the chord between the nib's two support points, which lies along the nib — the chisel
   // entry/exit that actually reads as calligraphy. Compared side by side before choosing.
   for (let i = 1; i < pts.length; i++) {
     const p1 = pts[i - 1];
     const p2 = pts[i];
-    const n1 = nrm[i - 1];
-    const n2 = nrm[i];
-    const o1 = offset(i - 1);
-    const o2 = offset(i);
-    addRing(ctx, [
-      [p1.x + n1.nx * o1, p1.y + n1.ny * o1],
-      [p1.x - n1.nx * o1, p1.y - n1.ny * o1],
-      [p2.x - n2.nx * o2, p2.y - n2.ny * o2],
-      [p2.x + n2.nx * o2, p2.y + n2.ny * o2],
-    ]);
+    const o1 = off[i - 1];
+    const o2 = off[i];
+    const piece = [
+      [p1.x + o1.x, p1.y + o1.y],
+      [p1.x - o1.x, p1.y - o1.y],
+      [p2.x - o2.x, p2.y - o2.y],
+      [p2.x + o2.x, p2.y + o2.y],
+    ];
+    let join = false;
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len > 0) {
+      const ux = dx / len;
+      const uy = dy / len;
+      const skew = Math.max(
+        Math.abs(ux * nrm[i - 1].nx + uy * nrm[i - 1].ny),
+        Math.abs(ux * nrm[i].nx + uy * nrm[i].ny),
+      );
+      if (skew > CORNER_SKEW) {
+        join = true;
+        const n1 = nib[i - 1];
+        const n2 = nib[i];
+        piece.push(
+          ...nibRing(p1.x, p1.y, n1.a, n1.b, angle, JOIN_SEGMENTS),
+          ...nibRing(p2.x, p2.y, n2.a, n2.b, angle, JOIN_SEGMENTS),
+        );
+      }
+    }
+    // Hulled, not emitted raw, wherever it could cross itself: at a sharp turn the raw quad is a
+    // bowtie (see `convexHull`). An already-convex quad — nearly every segment — is its own hull
+    // and goes straight in, sparing the sort and arrays on every live redraw.
+    addRing(ctx, join || !isConvex(piece) ? convexHull(piece) : piece);
   }
 
   ctx.fill();

@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
+import type { BrushSettings } from "../brush";
 import {
+  drawCalligraphyStroke,
+  isCorner,
   nibSemiAxes,
   clampNibFlatness,
   nibSupport,
+  nibSupportPoint,
   normals,
   MAX_NIB_FLATNESS,
 } from "../calligraphy-brush";
@@ -141,6 +145,44 @@ describe("normals (jitter damping)", () => {
     }
   });
 
+  /**
+   * The corner case the damper got wrong (reported 2026-09-24: "when drawing sharp angles without
+   * lifting pen/mouse holes in corners appear"). The baseline walk spans a hairpin — back lands on
+   * one leg, forward on the other — so the chord points ACROSS the turn and the normal comes out
+   * near-PARALLEL to the travel. The ribbon then twists and leaves the apex uncovered. Measured on
+   * the reported shape before the fix: the apex normal was 6° off the travel direction, where it
+   * must be 90°.
+   */
+  it("stays perpendicular to the local travel through a hairpin", () => {
+    const step = 3;
+    const turnRad = (165 * Math.PI) / 180;
+    const pts: { x: number; y: number }[] = [];
+    let x = 0,
+      y = 0;
+    for (let i = 0; i < 25; i++) {
+      pts.push({ x, y });
+      y += step;
+    }
+    for (let i = 0; i < 25; i++) {
+      x += step * Math.cos(Math.PI / 2 + turnRad);
+      y += step * Math.sin(Math.PI / 2 + turnRad);
+      pts.push({ x, y });
+    }
+    const ns = normals(pts, 13); // reach 13px, far longer than the 3px steps — spans the corner
+    for (let i = 1; i < pts.length - 1; i++) {
+      const dx = pts[i + 1].x - pts[i - 1].x;
+      const dy = pts[i + 1].y - pts[i - 1].y;
+      const len = Math.hypot(dx, dy);
+      // CORNER vertices are skipped on purpose: no single normal describes one, which is why they
+      // get the nib's footprint as a join instead. Using the engine's own predicate, so the set of
+      // vertices this test excuses is exactly the set the renderer covers another way.
+      if (isCorner(pts[i - 1], pts[i], pts[i + 1])) continue;
+      // |cos| between the normal and the local travel: 0 is perpendicular, 1 is parallel.
+      const alignment = Math.abs((dx / len) * ns[i].nx + (dy / len) * ns[i].ny);
+      expect(alignment).toBeLessThan(0.35); // within ~20° of perpendicular
+    }
+  });
+
   it("returns unit vectors everywhere, including a fully coincident run", () => {
     const held = [
       ...Array.from({ length: 30 }, () => ({ x: 10, y: 10 })),
@@ -152,5 +194,199 @@ describe("normals (jitter damping)", () => {
   it("survives a path of one single point", () => {
     expect(normals([{ x: 5, y: 5 }], 17)).toHaveLength(1);
     expect(Math.hypot(...Object.values(normals([{ x: 5, y: 5 }], 17)[0]))).toBeCloseTo(1, 6);
+  });
+});
+
+describe("drawCalligraphyStroke (corner holes)", () => {
+  /** Records every subpath the engine emits, instead of rasterising it. */
+  function recordRings(points: { x: number; y: number; pressure: number }[], nibAngle: number) {
+    const rings: number[][][] = [];
+    let cur: number[][] = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      beginPath() {},
+      fill() {},
+      moveTo: (x: number, y: number) => (cur = [[x, y]]),
+      lineTo: (x: number, y: number) => cur.push([x, y]),
+      closePath: () => rings.push(cur),
+    } as unknown as CanvasRenderingContext2D;
+    const settings = {
+      size: 26,
+      nibAngle,
+      nibFlatness: 0.8,
+      opacity: 100,
+      color: "#000",
+      isEraser: false,
+    } as BrushSettings;
+    drawCalligraphyStroke(ctx, points as never, settings, 1);
+    return rings;
+  }
+
+  /** A ring whose turns go both ways crosses itself (a quad drawn as a bowtie). */
+  function crossesItself(ring: number[][]): boolean {
+    let left = false;
+    let right = false;
+    for (let i = 0; i < ring.length; i++) {
+      const [ax, ay] = ring[i];
+      const [bx, by] = ring[(i + 1) % ring.length];
+      const [cx, cy] = ring[(i + 2) % ring.length];
+      const turn = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+      if (turn > 1e-9) left = true;
+      else if (turn < -1e-9) right = true;
+    }
+    return left && right;
+  }
+
+  /**
+   * Reported 2026-09-24, after the normals fix, with a screenshot of a zigzag: holes still punched
+   * through the ink at the corners. At a sharp turn the normal flips between two samples, so the
+   * segment quad twists into a bowtie. Its two lobes wind in opposite directions — `addRing` can
+   * make only one of them positive — and under nonzero fill the negative lobe CANCELS the ink of
+   * the pieces it overlaps. Measured on a 120° zigzag: 12-18 bowties and up to ~84px² of holes.
+   */
+  it("never emits a self-crossing piece on a sharp zigzag", () => {
+    const pts: { x: number; y: number; pressure: number }[] = [];
+    let x = 0;
+    let y = 0;
+    let dir = -Math.PI / 2 + 0.3;
+    for (let leg = 0; leg < 5; leg++) {
+      for (let d = 0; d < 120; d += 2) {
+        pts.push({ x, y, pressure: 0.3 + (0.6 * d) / 120 });
+        x += 2 * Math.cos(dir);
+        y += 2 * Math.sin(dir);
+      }
+      dir += ((leg % 2 ? -1 : 1) * 2 * Math.PI) / 3; // 120° turn, alternating
+    }
+    for (const angle of [0, 45, 90, 135]) {
+      const bad = recordRings(pts, angle).filter(crossesItself);
+      expect(bad.length, `nib angle ${angle}`).toBe(0);
+    }
+  });
+});
+
+describe("drawCalligraphyStroke (corner coverage)", () => {
+  /**
+   * The corner-holes test above can only see a piece crossing itself — which the hull now rules out
+   * by construction — so it cannot tell whether a corner is actually INKED. This one rasterises the
+   * emitted path under nonzero winding, the way the canvas fills it, and checks it against the true
+   * sweep: the union of the nib at every point of the path. A turn's outside is carried by the corner
+   * join (`CORNER_SKEW`); without it a 150° zigzag leaves ~2× as much of the sweep unpainted.
+   */
+  it("inks the outside of sharp turns out to the nib", () => {
+    const a = 13; // size 26
+    const b = a * (1 - 0.8);
+    const angle = Math.PI / 4;
+    const pts: { x: number; y: number; pressure: number }[] = [];
+    let x = 0;
+    let y = 0;
+    let dir = -Math.PI / 2 + 0.3;
+    for (let leg = 0; leg < 4; leg++) {
+      for (let k = 0; k < 40; k++) {
+        pts.push({ x, y, pressure: 1 });
+        x += 2 * Math.cos(dir);
+        y += 2 * Math.sin(dir);
+      }
+      dir += ((leg % 2 ? -1 : 1) * 150 * Math.PI) / 180;
+    }
+    const rings: number[][][] = [];
+    let cur: number[][] = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      beginPath() {},
+      fill() {},
+      moveTo: (px: number, py: number) => (cur = [[px, py]]),
+      lineTo: (px: number, py: number) => cur.push([px, py]),
+      closePath: () => rings.push(cur),
+    } as unknown as CanvasRenderingContext2D;
+    const settings = {
+      size: 26,
+      nibAngle: 45,
+      nibFlatness: 0.8,
+      opacity: 100,
+      color: "#000",
+      isEraser: false,
+    } as BrushSettings;
+    drawCalligraphyStroke(ctx, pts as never, settings, 1);
+
+    const winding = (px: number, py: number) => {
+      let total = 0;
+      for (const r of rings) {
+        for (let i = 0; i < r.length; i++) {
+          const [ax, ay] = r[i];
+          const [bx, by] = r[(i + 1) % r.length];
+          const side = (bx - ax) * (py - ay) - (px - ax) * (by - ay);
+          if (ay <= py) {
+            if (by > py && side > 0) total++;
+          } else if (by <= py && side < 0) total--;
+        }
+      }
+      return total;
+    };
+    const inNib = (px: number, py: number, cx: number, cy: number) => {
+      const u = (px - cx) * Math.cos(angle) + (py - cy) * Math.sin(angle);
+      const v = -(px - cx) * Math.sin(angle) + (py - cy) * Math.cos(angle);
+      return (u * u) / (a * a) + (v * v) / (b * b) <= 1;
+    };
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    let missing = 0;
+    for (let py = -120; py <= 40; py++) {
+      for (let px = -30; px <= 120; px++) {
+        const sx = px + 0.13;
+        const sy = py + 0.29;
+        // The ends are flush by design (no footprint), so they are not part of this check.
+        if (Math.hypot(sx - first.x, sy - first.y) < a + 2) continue;
+        if (Math.hypot(sx - last.x, sy - last.y) < a + 2) continue;
+        if (!pts.some((p) => inNib(sx, sy, p.x, p.y))) continue;
+        if (winding(sx, sy) === 0) missing++;
+      }
+    }
+    // Measured: 114px² with the corner joins, 247px² without them (CORNER_SKEW disabled). The rest is
+    // the position smoothing rounding each apex, which is deliberate.
+    expect(missing).toBeLessThan(160);
+  });
+});
+
+describe("nibSupportPoint", () => {
+  it("projects onto the direction by the ellipse's support function, so the width is unchanged", () => {
+    const angle = Math.PI / 4;
+    for (const deg of [0, 20, 45, 90, 133, 200, 300]) {
+      const t = (deg * Math.PI) / 180;
+      const ux = Math.cos(t);
+      const uy = Math.sin(t);
+      // Closed form, written out independently of the engine: h(u) = |(a·u·major, b·u·minor)|.
+      const h = Math.hypot(
+        10 * (ux * Math.cos(angle) + uy * Math.sin(angle)),
+        1.5 * (-ux * Math.sin(angle) + uy * Math.cos(angle)),
+      );
+      const s = nibSupportPoint(10, 1.5, angle, ux, uy);
+      expect(s.x * ux + s.y * uy).toBeCloseTo(h, 9);
+      expect(nibSupport(10, 1.5, angle, ux, uy)).toBeCloseTo(h, 9);
+    }
+  });
+
+  it("lies on the nib's outline", () => {
+    const angle = 0.7;
+    const s = nibSupportPoint(10, 1.5, angle, 0.3, Math.sqrt(1 - 0.09));
+    const u = s.x * Math.cos(angle) + s.y * Math.sin(angle);
+    const v = -s.x * Math.sin(angle) + s.y * Math.cos(angle);
+    expect((u / 10) ** 2 + (v / 1.5) ** 2).toBeCloseTo(1, 9);
+  });
+
+  /**
+   * Reported 2026-09-24 with a screenshot: a vertical stroke under a 45° nib ended square across
+   * instead of along the nib. The ribbon's edge used to sit at `n · nibSupport` — straight out
+   * along the normal — which puts the end cut perpendicular to the travel whatever the nib angle.
+   * A real nib touches the edge at its support point, out near the TIP of a flat nib, so the cut
+   * between the two edges runs along the nib.
+   */
+  it("puts a flat nib's end cut along the nib, not square to the travel", () => {
+    const angle = Math.PI / 4; // nib at 45°
+    const s = nibSupportPoint(15, 1, angle, 1, 0); // travelling vertically: normal is (1, 0)
+    // The cut runs from -s to +s; its direction should be the nib's, within a few degrees.
+    const cut = Math.atan2(s.y, s.x);
+    expect(Math.abs(cut - angle)).toBeLessThan((5 * Math.PI) / 180);
   });
 });

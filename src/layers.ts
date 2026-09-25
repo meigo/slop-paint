@@ -123,6 +123,23 @@ export class LayerManager {
     return search(this.tree);
   }
 
+  /** 0..1, a layer's opacity times its enclosing groups' — the alpha `composite()` draws it with.
+   *  Ignores visibility. */
+  contentAlpha(id: number): number {
+    function search(nodes: LayerNode[], alpha: number): number | null {
+      for (const node of nodes) {
+        const a = alpha * (node.opacity / 100);
+        if (node.id === id) return a;
+        if (node.type === "group") {
+          const found = search(node.children, a);
+          if (found !== null) return found;
+        }
+      }
+      return null;
+    }
+    return search(this.tree, 1) ?? 1;
+  }
+
   /** Update display pixel ratio */
   setDpr(dpr: number) {
     this.dpr = dpr;

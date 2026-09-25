@@ -9,6 +9,10 @@
     Redo2,
     Settings2,
     Pipette,
+    SquareMinus,
+    Dices,
+    Check,
+    X,
   } from "@lucide/svelte";
   import { app, pressureCurves, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
@@ -17,6 +21,7 @@
   import ToolbarMenu from "./ToolbarMenu.svelte";
   import { MAX_GAP } from "../fill-holes";
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
+  import { MAX_THICKNESS } from "../outline";
   import { sliderFill } from "./slider-fill";
 
   let {
@@ -25,6 +30,8 @@
     redo,
     clearLayer,
     fillEnclosed,
+    applyOutline,
+    cancelOutline,
     canUndo,
     canRedo,
     hasSelection,
@@ -49,6 +56,8 @@
     redo: () => void;
     clearLayer: () => void;
     fillEnclosed: () => void;
+    applyOutline: () => void;
+    cancelOutline: () => void;
     canUndo: boolean;
     canRedo: boolean;
     /** A plain marquee exists, so copy/cut/delete can act. */
@@ -80,6 +89,8 @@
   let activeTool = $derived(app.currentTool);
   let showBrush = $derived(activeTool === "brush" || activeTool === "eraser");
   let showFill = $derived(activeTool === "fill");
+  let outlineWobble = $derived(Math.round(app.outline.wobble * 100));
+  let outlineVariation = $derived(Math.round(app.outline.variation * 100));
 
   // Size editing
   let editingSize = $state(false);
@@ -159,6 +170,7 @@
     { tool: "lasso", icon: Lasso, title: "Lasso Select (L)" },
     { tool: "fill", icon: PaintBucket, title: "Paint Bucket (G)" },
     { tool: "eyedropper", icon: Pipette, title: "Eyedropper (I) — drag to aim, release to pick" },
+    { tool: "outline", icon: SquareMinus, title: "Outline — hollow the layer's shapes to a line" },
   ];
 
   const actionBtnClass =
@@ -709,6 +721,91 @@
       ></span>
       <span class="text-text-muted">Drag to aim, release to pick a color</span>
     </div>
+  {:else if activeTool === "outline"}
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="Outline thickness in pixels"
+    >
+      Thickness
+      <input
+        type="range"
+        min="0.5"
+        max={MAX_THICKNESS}
+        step="0.5"
+        style={sliderFill(app.outline.thickness, 0.5, MAX_THICKNESS)}
+        bind:value={app.outline.thickness}
+        class="w-16"
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{app.outline.thickness}</span>
+    </label>
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="Outline wobble: how far the line wanders across the edge"
+    >
+      Wobble
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="5"
+        style={sliderFill(outlineWobble, 0, 100)}
+        value={outlineWobble}
+        oninput={(e) => (app.outline.wobble = Number(e.currentTarget.value) / 100)}
+        class="w-16"
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{outlineWobble}%</span>
+    </label>
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="Outline variation: how much the line swells and thins"
+    >
+      Variation
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="5"
+        style={sliderFill(outlineVariation, 0, 100)}
+        value={outlineVariation}
+        oninput={(e) => (app.outline.variation = Number(e.currentTarget.value) / 100)}
+        class="w-16"
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{outlineVariation}%</span>
+    </label>
+    <div class="flex items-center">
+      <button
+        class={actionBtnClass}
+        title="Shuffle the outline's randomness"
+        aria-label="Shuffle the outline's randomness"
+        onclick={() => (app.outline.seed = (app.outline.seed + 1) | 0)}><Dices size={18} /></button
+      >
+    </div>
+    <div class="h-6 w-px bg-border"></div>
+    <div class="flex items-center gap-1">
+      <button
+        class="ui-on flex h-9 w-9 items-center justify-center rounded-md border {dimmable}"
+        aria-disabled={!app.outlineActive}
+        title={app.outlineActive
+          ? "Apply outline (Enter)"
+          : "Apply outline — tap the canvas to preview the active layer first"}
+        aria-label="Apply outline"
+        onclick={() => {
+          if (app.outlineActive) applyOutline();
+        }}><Check size={18} /></button
+      >
+      <button
+        class="{actionBtnClass} {dimmable}"
+        aria-disabled={!app.outlineActive}
+        title={app.outlineActive ? "Cancel outline (Esc)" : "Cancel outline — nothing to cancel"}
+        aria-label="Cancel outline"
+        onclick={() => {
+          if (app.outlineActive) cancelOutline();
+        }}><X size={18} /></button
+      >
+    </div>
+    {#if !app.outlineActive}
+      <span class="text-xs text-text-muted">Tap the canvas to outline the active layer</span>
+    {/if}
   {:else if activeTool === "select" || activeTool === "lasso"}
     <span class="text-xs text-text-muted"
       >{activeTool === "select" ? "Drag a rectangle" : "Draw around an area"} to select</span

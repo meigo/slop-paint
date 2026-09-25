@@ -7,7 +7,7 @@ import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
 
-export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedropper";
+export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedropper" | "outline";
 
 interface AppStateShape {
   currentTool: Tool;
@@ -33,6 +33,10 @@ interface AppStateShape {
   statusMessage: string;
   /** What the control under the pointer does — iPad has no hover, so titles go here. */
   statusHint: string;
+  /** Outline tool knobs (see `outline.ts`). Session-only, not saved with the settings. */
+  outline: { thickness: number; wobble: number; variation: number; seed: number };
+  /** An Outline preview is live in the active layer (Apply/Cancel can act). */
+  outlineActive: boolean;
 }
 
 export const app: AppStateShape = $state({
@@ -69,6 +73,8 @@ export const app: AppStateShape = $state({
   layerPanelWidth: DEFAULT_PANEL_WIDTH,
   statusMessage: "",
   statusHint: "",
+  outline: { thickness: 3, wobble: 0.35, variation: 0.35, seed: 1 },
+  outlineActive: false,
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget

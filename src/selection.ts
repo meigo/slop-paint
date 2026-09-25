@@ -207,6 +207,12 @@ export class Selection {
   /** Shift held: side handles skew instead of stretching, corners invert keepProportions. */
   shiftHeld = false;
 
+  /** 0..1, the edited layer's opacity times its groups' — what the compositor applies to it. The
+   *  lifted pixels ARE that layer's content, so they fade with it; without this a lift on a faded
+   *  layer jumped to full strength for the length of the gesture and settled back on commit.
+   *  Chrome (ants, handles, grid) is UI, not content, and stays at full strength. */
+  contentAlpha = 1;
+
   /** Current viewport zoom — used to keep handle hit areas at a constant screen-pixel size. */
   screenScale = 1;
 
@@ -492,7 +498,9 @@ export class Selection {
     const sides = this.transformedSides(corners);
     const rotateHandle = this.rotateHandlePos(corners);
 
-    const rotR = tol + 2;
+    // `+ 2` is screen px, like the handle offset. A document-px pad swallowed the side handle once
+    // the view was zoomed out far enough to fit an HD canvas.
+    const rotR = tol + 2 * this.px;
     if ((x - rotateHandle.x) ** 2 + (y - rotateHandle.y) ** 2 < rotR * rotR) return "rotate";
 
     const cornerHandles: { handle: Handle; p: { x: number; y: number } }[] = [
@@ -835,7 +843,10 @@ export class Selection {
     if (this.state === "warping" && this.warpGrid.length === this.warpRows) {
       const grid = this.warpGrid;
       if (this.floatingPixels) {
+        ctx.save();
+        ctx.globalAlpha = this.contentAlpha; // content, unlike the grid and ants below
         drawWarpedMesh(ctx, this.floatingPixels, this.rect, grid, this.warpRows, this.warpCols);
+        ctx.restore();
       }
       // Internal grid lines (between adjacent control points).
       ctx.save();
@@ -881,6 +892,7 @@ export class Selection {
     if (this.floatingPixels) {
       const m = this.matrix;
       ctx.save();
+      ctx.globalAlpha = this.contentAlpha; // content, unlike the box and handles below
       ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
       ctx.drawImage(this.floatingPixels, this.rect.x, this.rect.y, this.rect.w, this.rect.h);
       ctx.restore();
