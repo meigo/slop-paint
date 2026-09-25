@@ -157,11 +157,11 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Copy keeps the selection's pixels in memory (layer resolution + source rect) and also writes a PNG at document resolution to the system clipboard (best effort; the ClipboardItem must be built synchronously with a Blob promise for Safari)
 - Paste goes through the window `paste` event: an image on the system clipboard becomes a REFERENCE layer (below); if its size equals the internal copy's, the internal copy is used instead so it keeps its position. Pasted pixels float on the active layer with transform handles (Enter applies, Esc cancels); the paste is one undo step
 - Edit menu / row-2 Paste (for iPad without a keyboard) tries `navigator.clipboard.read()` and falls back to the internal copy. Never dimmed — the system clipboard may hold an image from another app (Photos) the app can't see until it asks; an empty paste says so in the status bar
-- Delete/cut are one undo step and skip the step if nothing changed
+- Delete/cut are one undo step and skip the step if nothing changed; so does applying an untouched transform (an import applied as it landed made the next undo appear to do nothing)
 
 ## Reference Images
 
-- File ▸ Import reference image…, or pasting an image from another app, adds a reference: an ORDINARY layer (not a special kind, unlike slop-animator's) named `[ignore]ref <file>` (`referenceLayerName`, `paste.ts`) so Spine's PSD import skips it, at 60% (`REFERENCE_OPACITY`), inserted just BELOW the active layer (`addLayerBelow`) so the drawing traces over it, fitted to the page (1 image px = 1 doc px, scaled down only). One undo step; then it is lifted into Free transform to place — Enter keeps the move, Esc leaves it where it landed
+- File ▸ Import reference image…, or pasting an image from another app, adds a reference: an ORDINARY layer (not a special kind, unlike slop-animator's) named `[ignore]ref <file>` (`referenceLayerName`, `paste.ts`) so Spine's PSD import skips it, at 60% (`REFERENCE_OPACITY`), inserted just BELOW the active layer (`addLayerBelow`) so the drawing traces over it, fitted to the page (1 image px = 1 doc px, scaled down only). One undo step; then it is lifted into Free transform to place — Enter keeps the move, Esc leaves it where it landed. When placing ends the layer you were drawing on is active again (the next stroke used to land on the faint reference), and Enter/Esc/✓/✗ also return to the tool you imported from (`resolveFloat`). Undo while placing takes back the whole import
 - It is plain pixels once applied (rescaling later resamples), and PNG export includes it unless hidden
 - Saves and exports (`withFloatApplied`) draw a lifted float into its layer for the save and put the layer back: a lift leaves a hole until applied, and an autosave mid-transform stored that hole
 
@@ -198,6 +198,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## New Document
 
 - The dialog warns (in `warn`) that it replaces the drawing, its undo history and the autosaved copy
+- App shortcuts stand aside only for real text entry (`lib/text-entry.ts` `isTextEntry`): a slider keeps focus after a drag (the canvas prevents the focus change on press), and treating every `<input>` as a text field left Ctrl+Z and the tool keys dead after touching one. A focused `<select>` lets only Ctrl/Cmd shortcuts through
 - Dialogs handle Enter/Escape on `window` (a backdrop never has focus, so a keydown there never fires), and App.svelte ignores app shortcuts while one is open
 
 - Creates a white-filled "Background" layer at the bottom and an empty "Layer 1" on top

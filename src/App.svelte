@@ -30,6 +30,7 @@
     type OutlineNoisePlanes,
   } from "./outline";
   import { clampPanelWidth, panelBesideToolbar } from "./panel-layout";
+  import { isTextEntry } from "./lib/text-entry";
   import { Selection, type SelectionRect } from "./selection";
   import {
     placeExternalImage,
@@ -379,6 +380,13 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
+    // Undo while placing an imported reference takes back the import itself: cancelling only the
+    // placement left the image where it landed, so the undo seemed to do nothing.
+    if (referenceReturn && selection?.hasFloating) {
+      resolveFloat(false);
+      history.undo();
+      return;
+    }
     // A live Outline preview looks like an edit already made, and undo is the artist taking it
     // back. Cancel it and stop there, or the undo would also take back the edit before it.
     if (outlineActive()) {
@@ -935,11 +943,11 @@
     if (selection) selection.shiftHeld = e.shiftKey;
     // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
     if (showNewDocDialog || showResizeDialog || shareFileReady) return;
-    if (
-      (e.target as HTMLElement).tagName === "INPUT" ||
-      (e.target as HTMLElement).tagName === "SELECT"
-    )
-      return;
+    const target = e.target as HTMLElement;
+    if (isTextEntry(target)) return;
+    // A dropdown keeps focus after a pick; its letter keys jump between options, so only the
+    // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
+    if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
 
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
@@ -993,12 +1001,12 @@
     }
     if (e.key === "Enter" && selection?.active) {
       e.preventDefault();
-      selection.commit();
+      resolveFloat(true);
       return;
     }
     if (e.key === "Escape" && selection?.active) {
       e.preventDefault();
-      selection.cancel();
+      resolveFloat(false);
       return;
     }
 
@@ -1650,9 +1658,13 @@
    * Then it is lifted into Free transform to be placed — Enter keeps the move, Esc leaves it where
    * it landed.
    */
+  // Where to hand back to once placing an imported reference ends (see endReferencePlacement).
+  let referenceReturn: { layerId: number; tool: Tool } | null = null;
+
   function importReference(img: ImageBitmap, fileName?: string) {
     if (!layers || !selection) return;
     if (outlineActive()) cancelOutline();
+    const returnTo = { layerId: layers.activeId, tool: app.currentTool };
     setTool("select"); // applies any float first
     if (selection.active) selection.cancel();
     const rect = placeExternalImage(img.width, img.height, app.docWidth, app.docHeight);
@@ -1666,7 +1678,31 @@
     bumpLayerVersion();
     selection.selectRect(rect);
     enterFreeTransform();
+    // Set only now: the setTool/cancel above resolve an earlier float, which would end it.
+    if (selection.hasFloating) referenceReturn = returnTo;
     flashStatus("Reference added — drag to place it, Enter to apply", 4000);
+  }
+
+  /** Placing a reference ended — applied, cancelled, or applied by a tap elsewhere. The layer the
+   *  artist was drawing on becomes active again: the next stroke belongs there, not on the faint
+   *  `[ignore]` reference (it landed there, invisibly, before). The tool comes back separately, in
+   *  resolveFloat — a tap elsewhere is already a Select gesture in progress. */
+  function endReferencePlacement() {
+    const r = referenceReturn;
+    if (!r) return;
+    referenceReturn = null;
+    if (layers.findNode(r.layerId)) layers.activeId = r.layerId;
+    bumpLayerVersion();
+  }
+
+  /** Enter/Esc and ✓/✗: apply or cancel the selection. After placing a reference, also return to
+   *  the tool it was imported from. */
+  function resolveFloat(apply: boolean) {
+    if (!selection) return;
+    const back = referenceReturn?.tool ?? null;
+    if (apply) selection.commit();
+    else selection.cancel();
+    if (back && back !== app.currentTool) setTool(back);
   }
 
   function handleImageFile() {
@@ -1684,7 +1720,7 @@
   /** Ctrl/Cmd+V: an image on the system clipboard wins, else the internal copy. */
   function handlePaste(e: ClipboardEvent) {
     const t = e.target as HTMLElement | null;
-    if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA") return;
+    if (isTextEntry(t)) return;
     const file = [...(e.clipboardData?.items ?? [])]
       .find((i) => i.kind === "file" && i.type.startsWith("image/"))
       ?.getAsFile();
@@ -1730,7 +1766,12 @@
       const before = preSelectionSnapshot;
       preSelectionSnapshot = null;
       selection.renderFloatingTo(layer.ctx);
-      if (before) pushPixelEdit(layers, layer, before);
+      // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
+      // landed made the next undo appear to do nothing).
+      if (before && !sameImageData(before, layers.snapshotOf(layer))) {
+        pushPixelEdit(layers, layer, before);
+      }
+      endReferencePlacement();
       layers.composite();
       bumpLayerVersion();
     };
@@ -1742,6 +1783,7 @@
         layers.composite();
         bumpLayerVersion();
       }
+      endReferencePlacement();
     };
 
     selection.onChange = () => {
@@ -1950,8 +1992,8 @@
           mesh={() => enterWarp(3, 3)}
           flip={flipSelection}
           {toggleKeepProportions}
-          applyFloat={() => selection.commit()}
-          cancelFloat={() => selection.cancel()}
+          applyFloat={() => resolveFloat(true)}
+          cancelFloat={() => resolveFloat(false)}
           copy={copySelection}
           cut={cutSelection}
           paste={() => void pasteFromMenu()}
