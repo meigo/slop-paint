@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { clampPanelWidth, MIN_PANEL_WIDTH, DEFAULT_PANEL_WIDTH } from "../panel-layout";
+import {
+  clampPanelWidth,
+  panelBesideToolbar,
+  MIN_PANEL_WIDTH,
+  DEFAULT_PANEL_WIDTH,
+  TOOLBAR_ROW1_WIDTH,
+} from "../panel-layout";
 
 describe("clampPanelWidth", () => {
   it("returns a value within range unchanged", () => {
@@ -29,5 +35,22 @@ describe("clampPanelWidth", () => {
     // The floor is 180 of usable content plus the grip's reserved 4px strip.
     expect(MIN_PANEL_WIDTH).toBe(184);
     expect(clampPanelWidth(DEFAULT_PANEL_WIDTH, 1400)).toBe(DEFAULT_PANEL_WIDTH);
+  });
+});
+
+describe("panelBesideToolbar", () => {
+  it("goes beside the toolbar when row 1 still fits next to it", () => {
+    expect(panelBesideToolbar(1180, DEFAULT_PANEL_WIDTH)).toBe(true); // iPad landscape
+    expect(panelBesideToolbar(TOOLBAR_ROW1_WIDTH + 300, 300)).toBe(true); // exactly fits
+  });
+
+  it("stays below the toolbar when row 1 would be squeezed", () => {
+    expect(panelBesideToolbar(820, DEFAULT_PANEL_WIDTH)).toBe(false); // iPad Air portrait
+    expect(panelBesideToolbar(TOOLBAR_ROW1_WIDTH + 299, 300)).toBe(false);
+  });
+
+  it("follows the panel width: widening it can move it back below", () => {
+    expect(panelBesideToolbar(1100, 300)).toBe(true);
+    expect(panelBesideToolbar(1100, 400)).toBe(false);
   });
 });

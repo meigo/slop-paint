@@ -29,7 +29,7 @@
     OUTLINE_MARGIN,
     type OutlineNoisePlanes,
   } from "./outline";
-  import { clampPanelWidth } from "./panel-layout";
+  import { clampPanelWidth, panelBesideToolbar } from "./panel-layout";
   import { Selection, type SelectionRect } from "./selection";
   import { placeExternalImage, placeInternalPaste } from "./paste";
   import { Viewport } from "./viewport";
@@ -67,6 +67,11 @@
   let selectionOverlayEl: HTMLCanvasElement;
   let canvasClipEl = $state() as HTMLDivElement;
   let workspaceEl: HTMLDivElement;
+  let viewportW = $state(window.innerWidth);
+  // The layer panel runs full height beside the toolbar rows when row 1 still fits next to it
+  // (desktop, iPad landscape); otherwise it sits below them (portrait iPad). Re-evaluated as the
+  // window turns or the panel is dragged wider.
+  const panelBeside = $derived(panelBesideToolbar(viewportW, app.layerPanelWidth));
   let fileInputEl: HTMLInputElement;
 
   // --- Core objects (imperative, not $state) ---
@@ -1753,7 +1758,7 @@
       updateZoomDisplay();
       updateBrushCursor(e.clientX, e.clientY);
     }
-    workspaceEl.addEventListener("wheel", handleWheel, { passive: false });
+    canvasClipEl.addEventListener("wheel", handleWheel, { passive: false }); // the canvas only, so the layer list scrolls
 
     // Canvas panning (capture phase)
     function handlePanDown(e: PointerEvent) {
@@ -1820,7 +1825,7 @@
     return () => {
       cleanupInput();
       cleanupTouch();
-      workspaceEl.removeEventListener("wheel", handleWheel);
+      canvasClipEl.removeEventListener("wheel", handleWheel);
       canvasEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
       canvasEl.removeEventListener("pointermove", handlePanMove, { capture: true });
       canvasEl.removeEventListener("pointerup", handlePanUp, { capture: true });
@@ -1841,6 +1846,7 @@
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
   onpaste={handlePaste}
+  bind:innerWidth={viewportW}
   onresize={() => {
     // Keep the panel inside half the viewport when the window shrinks.
     app.layerPanelWidth = clampPanelWidth(app.layerPanelWidth, window.innerWidth);
@@ -1849,56 +1855,68 @@
 />
 
 <div class="flex h-full w-full flex-col bg-canvas-bg">
-  {#if layersReady}
-    <Toolbar
-      {setTool}
-      {undo}
-      {redo}
-      {clearLayer}
-      fillEnclosed={fillAllEnclosed}
-      {applyOutline}
-      {cancelOutline}
-      canUndo={undoAvailable}
-      canRedo={redoAvailable}
-      hasSelection={selectionActive}
-      hasClipboard={clipboardFull}
-      {canCopy}
-      {selectAll}
-      {deselect}
-      selectionMode={selectionState}
-      {warpIsMesh}
-      {liftBlock}
-      transform={enterFreeTransform}
-      distort={() => enterWarp(2, 2)}
-      mesh={() => enterWarp(3, 3)}
-      flip={flipSelection}
-      {toggleKeepProportions}
-      applyFloat={() => selection.commit()}
-      cancelFloat={() => selection.cancel()}
-      copy={copySelection}
-      cut={cutSelection}
-      paste={() => void pasteFromMenu()}
-      {deleteSelection}
-      {saveImage}
-      exportPsd={doExportPsd}
-      savePsd={doSavePsd}
-      saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
-      openPsd={doOpenPsd}
-      newDoc={() => {
-        showNewDocDialog = true;
-      }}
-      resizeDoc={() => {
-        showResizeDialog = true;
-      }}
-      {resetView}
-      reset100={resetTo100Percent}
-      onSettingsChange={debouncedSave}
-    />
-  {/if}
+  <!-- One grid, two arrangements, so switching never re-mounts the toolbar, canvas or panel. -->
+  <div
+    class="workspace-layout grid min-h-0 flex-1 overflow-hidden"
+    style:grid-template-columns="minmax(0, 1fr) auto"
+    style:grid-template-rows="auto minmax(0, 1fr)"
+    style:grid-template-areas={panelBeside
+      ? '"toolbar panel" "canvas panel"'
+      : '"toolbar toolbar" "canvas panel"'}
+    bind:this={workspaceEl}
+  >
+    <div class="relative z-20 flex min-w-0 flex-col" style:grid-area="toolbar">
+      {#if layersReady}
+        <Toolbar
+          {setTool}
+          {undo}
+          {redo}
+          {clearLayer}
+          fillEnclosed={fillAllEnclosed}
+          {applyOutline}
+          {cancelOutline}
+          canUndo={undoAvailable}
+          canRedo={redoAvailable}
+          hasSelection={selectionActive}
+          hasClipboard={clipboardFull}
+          {canCopy}
+          {selectAll}
+          {deselect}
+          selectionMode={selectionState}
+          {warpIsMesh}
+          {liftBlock}
+          transform={enterFreeTransform}
+          distort={() => enterWarp(2, 2)}
+          mesh={() => enterWarp(3, 3)}
+          flip={flipSelection}
+          {toggleKeepProportions}
+          applyFloat={() => selection.commit()}
+          cancelFloat={() => selection.cancel()}
+          copy={copySelection}
+          cut={cutSelection}
+          paste={() => void pasteFromMenu()}
+          {deleteSelection}
+          {saveImage}
+          exportPsd={doExportPsd}
+          savePsd={doSavePsd}
+          saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
+          openPsd={doOpenPsd}
+          newDoc={() => {
+            showNewDocDialog = true;
+          }}
+          resizeDoc={() => {
+            showResizeDialog = true;
+          }}
+          {resetView}
+          reset100={resetTo100Percent}
+          onSettingsChange={debouncedSave}
+        />
+      {/if}
+    </div>
 
-  <div class="workspace-layout flex flex-1 overflow-hidden" bind:this={workspaceEl}>
     <div
-      class="relative min-h-0 min-w-0 flex-1 touch-none overflow-hidden bg-canvas-bg"
+      class="relative min-h-0 min-w-0 touch-none overflow-hidden bg-canvas-bg"
+      style:grid-area="canvas"
       bind:this={canvasClipEl}
     >
       <div class="absolute touch-none will-change-transform" bind:this={canvasContainerEl}>
@@ -1921,7 +1939,9 @@
     </div>
 
     {#if layersReady}
-      <LayerPanel {layers} onWidthChange={debouncedSave} />
+      <div class="flex min-h-0" style:grid-area="panel">
+        <LayerPanel {layers} onWidthChange={debouncedSave} />
+      </div>
     {/if}
   </div>
 

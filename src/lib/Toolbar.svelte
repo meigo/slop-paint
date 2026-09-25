@@ -134,6 +134,7 @@
   let showFill = $derived(activeTool === "fill");
   let outlineWobble = $derived(Math.round(app.outline.wobble * 100));
   let outlineVariation = $derived(Math.round(app.outline.variation * 100));
+  let outlineRandom = $derived(app.outline.wobble > 0 || app.outline.variation > 0);
 
   // Size editing
   let editingSize = $state(false);
@@ -437,7 +438,7 @@
      switching tools doesn't move the canvas. Wraps (rather than scrolling) so the pressure-curve
      popup isn't clipped; a very narrow window can still make it taller. -->
 <div
-  class="z-10 flex min-h-10 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
+  class="z-10 flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
 >
   <!-- Brush options -->
   {#if showBrush}
@@ -837,11 +838,18 @@
       <span class="min-w-7 text-[11px] text-text-muted">{outlineVariation}%</span>
     </label>
     <div class="flex items-center">
+      <!-- The seed only moves WHERE the line wobbles and swells; with both at 0 there is nothing to
+           reshuffle, so say so rather than take a silent tap. -->
       <button
-        class={actionBtnClass}
-        title="Shuffle the outline's randomness"
+        class="{actionBtnClass} {dimmable}"
+        aria-disabled={!outlineRandom}
+        title={outlineRandom
+          ? "Shuffle the outline's randomness"
+          : "Shuffle — set Wobble or Variation above 0 first"}
         aria-label="Shuffle the outline's randomness"
-        onclick={() => (app.outline.seed = (app.outline.seed + 1) | 0)}><Dices size={18} /></button
+        onclick={() => {
+          if (outlineRandom) app.outline.seed = (app.outline.seed + 1) | 0;
+        }}><Dices size={18} /></button
       >
     </div>
     <div class="h-6 w-px bg-border"></div>

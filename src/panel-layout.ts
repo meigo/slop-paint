@@ -15,3 +15,14 @@ export function clampPanelWidth(px: number, viewportW: number): number {
   const max = Math.max(MIN_PANEL_WIDTH, Math.round(viewportW * 0.5));
   return Math.max(MIN_PANEL_WIDTH, Math.min(px, max));
 }
+
+/** Width (px) toolbar row 1 needs: tools, undo/redo, zoom readout and the four menus, measured at
+ *  about 735. Row 1 cannot wrap or scroll (either would clip its menus), so re-measure this when a
+ *  tool button or menu is added there. */
+export const TOOLBAR_ROW1_WIDTH = 740;
+
+/** Whether the layer panel can run full height beside the toolbar rows, or must sit below them
+ *  because row 1 would no longer fit next to it (a portrait iPad at the default panel width). */
+export function panelBesideToolbar(viewportW: number, panelW: number): boolean {
+  return viewportW - panelW >= TOOLBAR_ROW1_WIDTH;
+}
