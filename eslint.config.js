@@ -13,6 +13,11 @@ export default tseslint.config(
       "prefer-const": "warn",
     },
   },
+  {
+    // Build-time Node script (icon generation): the two Node globals it uses.
+    files: ["tools/**/*.mjs"],
+    languageOptions: { globals: { Buffer: "readonly", console: "readonly" } },
+  },
   // Disable rules that conflict with Prettier (must be after the rule configs).
   prettier,
   {

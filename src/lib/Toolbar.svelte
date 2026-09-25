@@ -20,6 +20,13 @@
     FlipVertical2,
     Link2,
     Link2Off,
+    Copy,
+    Scissors,
+    ClipboardPaste,
+    Trash2,
+    SquareX,
+    Scan,
+    SendToBack,
   } from "@lucide/svelte";
   import { app, pressureCurves, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
@@ -218,8 +225,6 @@
   const kbd = "text-[11px] text-text-muted";
   const dimmable =
     "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";
-  const textBtn =
-    "h-7 rounded-md border border-border bg-surface-raised px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover";
   // Cut/Delete need a plain marquee; over a float (copy's other case) they wait for Apply/Cancel.
   let whyNoMarquee = $derived(canCopy ? "apply or cancel the transform first" : "nothing selected");
   let floating = $derived(selectionMode === "transforming" || selectionMode === "warping");
@@ -459,7 +464,7 @@
         min="1"
         max="80"
         step="0.5"
-        class="w-20"
+        class="w-16"
         style={sliderFill(app.brushSettings.size, 1, 80)}
         bind:value={app.brushSettings.size}
         oninput={onSettingsChange}
@@ -512,13 +517,31 @@
         type="range"
         min="1"
         max="100"
-        class="w-20"
+        class="w-16"
         style={sliderFill(app.brushSettings.opacity, 1, 100)}
         bind:value={app.brushSettings.opacity}
         oninput={onSettingsChange}
       />
       <span class="min-w-7 text-[11px] text-text-muted">{opacityDisplay}</span>
     </label>
+  {/if}
+
+  <!-- Draw behind is toggled while drawing (flats under line art), so it sits on the bar, not behind
+       the gear. Brush only: the eraser ignores it. -->
+  {#if activeTool === "brush"}
+    <div class="flex items-center">
+      <button
+        class="{actionBtnClass} {app.brushSettings.drawBehind ? 'ui-on' : ''}"
+        aria-pressed={app.brushSettings.drawBehind}
+        title={app.brushSettings.drawBehind
+          ? "Draw behind on — paint goes under existing pixels; tap to turn off"
+          : "Draw behind — paint under existing pixels"}
+        onclick={() => {
+          app.brushSettings.drawBehind = !app.brushSettings.drawBehind;
+          onSettingsChange();
+        }}><SendToBack size={18} /></button
+      >
+    </div>
   {/if}
 
   {#if showBrush}
@@ -643,15 +666,6 @@
             </label>
           {/if}
 
-          <label class="flex items-center gap-2 text-xs text-text-secondary">
-            <input
-              type="checkbox"
-              bind:checked={app.brushSettings.drawBehind}
-              onchange={onSettingsChange}
-            />
-            Draw behind existing pixels
-          </label>
-
           <div class="mt-1 flex flex-col gap-1 border-t border-border pt-2">
             <span class="text-xs text-text-secondary"
               >Pressure curve{activeTool === "eraser" ? " (eraser)" : ""}</span
@@ -674,7 +688,7 @@
         style={sliderFill(app.fillSettings.alphaThreshold ?? 0, 0, 200)}
         bind:value={app.fillSettings.alphaThreshold}
         oninput={onSettingsChange}
-        class="w-20"
+        class="w-16"
       />
       <span class="min-w-7 text-[11px] text-text-muted">{fillThresholdDisplay}</span>
     </label>
@@ -687,7 +701,7 @@
         style={sliderFill(app.fillSettings.expand ?? 0, 0, 20)}
         bind:value={app.fillSettings.expand}
         oninput={onSettingsChange}
-        class="w-20"
+        class="w-16"
       />
       <span class="min-w-7 text-[11px] text-text-muted">{fillExpandDisplay}</span>
     </label>
@@ -862,15 +876,15 @@
          when there is one. Left-aligned, so a button never moves when another is dimmed. -->
     <div class="flex items-center gap-1">
       <button
-        class="{textBtn} {dimmable}"
+        class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!canCopy}
         title={canCopy ? "Copy (Ctrl+C)" : "Copy — nothing selected"}
         onclick={() => {
           if (canCopy) copy();
-        }}>Copy</button
+        }}><Copy size={16} /></button
       >
       <button
-        class="{textBtn} {dimmable}"
+        class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!hasSelection || !!liftBlock}
         title={!hasSelection
           ? `Cut — ${whyNoMarquee}`
@@ -879,18 +893,18 @@
             : "Cut (Ctrl+X)"}
         onclick={() => {
           if (hasSelection && !liftBlock) cut();
-        }}>Cut</button
+        }}><Scissors size={16} /></button
       >
       <button
-        class="{textBtn} {dimmable}"
+        class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!hasClipboard}
         title={hasClipboard ? "Paste (Ctrl+V)" : "Paste — nothing copied yet"}
         onclick={() => {
           if (hasClipboard) paste();
-        }}>Paste</button
+        }}><ClipboardPaste size={16} /></button
       >
       <button
-        class="{textBtn} {dimmable}"
+        class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!hasSelection || !!liftBlock}
         title={!hasSelection
           ? `Delete — ${whyNoMarquee}`
@@ -899,17 +913,19 @@
             : "Delete selection (Del)"}
         onclick={() => {
           if (hasSelection && !liftBlock) deleteSelection();
-        }}>Delete</button
+        }}><Trash2 size={16} /></button
       >
       <button
-        class="{textBtn} {dimmable}"
+        class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!hasSelection}
         title={hasSelection ? "Deselect (Esc)" : "Deselect — nothing selected"}
         onclick={() => {
           if (hasSelection) deselect();
-        }}>Deselect</button
+        }}><SquareX size={16} /></button
       >
-      <button class={textBtn} title="Select all" onclick={selectAll}>Select all</button>
+      <button class="{iconBtn} {iconIdle}" title="Select all" onclick={selectAll}
+        ><Scan size={16} /></button
+      >
     </div>
     <div class="h-6 w-px bg-border"></div>
     <div class="flex items-center gap-1">
@@ -1001,7 +1017,7 @@
       <button
         class="flex h-7 items-center gap-1 rounded-md border border-warn/50 bg-surface-raised px-2 text-xs whitespace-nowrap text-warn transition-colors hover:bg-surface-hover"
         title="A selection limits where this tool paints — tap to deselect"
-        onclick={deselect}><SquareDashed size={14} />Deselect</button
+        onclick={deselect}><SquareX size={14} />Deselect</button
       >
     </div>
   {/if}
