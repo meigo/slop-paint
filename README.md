@@ -51,7 +51,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Reference images**
 
-- **File ▸ Import reference image…**, or paste an image copied in another app (Photos on an iPad):
+- **File ▸ Import reference image…** (a file), **File ▸ Import reference from clipboard**, or paste
+  an image copied in another app (Photos on an iPad):
   it lands on its own faint layer just below the one you draw on, ready to move and scale, tagged
   `[ignore]` so Spine skips it
 

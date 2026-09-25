@@ -1732,6 +1732,28 @@
   }
 
   /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
+  /** File ▸ Import reference from clipboard: only an image on the SYSTEM clipboard, always as a
+   *  reference (Edit ▸ Paste also falls back to the internal copy, so it is not obviously this).
+   *  `clipboard.read()` is called before any await, so Safari still counts it as the tap's. */
+  async function importReferenceFromClipboard() {
+    let items: ClipboardItems;
+    try {
+      if (!navigator.clipboard?.read) throw new Error("unsupported");
+      items = await navigator.clipboard.read();
+    } catch {
+      return flashStatus("Can't read the clipboard here — use File ▸ Import reference image…");
+    }
+    for (const item of items) {
+      const type = item.types.find((t) => t.startsWith("image/"));
+      if (!type) continue;
+      const bmp = await createImageBitmap(await item.getType(type));
+      importReference(bmp);
+      bmp.close();
+      return;
+    }
+    flashStatus("No image on the clipboard — copy one first");
+  }
+
   async function pasteFromMenu() {
     try {
       const items = (await navigator.clipboard?.read?.()) ?? [];
@@ -2032,6 +2054,7 @@
           saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
           openPsd={doOpenPsd}
           importReference={() => imageInputEl?.click()}
+          importReferenceFromClipboard={() => void importReferenceFromClipboard()}
           newDoc={() => {
             showNewDocDialog = true;
           }}

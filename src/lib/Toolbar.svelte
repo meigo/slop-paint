@@ -74,6 +74,7 @@
     saveToFiles,
     openPsd,
     importReference,
+    importReferenceFromClipboard,
     newDoc,
     resizeDoc,
     resetView,
@@ -120,6 +121,8 @@
     openPsd: () => void;
     /** Pick an image file to add as a reference layer. */
     importReference: () => void;
+    /** Add the system clipboard's image as a reference layer. */
+    importReferenceFromClipboard: () => void;
     newDoc: () => void;
     resizeDoc: () => void;
     resetView: () => void;
@@ -324,6 +327,15 @@
             importReference();
             close();
           }}>Import reference image…</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          title="Add the image on the clipboard (copied in Photos or another app) as a reference layer"
+          onclick={() => {
+            importReferenceFromClipboard();
+            close();
+          }}>Import reference from clipboard</button
         >
         <button
           class={menuItem}
