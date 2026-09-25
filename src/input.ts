@@ -26,7 +26,7 @@ const TAP_MAX_DISTANCE = 8; // px — must not move more than this
 const INTERPOLATION_THRESHOLD = 4;
 
 export function setupInput(
-  canvas: HTMLCanvasElement,
+  canvas: HTMLElement,
   onStroke: StrokeHandler,
   transformCoords?: CoordTransform,
   options?: Omit<InputOptions, "onStroke" | "transformCoords">,
@@ -65,10 +65,8 @@ export function setupInput(
     return {
       x,
       y,
-      // Mouse has no pressure sensor; report 0 so the size mapping in brush.ts/stamp-brush.ts
-      // resolves to minSize = settings.size. This matches the user's mental model where the
-      // size slider value IS the stroke width, with sizeRange only widening pen strokes
-      // *up* from there at higher pressure.
+      // Mouse has no pressure. The stroke handler draws that case at sizeRange 1, so the
+      // size slider is the stroke width. A pen uses Press: light thins below size, full widens above.
       pressure: e.pointerType === "mouse" ? 0 : e.pressure,
       hasPressure: e.pointerType !== "mouse",
       timestamp: e.timeStamp,

@@ -1,4 +1,5 @@
 import type { BrushKind } from "./appState.svelte";
+import { clampPress } from "./brush";
 
 /** Stroke settings that brush and eraser each keep their own copy of. */
 export interface StrokeSlot {
@@ -82,5 +83,6 @@ export function parseSlot(raw: unknown, fallback: StrokeSlot): StrokeSlot {
   for (const k of ["size", "opacity", "smoothing", "streamline", "sizeRange"] as const) {
     if (typeof r[k] === "number" && Number.isFinite(r[k])) out[k] = r[k];
   }
+  out.sizeRange = clampPress(out.sizeRange);
   return out;
 }

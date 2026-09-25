@@ -5,7 +5,7 @@
   import NewDocDialog from "./lib/NewDocDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
-  import { drawStroke } from "./brush";
+  import { clampPress, drawStroke } from "./brush";
   import { drawInkStroke } from "./ink-brush";
   import { drawCalligraphyStroke } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
@@ -29,8 +29,9 @@
     OUTLINE_MARGIN,
     type OutlineNoisePlanes,
   } from "./outline";
-  import { clampPanelWidth, panelBesideToolbar } from "./panel-layout";
+  import { clampPanelWidth, panelBesideToolOptions } from "./panel-layout";
   import { isTextEntry } from "./lib/text-entry";
+  import { blitImageData } from "./pixels";
   import { Selection, type SelectionRect } from "./selection";
   import {
     placeExternalImage,
@@ -74,10 +75,10 @@
   let canvasClipEl = $state() as HTMLDivElement;
   let workspaceEl: HTMLDivElement;
   let viewportW = $state(window.innerWidth);
-  // The layer panel runs full height beside the toolbar rows when row 1 still fits next to it
-  // (desktop, iPad landscape); otherwise it sits below them (portrait iPad). Re-evaluated as the
-  // window turns or the panel is dragged wider.
-  const panelBeside = $derived(panelBesideToolbar(viewportW, app.layerPanelWidth));
+  // Toolbar row 1 always spans the full width. The layer panel starts right under it, beside the
+  // tool-options row, when that row still fits next to it (desktop); otherwise it starts below the
+  // options row too (iPad). Re-evaluated as the window turns or the panel is dragged wider.
+  const panelBeside = $derived(panelBesideToolOptions(viewportW, app.layerPanelWidth));
   let fileInputEl: HTMLInputElement;
   let imageInputEl: HTMLInputElement;
 
@@ -181,15 +182,15 @@
     const rect = canvasClipEl.getBoundingClientRect();
     const x = screenX - rect.left;
     const y = screenY - rect.top;
-    // Cursor matches the slider's nominal size — equal to mouse stroke width (which renders
-    // at minSize = settings.size). Pen at higher pressure can exceed this up to sizeRange×.
+    // Cursor is the size slider: the mouse width, and the pen's nominal width. Light pressure
+    // draws thinner and full pressure wider, by Press.
     const diameter = app.brushSettings.size * viewport.zoom;
     if (diameter < 4) {
       if (brushCursorVisible) {
         brushCursorEl.style.display = "none";
         brushCursorVisible = false;
       }
-      canvasEl.style.cursor = "crosshair";
+      canvasClipEl.style.cursor = "crosshair";
       return;
     }
     brushCursorEl.style.display = "block";
@@ -197,7 +198,7 @@
     brushCursorEl.style.height = diameter + "px";
     brushCursorEl.style.left = x - diameter / 2 + "px";
     brushCursorEl.style.top = y - diameter / 2 + "px";
-    canvasEl.style.cursor = "none";
+    canvasClipEl.style.cursor = "none";
     brushCursorVisible = true;
   }
 
@@ -340,7 +341,7 @@
       if (data.opacity != null) app.brushSettings.opacity = data.opacity;
       if (data.smoothing != null) app.brushSettings.smoothing = data.smoothing;
       if (data.color) app.brushSettings.color = data.color;
-      if (data.sizeRange != null) app.sizeRange = data.sizeRange;
+      if (data.sizeRange != null) app.sizeRange = clampPress(data.sizeRange);
       if (data.streamline != null) app.streamline = data.streamline;
       if (data.drawBehind != null) app.brushSettings.drawBehind = data.drawBehind;
       if (data.fillAlphaThreshold != null)
@@ -658,10 +659,7 @@
     canvasEl.height = docH * dpr;
     canvasEl.style.width = docW + "px";
     canvasEl.style.height = docH + "px";
-    selectionOverlayEl.width = docW;
-    selectionOverlayEl.height = docH;
-    selectionOverlayEl.style.width = docW + "px";
-    selectionOverlayEl.style.height = docH + "px";
+    if (selection) selection.pageSize = { w: docW, h: docH }; // new selections stay on the page
     // Size the transform container to the document
     canvasContainerEl.style.width = docW + "px";
     canvasContainerEl.style.height = docH + "px";
@@ -761,7 +759,7 @@
         selectionMode = null;
       }
 
-      canvasEl.style.cursor = selection.getCursor(selection.hitTest(p.x, p.y));
+      canvasClipEl.style.cursor = selection.getCursor(selection.hitTest(p.x, p.y));
       return;
     }
 
@@ -928,12 +926,12 @@
   }
 
   function updateCursor() {
-    if (!canvasEl) return;
+    if (!canvasClipEl) return;
     const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
     if (isBrushTool) {
-      canvasEl.style.cursor = "none";
+      canvasClipEl.style.cursor = "none";
     } else {
-      canvasEl.style.cursor = "crosshair";
+      canvasClipEl.style.cursor = "crosshair";
       hideBrushCursor();
     }
   }
@@ -1077,7 +1075,7 @@
     // Space for pan
     if (e.code === "Space" && !spaceHeld) {
       spaceHeld = true;
-      if (canvasEl) canvasEl.style.cursor = "grab";
+      if (canvasClipEl) canvasClipEl.style.cursor = "grab";
       hideBrushCursor();
     }
   }
@@ -1294,13 +1292,13 @@
     // the line meets the cut it is simply truncated — no line is drawn along the marquee itself.
     if (selection?.state === "selected") {
       const dpr = window.devicePixelRatio || 1;
-      ctx.putImageData(src, r.x, r.y); // outside the marquee nothing changes
-      if (!outlineScratch) {
-        outlineScratch = document.createElement("canvas");
-        outlineScratch.width = w;
-        outlineScratch.height = h;
-      }
-      outlineScratch.getContext("2d")!.putImageData(next, 0, 0);
+      blitImageData(ctx, src, r.x, r.y); // outside the marquee nothing changes
+      if (!outlineScratch) outlineScratch = document.createElement("canvas");
+      // Setting the size resets the backing store even when it matches. A reused
+      // canvas would hand drawImage the previous preview on iPad.
+      outlineScratch.width = w;
+      outlineScratch.height = h;
+      outlineScratch.getContext("2d", { willReadFrequently: true })!.putImageData(next, 0, 0);
       ctx.save();
       try {
         selection.applyClip(ctx); // layer.ctx carries the dpr transform applyClip expects
@@ -1312,7 +1310,7 @@
         ctx.restore();
       }
     } else {
-      ctx.putImageData(next, r.x, r.y);
+      blitImageData(ctx, next, r.x, r.y);
     }
     layers.composite();
   }
@@ -1340,7 +1338,7 @@
   /** Put the art back. `handBack` returns to the tool Outline was entered from; setTool passes
    *  false, being mid-switch already. */
   function cancelOutline(handBack = true) {
-    if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
+    if (outlineLayer && outlineBefore) blitImageData(outlineLayer.ctx, outlineBefore);
     clearOutline();
     layers?.composite();
     if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline);
@@ -1680,7 +1678,10 @@
     enterFreeTransform();
     // Set only now: the setTool/cancel above resolve an earlier float, which would end it.
     if (selection.hasFloating) referenceReturn = returnTo;
-    flashStatus("Reference added — drag to place it, Enter to apply", 4000);
+    flashStatus(
+      "Reference added — drag to place it, then tap ✓ or outside the page to apply",
+      6000,
+    );
   }
 
   /** Placing a reference ended — applied, cancelled, or applied by a tap elsewhere. The layer the
@@ -1693,6 +1694,7 @@
     referenceReturn = null;
     if (layers.findNode(r.layerId)) layers.activeId = r.layerId;
     bumpLayerVersion();
+    if (app.statusMessage.startsWith("Reference added")) flashStatus(""); // its how-to is done
   }
 
   /** Enter/Esc and ✓/✗: apply or cancel the selection. After placing a reference, also return to
@@ -1748,7 +1750,11 @@
 
   function init(): () => void {
     viewport = new Viewport(canvasContainerEl);
-    const ctx = canvasEl.getContext("2d", { willReadFrequently: true })!;
+    // Accelerated on purpose. `willReadFrequently` paints every composite in
+    // software — a full retina frame per stroke, which is what made brushes lag
+    // on iPad. The eyedropper's one-pixel read is the rare getImageData; layer
+    // canvases are the ones snapshotted, and they request the flag themselves.
+    const ctx = canvasEl.getContext("2d")!;
     layers = new LayerManager(canvasEl, ctx, () => bumpLayerVersion());
     selection = new Selection(selectionOverlayEl);
 
@@ -1795,6 +1801,26 @@
       if (outlineActive()) scheduleOutlinePreview(); // a marquee made or cleared re-clips it
     };
 
+    // Page → overlay pixels: the pixel ratio, then the same pan/rotate/zoom the page container gets
+    // as a CSS transform (origin 0 0, at the canvas area's top-left).
+    selection.viewTransform = () =>
+      new DOMMatrix()
+        .scale(window.devicePixelRatio || 1)
+        .translate(viewport.panX, viewport.panY)
+        .rotate((viewport.rotation * 180) / Math.PI)
+        .scale(viewport.zoom);
+    // The overlay backs the whole canvas area at the pixel ratio; the area changes with the layout
+    // (panel drag, panel moving beside or below the toolbar, the iPad turning).
+    const sizeOverlay = () => {
+      const dpr = window.devicePixelRatio || 1;
+      selectionOverlayEl.width = Math.round(canvasClipEl.clientWidth * dpr);
+      selectionOverlayEl.height = Math.round(canvasClipEl.clientHeight * dpr);
+      if (selection.active) selection.drawOverlay();
+    };
+    const overlayResize = new ResizeObserver(sizeOverlay);
+    overlayResize.observe(canvasClipEl);
+    sizeOverlay();
+
     // Keep selection's hit areas at a constant screen size by feeding it the viewport zoom.
     selection.screenScale = viewport.zoom;
     viewport.onChange = () => {
@@ -1823,7 +1849,7 @@
 
     // Input handling
     const cleanupInput = setupInput(
-      canvasEl,
+      canvasClipEl, // the whole canvas area, so a gesture can start off the page
       handleStroke,
       (sx, sy) => viewport.screenToCanvas(sx, sy),
       {
@@ -1868,8 +1894,8 @@
         e.preventDefault();
         e.stopPropagation();
         viewport.startPan(e.clientX, e.clientY);
-        canvasEl.setPointerCapture(e.pointerId);
-        canvasEl.style.cursor = "grabbing";
+        canvasClipEl.setPointerCapture(e.pointerId);
+        canvasClipEl.style.cursor = "grabbing";
         hideBrushCursor();
       }
     }
@@ -1886,13 +1912,13 @@
         e.stopPropagation();
         viewport.endPan();
         const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
-        canvasEl.style.cursor = spaceHeld ? "grab" : isBrushTool ? "none" : "crosshair";
+        canvasClipEl.style.cursor = spaceHeld ? "grab" : isBrushTool ? "none" : "crosshair";
         if (!spaceHeld) updateBrushCursor(e.clientX, e.clientY);
       }
     }
-    canvasEl.addEventListener("pointerdown", handlePanDown, { capture: true });
-    canvasEl.addEventListener("pointermove", handlePanMove, { capture: true });
-    canvasEl.addEventListener("pointerup", handlePanUp, { capture: true });
+    canvasClipEl.addEventListener("pointerdown", handlePanDown, { capture: true });
+    canvasClipEl.addEventListener("pointermove", handlePanMove, { capture: true });
+    canvasClipEl.addEventListener("pointerup", handlePanUp, { capture: true });
 
     // Brush + selection-handle hover cursor tracking
     function handleCursorMove(e: PointerEvent) {
@@ -1907,9 +1933,9 @@
         if (selection?.active) {
           const p = viewport.screenToCanvas(e.clientX, e.clientY);
           const handle = selection.hitTest(p.x, p.y);
-          canvasEl.style.cursor = handle ? selection.getCursor(handle) : "crosshair";
+          canvasClipEl.style.cursor = handle ? selection.getCursor(handle) : "crosshair";
         } else {
-          canvasEl.style.cursor = "crosshair";
+          canvasClipEl.style.cursor = "crosshair";
         }
         hideBrushCursor();
         return;
@@ -1928,9 +1954,10 @@
       cleanupInput();
       cleanupTouch();
       canvasClipEl.removeEventListener("wheel", handleWheel);
-      canvasEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
-      canvasEl.removeEventListener("pointermove", handlePanMove, { capture: true });
-      canvasEl.removeEventListener("pointerup", handlePanUp, { capture: true });
+      canvasClipEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
+      overlayResize.disconnect();
+      canvasClipEl.removeEventListener("pointermove", handlePanMove, { capture: true });
+      canvasClipEl.removeEventListener("pointerup", handlePanUp, { capture: true });
       canvasClipEl.removeEventListener("pointermove", handleCursorMove);
       canvasClipEl.removeEventListener("pointerleave", handleCursorLeave);
     };
@@ -1961,13 +1988,14 @@
   <div
     class="workspace-layout grid min-h-0 flex-1 overflow-hidden"
     style:grid-template-columns="minmax(0, 1fr) auto"
-    style:grid-template-rows="auto minmax(0, 1fr)"
+    style:grid-template-rows="auto auto minmax(0, 1fr)"
     style:grid-template-areas={panelBeside
-      ? '"toolbar panel" "canvas panel"'
-      : '"toolbar toolbar" "canvas panel"'}
+      ? '"row1 row1" "row2 panel" "canvas panel"'
+      : '"row1 row1" "row2 row2" "canvas panel"'}
     bind:this={workspaceEl}
   >
-    <div class="relative z-20 flex min-w-0 flex-col" style:grid-area="toolbar">
+    <!-- `contents`: the Toolbar's two rows are grid items themselves (areas row1 / row2). -->
+    <div class="contents">
       {#if layersReady}
         <Toolbar
           {setTool}
@@ -2022,21 +2050,26 @@
       style:grid-area="canvas"
       bind:this={canvasClipEl}
     >
-      <div class="absolute touch-none will-change-transform" bind:this={canvasContainerEl}>
-        <canvas bind:this={canvasEl} class="canvas-checkerboard block touch-none"></canvas>
-        <canvas
-          bind:this={selectionOverlayEl}
-          class="pointer-events-none absolute inset-0 touch-none"
-        ></canvas>
+      <!-- Pan/zoom box matches slop-animator: no `will-change`, checkerboard behind the canvas. -->
+      <div class="absolute touch-none" bind:this={canvasContainerEl}>
+        <div class="canvas-checkerboard pointer-events-none absolute inset-0"></div>
+        <canvas bind:this={canvasEl} class="relative block touch-none"></canvas>
       </div>
+      <!-- The selection overlay covers the whole canvas area rather than just the page, so
+           transform handles past the page edge stay visible; it draws through the view transform.
+           z-10: a CSS-transformed sibling can composite above a later one on WebKit. -->
+      <canvas
+        bind:this={selectionOverlayEl}
+        class="pointer-events-none absolute inset-0 z-10 h-full w-full touch-none"
+      ></canvas>
       <div
         bind:this={brushCursorEl}
-        class="pointer-events-none absolute rounded-full border"
+        class="pointer-events-none absolute z-20 rounded-full border"
         style="display: none; border-color: rgba(0,0,0,0.5); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); mix-blend-mode: difference;"
       ></div>
       <div
         bind:this={eyedropperSwatchEl}
-        class="pointer-events-none absolute h-9 w-9 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
+        class="pointer-events-none absolute z-20 h-9 w-9 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
         style="display: none;"
       ></div>
     </div>

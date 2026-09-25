@@ -423,8 +423,10 @@
   >
     <div class="absolute inset-y-0 left-0 w-1 group-hover:bg-text/10"></div>
   </div>
+  <!-- h-10: the tool-options row's height (Toolbar row 2, `min-h-10`), which this header sits
+       beside on a wide screen, so their bottom borders make one line. -->
   <div
-    class="flex items-center justify-between border-b border-border px-2.5 py-2 text-xs font-semibold text-text-secondary"
+    class="flex h-10 shrink-0 items-center justify-between border-b border-border px-2.5 text-xs font-semibold text-text-secondary"
   >
     <span>Layers</span>
     <div class="flex items-center gap-1">

@@ -16,13 +16,14 @@ export function clampPanelWidth(px: number, viewportW: number): number {
   return Math.max(MIN_PANEL_WIDTH, Math.min(px, max));
 }
 
-/** Width (px) toolbar row 1 needs: tools, undo/redo, zoom readout and the four menus, measured at
- *  about 735. Row 1 cannot wrap or scroll (either would clip its menus), so re-measure this when a
- *  tool button or menu is added there. */
-export const TOOLBAR_ROW1_WIDTH = 740;
+/** Width (px) the widest tool-options row (toolbar row 2) needs: the brush row, measured at 949
+ *  (eraser 909, outline 886, fill 808, select 539). The rows wrap rather than clip, but a wrapped
+ *  row is taller and moves the canvas, so re-measure this when a control is added to one. */
+export const TOOL_OPTIONS_WIDTH = 960;
 
-/** Whether the layer panel can run full height beside the toolbar rows, or must sit below them
- *  because row 1 would no longer fit next to it (a portrait iPad at the default panel width). */
-export function panelBesideToolbar(viewportW: number, panelW: number): boolean {
-  return viewportW - panelW >= TOOLBAR_ROW1_WIDTH;
+/** Whether the layer panel can sit beside the tool-options row (toolbar row 1 always spans the full
+ *  width), or must start below it because the row would wrap next to it (iPad at the default
+ *  panel width). */
+export function panelBesideToolOptions(viewportW: number, panelW: number): boolean {
+  return viewportW - panelW >= TOOL_OPTIONS_WIDTH;
 }

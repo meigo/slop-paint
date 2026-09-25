@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   clampPanelWidth,
-  panelBesideToolbar,
+  panelBesideToolOptions,
   MIN_PANEL_WIDTH,
   DEFAULT_PANEL_WIDTH,
-  TOOLBAR_ROW1_WIDTH,
+  TOOL_OPTIONS_WIDTH,
 } from "../panel-layout";
 
 describe("clampPanelWidth", () => {
@@ -38,19 +38,20 @@ describe("clampPanelWidth", () => {
   });
 });
 
-describe("panelBesideToolbar", () => {
-  it("goes beside the toolbar when row 1 still fits next to it", () => {
-    expect(panelBesideToolbar(1180, DEFAULT_PANEL_WIDTH)).toBe(true); // iPad landscape
-    expect(panelBesideToolbar(TOOLBAR_ROW1_WIDTH + 300, 300)).toBe(true); // exactly fits
+describe("panelBesideToolOptions", () => {
+  it("goes beside the tool-options row when the widest row still fits next to it", () => {
+    expect(panelBesideToolOptions(1728, DEFAULT_PANEL_WIDTH)).toBe(true); // desktop
+    expect(panelBesideToolOptions(TOOL_OPTIONS_WIDTH + 300, 300)).toBe(true); // exactly fits
   });
 
-  it("stays below the toolbar when row 1 would be squeezed", () => {
-    expect(panelBesideToolbar(820, DEFAULT_PANEL_WIDTH)).toBe(false); // iPad Air portrait
-    expect(panelBesideToolbar(TOOLBAR_ROW1_WIDTH + 299, 300)).toBe(false);
+  it("starts below the row when it would wrap next to the panel", () => {
+    expect(panelBesideToolOptions(1180, DEFAULT_PANEL_WIDTH)).toBe(false); // iPad landscape
+    expect(panelBesideToolOptions(820, DEFAULT_PANEL_WIDTH)).toBe(false); // iPad portrait
+    expect(panelBesideToolOptions(TOOL_OPTIONS_WIDTH + 299, 300)).toBe(false);
   });
 
   it("follows the panel width: widening it can move it back below", () => {
-    expect(panelBesideToolbar(1100, 300)).toBe(true);
-    expect(panelBesideToolbar(1100, 400)).toBe(false);
+    expect(panelBesideToolOptions(1400, 300)).toBe(true);
+    expect(panelBesideToolOptions(1400, 500)).toBe(false);
   });
 });

@@ -213,6 +213,20 @@ export class Selection {
    *  Chrome (ants, handles, grid) is UI, not content, and stays at full strength. */
   contentAlpha = 1;
 
+  /** Page units → overlay-canvas pixels. The overlay covers the whole canvas area, not just the
+   *  page, so handles past the page edge stay visible (a page-sized import put them all there);
+   *  this carries the view's pan/zoom/rotation and the pixel ratio. Read every frame: finger
+   *  pans and pinches move the view without a change callback. */
+  viewTransform: () => DOMMatrix = () => new DOMMatrix();
+
+  /** The page (document) size. A NEW selection is kept on it — a gesture may start and end off the
+   *  page, but a marquee or lasso never reaches past its edge. Moving a float is not limited. */
+  pageSize: { w: number; h: number } | null = null;
+
+  private onPage(x: number, y: number): { x: number; y: number } {
+    return this.pageSize ? clampToPage({ x, y }, this.pageSize.w, this.pageSize.h) : { x, y };
+  }
+
   /** Current viewport zoom — used to keep handle hit areas at a constant screen-pixel size. */
   screenScale = 1;
 
@@ -267,6 +281,7 @@ export class Selection {
 
   /** Begin creating a new selection (clears any existing one). */
   startCreate(x: number, y: number) {
+    ({ x, y } = this.onPage(x, y));
     this.cancel();
     this.isCreating = true;
     this.createStart = { x, y };
@@ -279,6 +294,7 @@ export class Selection {
 
   updateCreate(x: number, y: number) {
     if (!this.isCreating) return;
+    ({ x, y } = this.onPage(x, y));
 
     if (this.mode === "lasso") {
       this.lassoPoints.push({ x, y });
@@ -480,7 +496,13 @@ export class Selection {
     if (this.state === "selected") {
       // No handles in 'selected' state — only inside/outside the actual shape.
       if (this.mode === "lasso" && this.lassoPath) {
-        return this.overlayCtx.isPointInPath(this.lassoPath, x, y) ? "move" : null;
+        // With no transform set, the path and (x, y) are both in page units.
+        const ctx = this.overlayCtx;
+        ctx.save();
+        ctx.resetTransform();
+        const inside = ctx.isPointInPath(this.lassoPath, x, y);
+        ctx.restore();
+        return inside ? "move" : null;
       }
       const r = this.rect;
       return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h ? "move" : null;
@@ -743,6 +765,7 @@ export class Selection {
     this.dragging = null;
     this.state = "idle";
     cancelAnimationFrame(this.animFrame);
+    this.overlayCtx.resetTransform();
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
     if (wasActive) this.onStateChange?.();
   }
@@ -828,6 +851,7 @@ export class Selection {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cvs.width, cvs.height);
     if (!this.rect || this.state === "idle") return;
+    ctx.setTransform(this.viewTransform()); // everything below draws in page units
 
     // Animation re-trigger
     this.marchOffset = (this.marchOffset + 0.3) % 8;
@@ -906,7 +930,7 @@ export class Selection {
       const m = this.matrix;
       ctx.save();
       ctx.globalAlpha = this.contentAlpha; // content, unlike the box and handles below
-      ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+      ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f); // on top of the view, not instead of it
       ctx.drawImage(this.floatingPixels, this.rect.x, this.rect.y, this.rect.w, this.rect.h);
       ctx.restore();
     }
@@ -1124,4 +1148,9 @@ function triangleAffine(src: [Pt, Pt, Pt], dst: [Pt, Pt, Pt]): Mat {
     f: dst[0].y,
   };
   return multiply(aDst, invert(aSrc));
+}
+
+/** `p` pulled onto the page rectangle (0..w, 0..h): where a selection gesture off the page lands. */
+export function clampToPage(p: { x: number; y: number }, w: number, h: number) {
+  return { x: Math.min(w, Math.max(0, p.x)), y: Math.min(h, Math.max(0, p.y)) };
 }

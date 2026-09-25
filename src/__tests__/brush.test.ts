@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { strokeOutline, widthRange } from "../brush";
+import { clampPress, strokeOutline, widthRange } from "../brush";
 
 /** Height of the outline of a horizontal stroke = the rendered stroke width. */
 function horizontalWidth(size: number, sizeRange: number, pressure: number): number {
@@ -13,24 +13,39 @@ function horizontalWidth(size: number, sizeRange: number, pressure: number): num
   return Math.max(...ys) - Math.min(...ys);
 }
 
+describe("clampPress", () => {
+  it("keeps a saved range inside 1–8, on the 0.5 step", () => {
+    expect(clampPress(3)).toBe(3);
+    expect(clampPress(50)).toBe(8);
+    expect(clampPress(0)).toBe(1);
+    expect(clampPress(2.2)).toBe(2);
+  });
+});
+
 describe("widthRange", () => {
-  it("uses size as the thinnest width and widens by sizeRange", () => {
-    expect(widthRange(4, 3)).toEqual({ min: 4, max: 12 });
+  it("opens both ways around the nominal size", () => {
+    expect(widthRange(4, 3)).toEqual({ min: 4 / 3, max: 12 });
   });
 
-  it("floors tiny sizes at 0.5px", () => {
+  it("is a constant width at range 1", () => {
+    expect(widthRange(4, 1)).toEqual({ min: 4, max: 4 });
+  });
+
+  it("floors the thin end at 0.5px", () => {
+    expect(widthRange(1, 8)).toEqual({ min: 0.5, max: 8 });
     expect(widthRange(0.1, 2)).toEqual({ min: 0.5, max: 1 });
   });
 });
 
 describe("strokeOutline width", () => {
   // perfect-freehand's `size` is a radius basis; passing the diameter drew strokes 2x too wide
-  it("draws a no-pressure stroke exactly `size` wide", () => {
+  it("draws a constant-width stroke exactly `size` wide", () => {
     expect(horizontalWidth(10, 1, 0)).toBeCloseTo(10, 0);
-    expect(horizontalWidth(10, 3, 0)).toBeCloseTo(10, 0);
+    expect(horizontalWidth(10, 1, 1)).toBeCloseTo(10, 0);
   });
 
-  it("draws a full-pressure stroke `size * sizeRange` wide", () => {
+  it("thins a light stroke and widens a full-pressure one", () => {
+    expect(horizontalWidth(10, 3, 0)).toBeCloseTo(10 / 3, 0);
     expect(horizontalWidth(10, 3, 1)).toBeCloseTo(30, 0);
   });
 });

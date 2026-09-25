@@ -246,7 +246,7 @@ export function drawInkStroke(
 ) {
   if (points.length < 2) return;
 
-  // widthRange (brush.ts): size is the thinnest width, pressure widens it up to size * sizeRange.
+  // widthRange: size is the nominal width; pressure thins below it and widens above it.
   const { min: minSize, max: maxSize } = widthRange(settings.size, sizeRange);
   const widthAt = (p: InputPoint) => minSize + p.pressure * (maxSize - minSize);
 

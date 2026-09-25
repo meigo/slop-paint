@@ -7,7 +7,7 @@
     PaintBucket,
     Undo2,
     Redo2,
-    Settings2,
+    Settings,
     Pipette,
     SquareMinus,
     Dices,
@@ -36,6 +36,7 @@
   import { MAX_GAP } from "../fill-holes";
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
   import { MAX_THICKNESS } from "../outline";
+  import { PRESS_MAX, PRESS_MIN } from "../brush";
   import { sliderFill } from "./slider-fill";
 
   let {
@@ -128,7 +129,6 @@
 
   let sizeDisplay = $derived(String(app.brushSettings.size));
   let opacityDisplay = $derived(app.brushSettings.opacity + "%");
-  let sizeRangeDisplay = $derived(app.sizeRange.toFixed(1) + "x");
   let fillThresholdDisplay = $derived(String(app.fillSettings.alphaThreshold ?? 0));
   let fillExpandDisplay = $derived((app.fillSettings.expand ?? 0) + "px");
 
@@ -205,11 +205,6 @@
     onSettingsChange();
   }
 
-  function onSizeRangeInput(e: Event) {
-    app.sizeRange = Number((e.target as HTMLInputElement).value) / 100;
-    onSettingsChange();
-  }
-
   const tools: { tool: Tool; icon: typeof Paintbrush; title: string }[] = [
     { tool: "brush", icon: Paintbrush, title: "Brush (B)" },
     { tool: "eraser", icon: Eraser, title: "Eraser (E)" },
@@ -254,7 +249,11 @@
 </script>
 
 <!-- Row 1: tools, history, zoom readout, menus. Fixed height. -->
-<div class="z-20 flex h-12 shrink-0 items-center gap-1 border-b border-border bg-surface px-4">
+<!-- grid-area: App.svelte lays the two rows out in its grid (row 1 always full width). -->
+<div
+  class="z-20 flex h-12 shrink-0 items-center gap-1 border-b border-border bg-surface px-4"
+  style:grid-area="row1"
+>
   <div class="flex shrink-0 items-center gap-1">
     {#each tools as { tool, icon: Icon, title }}
       <button
@@ -456,7 +455,8 @@
      switching tools doesn't move the canvas. Wraps (rather than scrolling) so the pressure-curve
      popup isn't clipped; a very narrow window can still make it taller. -->
 <div
-  class="z-10 flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
+  class="z-10 flex min-h-10 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
+  style:grid-area="row2"
 >
   <!-- Brush options -->
   {#if showBrush}
@@ -527,6 +527,27 @@
         {/each}
       </div>
     </div>
+
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="How much pen pressure widens the stroke. 1× is a constant width"
+    >
+      Press
+      <input
+        type="range"
+        min={PRESS_MIN}
+        max={PRESS_MAX}
+        step="0.5"
+        class="w-16"
+        style={sliderFill(app.sizeRange, PRESS_MIN, PRESS_MAX)}
+        value={app.sizeRange}
+        oninput={(e) => {
+          app.sizeRange = Number((e.target as HTMLInputElement).value);
+          onSettingsChange();
+        }}
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{app.sizeRange}×</span>
+    </label>
   {/if}
 
   {#if showBrush || showFill}
@@ -564,38 +585,40 @@
   {/if}
 
   {#if showBrush}
-    <!-- Set-once settings live behind the gear so the bar keeps room for what is adjusted while
-         drawing (type, size, opacity, colour). -->
+    <!-- Set-once settings live behind the gear. The bar keeps what changes while drawing:
+         type, size, Press, opacity, draw-behind, colour. -->
     <div class="relative" use:clickOutside={() => (settingsOpen = false)}>
       <button
         class="{actionBtnClass} {settingsOpen ? 'ui-on' : ''}"
         aria-pressed={settingsOpen}
         aria-haspopup="dialog"
         onclick={() => (settingsOpen = !settingsOpen)}
-        title="Brush settings — smoothing, pressure, and brush-specific options"
+        title="Brush settings — stream, and options for this brush"
       >
-        <Settings2 size={20} />
+        <Settings size={18} />
       </button>
       {#if settingsOpen}
         <div
           class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
         >
-          <label class={rowCls}>
-            <span class={labelCls}>Smoothing</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              class="min-w-0 flex-1"
-              style={sliderFill(app.brushSettings.smoothing, 0, 100)}
-              bind:value={app.brushSettings.smoothing}
-              oninput={onSettingsChange}
-            />
-            <span class={valueCls}>{app.brushSettings.smoothing}</span>
-          </label>
+          {#if app.brushType === "smooth"}
+            <label class={rowCls} title="Smooth the perfect-freehand outline">
+              <span class={labelCls}>Smooth</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                class="min-w-0 flex-1"
+                style={sliderFill(app.brushSettings.smoothing, 0, 100)}
+                bind:value={app.brushSettings.smoothing}
+                oninput={onSettingsChange}
+              />
+              <span class={valueCls}>{app.brushSettings.smoothing}</span>
+            </label>
+          {/if}
 
-          <label class={rowCls}>
-            <span class={labelCls}>Streamline</span>
+          <label class={rowCls} title="Smooth the incoming pointer path">
+            <span class={labelCls}>Stream</span>
             <input
               type="range"
               min="0"
@@ -606,20 +629,6 @@
               oninput={onSettingsChange}
             />
             <span class={valueCls}>{app.streamline}</span>
-          </label>
-
-          <label class={rowCls}>
-            <span class={labelCls}>Size range</span>
-            <input
-              type="range"
-              min="100"
-              max="5000"
-              style={sliderFill(app.sizeRange * 100, 100, 5000)}
-              value={app.sizeRange * 100}
-              oninput={onSizeRangeInput}
-              class="min-w-0 flex-1"
-            />
-            <span class={valueCls}>{sizeRangeDisplay}</span>
           </label>
 
           {#if app.brushType === "calligraphy"}
@@ -656,8 +665,11 @@
           {/if}
 
           {#if app.brushType === "ink"}
-            <label class={rowCls} title="Swell the mark where the pen lingers">
-              <span class={labelCls}>Dwell</span>
+            <label
+              class={rowCls}
+              title="Swell the mark where the pen lingers, the way ink soaks in — 0 is off"
+            >
+              <span class={labelCls}>Pool</span>
               <input
                 type="range"
                 min="0"

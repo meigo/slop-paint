@@ -1,13 +1,26 @@
 import getStroke from "perfect-freehand";
 import type { InputPoint } from "./input";
 
+/** Pen pressure span, same as slop-animator's Press slider. 1 draws at a constant width. */
+export const PRESS_MIN = 1;
+export const PRESS_MAX = 8;
+export const PRESS_DEFAULT = 3;
+
+/** Snap to the slider's 0.5 step and keep a saved value inside the Press range. */
+export function clampPress(n: number): number {
+  if (!Number.isFinite(n)) return PRESS_DEFAULT;
+  const stepped = Math.round(n * 2) / 2;
+  return Math.min(PRESS_MAX, Math.max(PRESS_MIN, stepped));
+}
+
 /**
- * Pressure → width range. `size` is the thinnest width (light pressure, and every mouse stroke);
- * full pressure widens to `size * sizeRange`. Floored at 0.5px so strokes can be very thin.
+ * Pressure → width. `size` is the nominal width: light pressure thins to `size / sizeRange`
+ * (floored at 0.5px), full pressure widens to `size * sizeRange`. `sizeRange === 1` is a
+ * constant width — the mouse path, which has no pressure.
  */
 export function widthRange(size: number, sizeRange: number): { min: number; max: number } {
-  const min = Math.max(0.5, size);
-  return { min, max: min * sizeRange };
+  const floored = Math.max(0.5, size);
+  return { min: Math.max(0.5, floored / sizeRange), max: floored * sizeRange };
 }
 
 /**

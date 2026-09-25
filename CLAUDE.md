@@ -57,14 +57,14 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `lib/LayerPanel.svelte` — layer tree in Svelte markup: recursive snippets, Lucide icons, thumbnails via a canvas action, inline rename on double-click AND double-tap (`lib/double-tap.ts`; iPad doesn't fire dblclick reliably), Spine tag popover. Every control carries a `title`, which is also what the status bar shows on touch
 - Row layout: ONE line — identity on the left (grip, thumbnail, name), state on the right in fixed 20px columns (alpha lock, lock, eye — same order, glyphs and colours as slop-animator; a group row leaves the first two empty) so it lines up across rows. Per-layer CONTROLS (opacity, Spine tags) live in `lib/LayerProps.svelte`, a fixed-height strip above the list that follows the selected row (as slop-animator did), so a row never grows when selected and the row under the Pencil never moves. Nested rows carry `.group-rail`, a background-image rail that the selected-row bar paints over (a border on the container drew a second line)
 - The panel is resizable by dragging its left edge (`panel-layout.ts`: min 184px, max half the viewport); the width is saved with the other settings
-- Placement: App.svelte lays toolbar, canvas and panel out in ONE grid with two arrangements (so nothing re-mounts). The panel runs full height beside the toolbar rows when toolbar row 1 still fits next to it (`panelBesideToolbar`: viewport − panel ≥ `TOOLBAR_ROW1_WIDTH`, 740px measured — re-measure when row 1 gains a button), else it sits below them (portrait iPad). Wheel/trackpad pan-zoom listens on the canvas area only, so the layer list scrolls
+- Placement: App.svelte lays the two toolbar rows (Toolbar's roots carry `grid-area` row1 / row2), the canvas and the panel out in ONE grid with two arrangements (so nothing re-mounts). Toolbar row 1 always spans the full width. The panel starts right under it, beside the tool-options row, when that row still fits next to it (`panelBesideToolOptions`: viewport − panel ≥ `TOOL_OPTIONS_WIDTH`, 960px — the brush row measured 949; re-measure when a row gains a control), else it starts below the options row too (iPad). Wheel/trackpad pan-zoom listens on the canvas area only, so the layer list scrolls
 - The list is rebuilt by `{#key version:dragNonce}` — the layer tree is imperative, so a `layerVersion` bump is what re-renders it. After a SortableJS drop: read the order back from the DOM, remove the node SortableJS relocated (a bottom drop lands past the `{#each}` anchor and would survive as a duplicate), then bump `dragNonce` to rebuild from state. A drop can fire `onEnd` twice (cross-list), so a latch runs the rebuild once
 - `lib/actions/sortable.ts` — Svelte action wrapping SortableJS
 
 ### Canvas Engine (pure TypeScript, no Svelte)
 
-- `input.ts` — pointer event handling with coord transform for zoom; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) and `lostpointercapture` end the stroke like `pointerup`; only the pointer that started a stroke can extend or end it (a resting finger can't); the lift point reuses the last move's pressure (pen `pointerup` reports 0)
-- `brush.ts` — BrushSettings, `widthRange` (size = thinnest width, × sizeRange at full pressure), and the Smooth brush (perfect-freehand). pf's `size` is a RADIUS basis, so it gets `maxSize / 2`; `decimationSmoothing` caps pf's point spacing so thin sections don't leave holes
+- `input.ts` — pointer event handling with coord transform for zoom; App binds it to the whole canvas AREA (not the page canvas), so any tool's gesture can start off the page — strokes clip at the page edge, and a NEW marquee/lasso is clamped onto the page (`Selection.pageSize`, `clampToPage`) while moving a float is not; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) and `lostpointercapture` end the stroke like `pointerup`; only the pointer that started a stroke can extend or end it (a resting finger can't); the lift point reuses the last move's pressure (pen `pointerup` reports 0)
+- `brush.ts` — BrushSettings, `widthRange` (size = nominal width; pressure thins it to size ÷ Press and widens it to size × Press, as slop-animator), and the Smooth brush (perfect-freehand). pf's `size` is a RADIUS basis, so it gets `maxSize / 2`; `decimationSmoothing` caps pf's point spacing so thin sections don't leave holes
 - `ink-brush.ts` — Ink/marker: full-stroke redraw, segments batched into runs of similar width; optional dwell swell (from slop-animator)
 - `calligraphy-brush.ts` — broad-nib ribbon with nib angle/flatness; smooths and decimates points first (from slop-animator)
 - `stamp-brush.ts` — stamp engine for pencil/charcoal/airbrush, supports eraser/draw-behind/alpha-lock compositing; `stampFootprint` draws sub-2px stamps at 2px with reduced alpha (smaller tips downsample to nothing)
@@ -140,8 +140,10 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Brush / Eraser Settings
 
-- Brush and eraser each keep their own size, opacity, smoothing, streamline, size range, brush type (eraser defaults to size 8) and pressure curve
-- Color, draw-behind and taper are shared
+- Brush and eraser each keep their own size, opacity, smoothing, streamline, Press (size range), brush type (eraser defaults to size 8) and pressure curve
+- Press is 1–8, default 3, on the brush bar (slop-animator's model): size is the nominal width, light pressure thins to size/Press, full pressure widens to size×Press. Mouse strokes ignore it and draw at size. A saved value outside 1–8 is clamped
+- Smoothing and taper apply to Smooth only; Pool (how much ink swells where the pen lingers) to Ink only; nib angle and flatness to Calligraphy only
+- Color and draw-behind are shared. Draw-behind stays on the bar
 - Saved as the top-level fields (brush) plus an `eraser` object in the settings
 
 ## Eyedropper
@@ -172,6 +174,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `pushNameEdit` / `pushNodeFieldEdit` look their node up by id at apply time: `restoreStructure` rebuilds group nodes as fresh clones, so a captured group object can be detached by an unrelated structural undo
 - The stack is cleared by New, Open, autosave restore and canvas resize (its snapshots are the old canvas size)
 - Budget: 50 steps or 256 MB of pixel snapshots, whichever comes first
+- iPad undo fix (2026-09-25): on iPad (Safari and Chrome) undo emptied its stack while the stroke stayed on screen until the next stroke, and brushes were slow. Two changes fixed it together, and which one was needed was NOT isolated: the on-screen canvas lost `willReadFrequently` (it is now accelerated, as slop-animator's display — the likelier cause, and the slow brushes), and layer pixel restores go through `blitImageData` (`pixels.ts`: a fresh canvas + `drawImage` instead of `putImageData` on the layer). slop-animator uses plain `putImageData` and works on the same iPad, so `blitImageData` may be removable — test on an iPad before removing it
 
 ## Status Bar
 

@@ -1,4 +1,4 @@
-import type { BrushSettings } from "./brush";
+import { PRESS_DEFAULT, type BrushSettings } from "./brush";
 import type { BrushType } from "./brush-textures";
 
 /** Every brush the toolbar offers: the full-redraw engines plus the stamp tips. */
@@ -42,7 +42,7 @@ interface AppStateShape {
 export const app: AppStateShape = $state({
   currentTool: "brush",
   brushType: "smooth",
-  sizeRange: 1.0,
+  sizeRange: PRESS_DEFAULT,
   streamline: 50,
   brushSettings: {
     size: 4,

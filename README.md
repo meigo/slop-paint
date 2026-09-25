@@ -18,11 +18,13 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   pooling that swells the mark where the pen lingers), **Calligraphy** (a broad nib with adjustable
   angle and flatness), and textured **Pencil**, **Charcoal** and **Airbrush** tips
 - Pressure curves — the brush and the eraser each have their own, edited as a bezier curve
-- Brush and eraser keep their own size, opacity, smoothing, streamline, size range and brush type
+- **Press** on the brush bar: size is the medium width, light pressure thins the stroke and full
+  pressure widens it, by up to that many times (as in slop-animator)
+- Brush and eraser keep their own size, opacity, smoothing, streamline, Press and brush type
 - **Draw behind** — paint goes under what is already on the layer (flats under line art), a toggle
   on the brush toolbar
-- Size presets, opacity, colour swatch with a palette and picker; set-once options (smoothing,
-  streamline, size range, taper, nib, pressure curve) sit behind the gear
+- Size presets, opacity, colour swatch with a palette and picker; set-once options (stream, and
+  smoothing, taper, pool or nib for the brush that uses them, pressure curve) sit behind the gear
 
 **Fill**
 
