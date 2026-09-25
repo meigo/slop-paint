@@ -1,120 +1,118 @@
-# Drawing App
+# slop-paint
 
-A web-based drawing application with pressure-sensitive brushes, layers, and PSD export. Built with TypeScript and Canvas2D.
+A browser-based drawing app with pressure-sensitive brushes, layers and groups, and PSD
+save/export that imports cleanly into [Spine 2D](https://esotericsoftware.com/spine-import-psd).
+Designed **iPad-first for Apple Pencil**; mouse, trackpad and keyboard work too. A sibling of
+slop-animator, sharing its brush engines, selection tools and look.
+
+Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, tested with Vitest.
 
 ## Features
 
-### Brushes
+**Brushes**
 
-- **Smooth** — vector strokes via perfect-freehand with pressure-sensitive width
-- **Pencil** — grainy, graphite-like texture
-- **Charcoal** — rough, chunky texture
-- **Airbrush** — soft, diffused spray
-- **Eraser** — removes pixels from the active layer
-- **Paint Bucket** — flood fill with tolerance
+- **Smooth** ([perfect-freehand](https://github.com/steveruizok/perfect-freehand)), **Ink** (optional
+  pooling that swells the mark where the pen lingers), **Calligraphy** (a broad nib with adjustable
+  angle and flatness), and textured **Pencil**, **Charcoal** and **Airbrush** tips
+- Pressure curves — the brush and the eraser each have their own, edited as a bezier curve
+- Brush and eraser keep their own size, opacity, smoothing, streamline, size range and brush type
+- **Draw behind** — paint goes under what is already on the layer (flats under line art), a toggle
+  on the brush toolbar
+- Size presets, opacity, colour swatch with a palette and picker; set-once options (smoothing,
+  streamline, size range, taper, nib, pressure curve) sit behind the gear
 
-### Brush Controls
+**Fill**
 
-- Size, opacity, smoothing sliders
-- Adjustable size range — controls how much pressure expands beyond base size
-- Taper toggle — tapered stroke ends on completion
-- Pressure curve editor — cubic bezier curve to remap pressure response
-- Color picker with quick-access swatches
+- Paint bucket with gap closing (semi-transparent edges count as walls) and expand (grows the fill
+  under the outline so no seam shows)
+- **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
+  **Bridge** closes small breaks in the outline
 
-### Layers
+**Outline**
 
-- Tree-based layer system with groups and nesting
-- Drag-and-drop reordering via SortableJS — drag layers into/out of groups
-- Per-layer undo/redo history (50 levels)
-- Per-layer and per-group opacity and visibility (group opacity stacks)
-- Double-click to rename layers or groups
-- Collapsible groups
-- New layers/groups are inserted relative to the current selection
+- Turns a layer's solid shapes into outlines — draw solid text, get outlined text at the same size
+- **Thickness**, **Wobble** (the line wanders across the edge) and **Variation** (it swells and
+  thins), plus a dice to re-roll the randomness; live preview, one undo step to apply
 
-### Selection & Transform
+**Selection & transform**
 
-- **Rectangle select** — drag to select area
-- **Lasso select** — freehand selection shape
-- **Move** — drag inside selection
-- **Scale** — drag corner handles
-- **Rotate** — drag rotation handle above selection
-- Enter to commit, Escape to cancel
+- Rectangle and lasso selection; brush, eraser, fill and Outline stay inside it
+- **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
+  **Mesh warp** (3×3), flip, keep proportions
+- Copy, cut, paste and delete — including copying a transformed or warped selection as shown.
+  Copies also go to the system clipboard as PNG, and images pasted from other apps float centred
+- Every selection action is on the Select/Lasso toolbar row; with another tool active, an amber
+  **Deselect** chip shows while a selection limits it
 
-### Zoom & Pan
+**Layers**
 
-- Mouse wheel to zoom toward cursor
-- Ctrl+/- and Ctrl+0 for zoom shortcuts
-- Space+drag or middle mouse button to pan
-- Zoom level indicator in toolbar
+- Layers and nested groups, drag-and-drop reordering, double-tap (or double-click) a name to rename
+- Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group
+- Duplicate, merge down; a resizable panel with thumbnails and a properties strip for the selected
+  row
+- Spine tags on layer and group names: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 
-### Save / Load
+**Undo**
 
-- **Save Project** (Ctrl+S) — saves as PSD with full layer tree, no trimming for round-tripping
-- **Open Project** (Ctrl+O) — opens any PSD file (from this app, Photoshop, GIMP, etc.) and rebuilds layer tree
+- One undo stack for the whole document — strokes, fills, transforms, layer edits, renames,
+  visibility, opacity and locks — 50 steps or 256 MB of snapshots
 
-### Export
+**View**
 
-- **PNG** — flattened composite with transparency
-- **PSD** — Photoshop format with all layers preserved, supports layer groups (trimmed for smaller files)
+- **iPad:** the Pencil draws, fingers navigate — one finger pans; two fingers pan, zoom and rotate
+  (snapping to 90° on lift); two-finger tap undoes, three-finger tap redoes; double-tap the Pencil
+  to toggle the eraser
+- **Trackpad:** two-finger swipe pans, pinch zooms. **Mouse:** wheel pans, Ctrl/Cmd+wheel zooms
+- The status bar explains whatever control you touch — on iPad that is the only tooltip
 
-### Spine 2D Integration
+**Files**
 
-PSD export is compatible with [Spine's PSD import](https://esotericsoftware.com/spine-import-psd):
+- **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility
+  and groups, and open PSDs from Photoshop, GIMP and others
+- Export a flattened **PNG** or a **PSD** for Spine (groups become PSD folders, layer order is draw
+  order); exports use document pixels, not the screen's
+- **Autosave** to the browser (IndexedDB) a few seconds after each change and when the tab is hidden,
+  restored on the next visit
+- On iPad/iPhone, **File ▸ Save to Files…** shares the PSD through the share sheet
+- On iPad, Share → Add to Home Screen runs it full-screen as an app
 
-- Layer groups are exported as PSD group folders
-- Layer/group names support Spine tags: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
-- Layer order matches Spine draw order (bottom layer drawn first)
+## Keyboard shortcuts
 
-### Keyboard Shortcuts
+| Key                        | Action                                              |
+| -------------------------- | --------------------------------------------------- |
+| B / E / S / L / G / I      | Brush / eraser / select / lasso / fill / eyedropper |
+| X (hold)                   | Temporary eraser                                    |
+| [ / ]                      | Smaller / larger brush                              |
+| Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                         |
+| Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                  |
+| Delete or Backspace        | Clear the selection                                 |
+| W / M                      | Distort / mesh warp the selection                   |
+| Enter / Escape             | Apply / cancel a transform or Outline preview       |
+| Space+drag or middle mouse | Pan                                                 |
+| Ctrl+= / Ctrl+-            | Zoom in / out                                       |
+| 0 / 1                      | Fit the view / 100% zoom                            |
+| R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise   |
+| Ctrl+S / Ctrl+O / Ctrl+N   | Save / open project (PSD) / new document            |
 
-| Key          | Action                       |
-| ------------ | ---------------------------- |
-| Ctrl+S       | Save project (PSD)           |
-| Ctrl+O       | Open project (PSD)           |
-| B            | Brush tool                   |
-| E            | Eraser tool                  |
-| G            | Paint bucket                 |
-| S            | Rectangle select             |
-| L            | Lasso select                 |
-| X (hold)     | Temporary eraser             |
-| Space+drag   | Pan canvas                   |
-| [ / ]        | Decrease/increase brush size |
-| Ctrl+Z       | Undo                         |
-| Ctrl+Shift+Z | Redo                         |
-| Ctrl+/-      | Zoom in/out                  |
-| Ctrl+0       | Reset zoom                   |
-| Enter        | Commit selection             |
-| Escape       | Cancel selection             |
+Cmd works in place of Ctrl on a Mac.
 
-### Persistence
-
-All UI settings are saved to localStorage and restored between sessions:
-
-- Tool, brush type, size, opacity, smoothing, taper
-- Color, size range, pressure curve
-
-## Tech Stack
-
-- TypeScript + Vite
-- [perfect-freehand](https://github.com/steveruizok/perfect-freehand) — pressure-sensitive vector strokes
-- [ag-psd](https://github.com/Agamnentzar/ag-psd) — PSD file generation
-- Vitest + ESLint for testing and linting
-
-## Getting Started
+## Getting started
 
 ```bash
 npm install
-npm run dev
+npm run dev        # http://localhost:5173
+npm run dev:lan    # also on your local network, to try it on an iPad
 ```
-
-Open http://localhost:5173 in your browser.
 
 ## Scripts
 
 ```bash
-npm run dev        # Start dev server
-npm run build      # Production build
-npm run test       # Run tests
-npm run test:watch # Run tests in watch mode
-npm run lint       # Run ESLint
+npm run build        # svelte-check + tsc + production build
+npm run test         # Vitest, once (test:watch to keep watching)
+npm run lint         # ESLint
+npm run check        # svelte-check
+npm run format       # Prettier (format:check to only check)
+node tools/make-icons.mjs  # regenerate the PNG icons from public/favicon.svg
 ```
+
+A pre-commit hook runs ESLint and Prettier on staged files.

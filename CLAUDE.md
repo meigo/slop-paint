@@ -16,7 +16,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## App Icon
 
-- The shared slop mark, colour-coded per app: slop-paint is turquoise `#66fff0` (the family blue `#667fff` at hue 174°, same saturation and lightness; slop-image-upscaler is red). Source of truth is `public/favicon.svg`; regenerate the PNGs with `node tools/make-icons.mjs` (from slop-animator, dependency-free). Title, manifest and home-screen tags are in `index.html` / `public/manifest.webmanifest`
+- The shared slop mark, colour-coded per app: slop-paint is turquoise `#66fff0` (the family blue `#667fff` at hue 174°, same saturation and lightness; slop-animator keeps the family blue, slop-image-upscaler is red `#ff6670`). Source of truth is `public/favicon.svg`; regenerate the PNGs with `node tools/make-icons.mjs` (from slop-animator, dependency-free). Title, manifest and home-screen tags are in `index.html` / `public/manifest.webmanifest`
 
 ## Commands
 
