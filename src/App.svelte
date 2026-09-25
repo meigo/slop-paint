@@ -2,7 +2,6 @@
   import Toolbar from "./lib/Toolbar.svelte";
   import LayerPanel from "./lib/LayerPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
-  import SelectionActions from "./lib/SelectionActions.svelte";
   import NewDocDialog from "./lib/NewDocDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
@@ -934,7 +933,7 @@
     }
 
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
-      if (selection?.state === "selected") e.preventDefault();
+      if (selection?.state === "selected" || selection?.hasFloating) e.preventDefault();
       copySelection();
       return;
     }
@@ -1456,14 +1455,34 @@
     void app.selectionVersion;
     return selection?.state === "selected";
   });
-  const clipboardFull = $derived.by(() => {
-    void app.layerVersion; // re-read after any edit; copying bumps nothing else
-    return pixelClipboard !== null;
+  // Pixels at the layer's physical resolution, plus where they were copied from (doc units).
+  // $state.raw so Paste's dimmed state follows a copy (a copy bumps no other version).
+  let pixelClipboard: { canvas: HTMLCanvasElement; rect: SelectionRect } | null = $state.raw(null);
+  const clipboardFull = $derived(pixelClipboard !== null);
+  // The selection's state for the Select/Lasso row (the selection object itself is not reactive).
+  const selectionState = $derived.by(() => {
+    void app.selectionVersion;
+    return selection?.state ?? "idle";
+  });
+  const warpIsMesh = $derived.by(() => {
+    void app.selectionVersion;
+    return !!selection && (selection.warpRows !== 2 || selection.warpCols !== 2);
+  });
+  // Why the lifting actions (transform, flip, cut, delete) can't act on the active layer, or "".
+  const liftBlock = $derived.by(() => {
+    void app.layerVersion;
+    const layer = layersReady ? layers.active : null;
+    if (layer?.locked) return "the layer is locked";
+    if (layer && !layer.visible) return "the layer is hidden";
+    return "";
+  });
+  // Copy also takes a float (as shown, transform applied); cut and delete need a plain marquee.
+  const canCopy = $derived.by(() => {
+    void app.selectionVersion;
+    return selection?.state === "selected" || !!selection?.hasFloating;
   });
 
   // --- Clipboard ---
-  // Pixels at the layer's physical resolution, plus where they were copied from (doc units).
-  let pixelClipboard: { canvas: HTMLCanvasElement; rect: SelectionRect } | null = null;
 
   /** The selection's pixels, scaled to document (CSS) pixels like the PNG export. */
   function toDocResolution(pixels: HTMLCanvasElement, rect: SelectionRect): HTMLCanvasElement {
@@ -1488,6 +1507,7 @@
   }
 
   function copySelection() {
+    if (selection?.hasFloating) return copyFloat();
     if (!selection || selection.state !== "selected" || !selection.rect || !layers) return;
     if (outlineActive()) cancelOutline(); // copy the art, not the preview
     const dpr = window.devicePixelRatio || 1;
@@ -1495,6 +1515,41 @@
     if (!pixels) return;
     pixelClipboard = { canvas: pixels, rect: { ...selection.rect } };
     copyToSystemClipboard(toDocResolution(pixels, selection.rect));
+  }
+
+  /** Copy the float as it is shown — scaled, rotated or warped — cropped to its bounds. Pasting it
+   *  lands next to where it floats. */
+  function copyFloat() {
+    if (!selection?.hasFloating) return;
+    // A mesh's inner points can be dragged past its outer ring, so bound every grid point.
+    const pts =
+      selection.state === "warping" ? selection.warpGrid.flat() : selection.getScreenBounds();
+    if (!pts?.length) return;
+    const x0 = Math.floor(Math.min(...pts.map((p) => p.x)));
+    const y0 = Math.floor(Math.min(...pts.map((p) => p.y)));
+    const x1 = Math.ceil(Math.max(...pts.map((p) => p.x)));
+    const y1 = Math.ceil(Math.max(...pts.map((p) => p.y)));
+    const rect = { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+    const dpr = window.devicePixelRatio || 1;
+    const pixels = document.createElement("canvas");
+    pixels.width = Math.round(rect.w * dpr);
+    pixels.height = Math.round(rect.h * dpr);
+    const ctx = pixels.getContext("2d")!;
+    // Layer resolution, like a marquee copy: doc units × dpr, shifted to the crop's corner.
+    ctx.setTransform(dpr, 0, 0, dpr, -rect.x * dpr, -rect.y * dpr);
+    selection.renderFloatingTo(ctx);
+    pixelClipboard = { canvas: pixels, rect };
+    copyToSystemClipboard(toDocResolution(pixels, rect));
+  }
+
+  function selectAll() {
+    if (!selection) return;
+    if (selection.hasFloating) selection.commit(); // as starting a new marquee does
+    selection.selectRect({ x: 0, y: 0, w: app.docWidth, h: app.docHeight });
+  }
+
+  function deselect() {
+    if (selection?.state === "selected") selection.cancel();
   }
 
   function deleteSelection() {
@@ -1689,9 +1744,12 @@
     });
 
     // Wheel zoom (needs passive: false)
+    // As in slop-animator: a trackpad pinch arrives as a wheel event with ctrlKey set, so Ctrl/Cmd
+    // zooms; a plain wheel — a two-finger trackpad swipe, or a mouse wheel — pans.
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
-      viewport.zoomAt(e.clientX, e.clientY, e.deltaY);
+      if (e.ctrlKey || e.metaKey) viewport.zoomAt(e.clientX, e.clientY, e.deltaY);
+      else viewport.panBy(-e.deltaX, -e.deltaY); // content follows the scroll
       updateZoomDisplay();
       updateBrushCursor(e.clientX, e.clientY);
     }
@@ -1804,6 +1862,19 @@
       canRedo={redoAvailable}
       hasSelection={selectionActive}
       hasClipboard={clipboardFull}
+      {canCopy}
+      {selectAll}
+      {deselect}
+      selectionMode={selectionState}
+      {warpIsMesh}
+      {liftBlock}
+      transform={enterFreeTransform}
+      distort={() => enterWarp(2, 2)}
+      mesh={() => enterWarp(3, 3)}
+      flip={flipSelection}
+      {toggleKeepProportions}
+      applyFloat={() => selection.commit()}
+      cancelFloat={() => selection.cancel()}
       copy={copySelection}
       cut={cutSelection}
       paste={() => void pasteFromMenu()}
@@ -1847,25 +1918,6 @@
         class="pointer-events-none absolute h-9 w-9 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
         style="display: none;"
       ></div>
-      {#if layersReady}
-        <SelectionActions
-          {selection}
-          {viewport}
-          containerEl={canvasClipEl}
-          isActionable={() => {
-            const layer = layers?.active;
-            return !!layer && !layer.locked && layer.visible;
-          }}
-          onTransform={enterFreeTransform}
-          onDistort={() => enterWarp(2, 2)}
-          onMesh={() => enterWarp(3, 3)}
-          onFlip={flipSelection}
-          keepProportions={app.keepProportions}
-          onToggleKeepProportions={toggleKeepProportions}
-          onCommit={() => selection.commit()}
-          onCancel={() => selection.cancel()}
-        />
-      {/if}
     </div>
 
     {#if layersReady}

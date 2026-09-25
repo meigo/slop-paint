@@ -97,6 +97,16 @@ describe("Viewport", () => {
     expect(after.y).toBeCloseTo(before.y, 0);
   });
 
+  it("panBy moves the view by a screen delta without zooming", () => {
+    const zoom = vp.zoom;
+    const before = vp.screenToCanvas(200, 150);
+    vp.panBy(30, -20);
+    const after = vp.screenToCanvas(230, 130);
+    expect(vp.zoom).toBe(zoom);
+    expect(after.x).toBeCloseTo(before.x, 5);
+    expect(after.y).toBeCloseTo(before.y, 5);
+  });
+
   it("canvasToScreen is the inverse of screenToCanvas", () => {
     vp.setZoom(1.7);
     vp.panX = 30;

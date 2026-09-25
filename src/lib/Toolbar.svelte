@@ -13,6 +13,13 @@
     Dices,
     Check,
     X,
+    Move,
+    SquareDashed,
+    Grid3x3,
+    FlipHorizontal2,
+    FlipVertical2,
+    Link2,
+    Link2Off,
   } from "@lucide/svelte";
   import { app, pressureCurves, type Tool } from "../appState.svelte.js";
   import type { BrushType } from "../brush-textures";
@@ -36,6 +43,19 @@
     canRedo,
     hasSelection,
     hasClipboard,
+    canCopy,
+    selectAll,
+    deselect,
+    selectionMode,
+    warpIsMesh,
+    liftBlock,
+    transform,
+    distort,
+    mesh,
+    flip,
+    toggleKeepProportions,
+    applyFloat,
+    cancelFloat,
     copy,
     cut,
     paste,
@@ -63,6 +83,22 @@
     /** A plain marquee exists, so copy/cut/delete can act. */
     hasSelection: boolean;
     hasClipboard: boolean;
+    /** A marquee or a float — copy takes either. */
+    canCopy: boolean;
+    selectAll: () => void;
+    deselect: () => void;
+    selectionMode: "idle" | "selected" | "transforming" | "warping";
+    /** Warping on a denser grid than Distort's 2×2. */
+    warpIsMesh: boolean;
+    /** Why transform/flip/cut/delete can't act on the active layer ("the layer is locked"), or "". */
+    liftBlock: string;
+    transform: () => void;
+    distort: () => void;
+    mesh: () => void;
+    flip: (axis: "h" | "v") => void;
+    toggleKeepProportions: () => void;
+    applyFloat: () => void;
+    cancelFloat: () => void;
     copy: () => void;
     cut: () => void;
     paste: () => void;
@@ -174,7 +210,7 @@
   ];
 
   const actionBtnClass =
-    "w-9 h-9 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors";
+    "size-7 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors";
   const iconBtnClass =
     "size-9 shrink-0 rounded-md flex items-center justify-center text-text-secondary hover:bg-surface-hover transition-colors";
   const menuItem =
@@ -182,6 +218,20 @@
   const kbd = "text-[11px] text-text-muted";
   const dimmable =
     "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";
+  const textBtn =
+    "h-7 rounded-md border border-border bg-surface-raised px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover";
+  // Cut/Delete need a plain marquee; over a float (copy's other case) they wait for Apply/Cancel.
+  let whyNoMarquee = $derived(canCopy ? "apply or cancel the transform first" : "nothing selected");
+  let floating = $derived(selectionMode === "transforming" || selectionMode === "warping");
+  let selecting = $derived(selectionMode !== "idle");
+  // Transform, Distort, Mesh and Flip lift the marquee's pixels, so they need an editable layer.
+  let liftWhy = $derived(!selecting ? "nothing selected" : !floating && liftBlock ? liftBlock : "");
+  let flipWhy = $derived(liftWhy || (selectionMode === "warping" ? "not while warping" : ""));
+  let distortOn = $derived(selectionMode === "warping" && !warpIsMesh);
+  let meshOn = $derived(selectionMode === "warping" && warpIsMesh);
+  const iconBtn =
+    "flex size-7 shrink-0 items-center justify-center rounded-md border transition-colors";
+  const iconIdle = "border-border bg-surface text-text-secondary hover:bg-surface-hover";
   const rowCls = "flex items-center gap-2 text-xs text-text-secondary";
   const labelCls = "w-20 shrink-0";
   const valueCls = "w-10 shrink-0 text-right text-[11px] text-text-muted";
@@ -296,10 +346,10 @@
         <button
           class="{menuItem} {dimmable}"
           role="menuitem"
-          aria-disabled={!hasSelection}
-          title={hasSelection ? "" : "Copy — nothing selected"}
+          aria-disabled={!canCopy}
+          title={canCopy ? "" : "Copy — nothing selected"}
           onclick={() => {
-            if (hasSelection) copy();
+            if (canCopy) copy();
             close();
           }}>Copy <span class={kbd}>Ctrl+C</span></button
         >
@@ -382,14 +432,14 @@
      switching tools doesn't move the canvas. Wraps (rather than scrolling) so the pressure-curve
      popup isn't clipped; a very narrow window can still make it taller. -->
 <div
-  class="z-10 flex min-h-12 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
+  class="z-10 flex min-h-10 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
 >
   <!-- Brush options -->
   {#if showBrush}
     <div class="flex items-center gap-1">
       <select
         id="brush-type"
-        class="h-9 cursor-pointer rounded-md border border-border bg-surface-raised px-1.5 text-xs text-text-secondary"
+        class="h-7 cursor-pointer rounded-md border border-border bg-surface-raised px-1.5 text-xs text-text-secondary"
         value={app.brushType}
         onchange={onBrushTypeChange}
       >
@@ -417,7 +467,7 @@
       {#if editingSize}
         <!-- svelte-ignore a11y_autofocus -->
         <input
-          class="h-9 w-12 rounded-md border border-border bg-surface-raised px-1 text-center text-[11px] text-text"
+          class="h-7 w-12 rounded-md border border-border bg-surface-raised px-1 text-center text-[11px] text-text"
           type="text"
           inputmode="decimal"
           bind:value={sizeInputValue}
@@ -436,7 +486,7 @@
         />
       {:else}
         <button
-          class="h-9 w-12 cursor-text rounded-md text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+          class="h-7 w-12 cursor-text rounded-md text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
           onclick={startEditSize}
           title="Click to type exact size">{sizeDisplay}</button
         >
@@ -659,7 +709,7 @@
       <span class="min-w-4 text-[11px] text-text-muted">{app.fillEnclosedGap}</span>
     </label>
     <button
-      class="h-9 rounded-md border border-border bg-surface-raised px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover"
+      class="h-7 rounded-md border border-border bg-surface-raised px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover"
       onclick={fillEnclosed}
       title="Fill every area the outlines on this layer enclose, behind the lines"
       >Fill enclosed</button
@@ -671,7 +721,7 @@
   {#if showBrush || showFill}
     <div class="relative flex items-center" use:clickOutside={() => (colorOpen = false)}>
       <button
-        class="size-9 shrink-0 rounded-md border-2 border-border transition-colors hover:border-text-muted"
+        class="size-7 shrink-0 rounded-md border-2 border-border transition-colors hover:border-text-muted"
         style:background={app.brushSettings.color}
         aria-haspopup="dialog"
         aria-expanded={colorOpen}
@@ -783,7 +833,7 @@
     <div class="h-6 w-px bg-border"></div>
     <div class="flex items-center gap-1">
       <button
-        class="ui-on flex h-9 w-9 items-center justify-center rounded-md border {dimmable}"
+        class="ui-on flex size-7 items-center justify-center rounded-md border {dimmable}"
         aria-disabled={!app.outlineActive}
         title={app.outlineActive
           ? "Apply outline (Enter)"
@@ -807,8 +857,152 @@
       <span class="text-xs text-text-muted">Tap the canvas to outline the active layer</span>
     {/if}
   {:else if activeTool === "select" || activeTool === "lasso"}
-    <span class="text-xs text-text-muted"
-      >{activeTool === "select" ? "Drag a rectangle" : "Draw around an area"} to select</span
-    >
+    <!-- Every selection action lives here (this app has no floating bar over the selection): a float
+         can only exist on Select/Lasso — switching tools applies it — so this row is always showing
+         when there is one. Left-aligned, so a button never moves when another is dimmed. -->
+    <div class="flex items-center gap-1">
+      <button
+        class="{textBtn} {dimmable}"
+        aria-disabled={!canCopy}
+        title={canCopy ? "Copy (Ctrl+C)" : "Copy — nothing selected"}
+        onclick={() => {
+          if (canCopy) copy();
+        }}>Copy</button
+      >
+      <button
+        class="{textBtn} {dimmable}"
+        aria-disabled={!hasSelection || !!liftBlock}
+        title={!hasSelection
+          ? `Cut — ${whyNoMarquee}`
+          : liftBlock
+            ? `Cut — ${liftBlock}`
+            : "Cut (Ctrl+X)"}
+        onclick={() => {
+          if (hasSelection && !liftBlock) cut();
+        }}>Cut</button
+      >
+      <button
+        class="{textBtn} {dimmable}"
+        aria-disabled={!hasClipboard}
+        title={hasClipboard ? "Paste (Ctrl+V)" : "Paste — nothing copied yet"}
+        onclick={() => {
+          if (hasClipboard) paste();
+        }}>Paste</button
+      >
+      <button
+        class="{textBtn} {dimmable}"
+        aria-disabled={!hasSelection || !!liftBlock}
+        title={!hasSelection
+          ? `Delete — ${whyNoMarquee}`
+          : liftBlock
+            ? `Delete — ${liftBlock}`
+            : "Delete selection (Del)"}
+        onclick={() => {
+          if (hasSelection && !liftBlock) deleteSelection();
+        }}>Delete</button
+      >
+      <button
+        class="{textBtn} {dimmable}"
+        aria-disabled={!hasSelection}
+        title={hasSelection ? "Deselect (Esc)" : "Deselect — nothing selected"}
+        onclick={() => {
+          if (hasSelection) deselect();
+        }}>Deselect</button
+      >
+      <button class={textBtn} title="Select all" onclick={selectAll}>Select all</button>
+    </div>
+    <div class="h-6 w-px bg-border"></div>
+    <div class="flex items-center gap-1">
+      <button
+        class="{iconBtn} {selectionMode === 'transforming' ? 'ui-on' : iconIdle} {dimmable}"
+        aria-pressed={selectionMode === "transforming"}
+        aria-disabled={!!liftWhy || selectionMode === "warping"}
+        title={liftWhy
+          ? `Free transform — ${liftWhy}`
+          : selectionMode === "warping"
+            ? "Free transform — apply or cancel the warp first"
+            : "Free transform — scale/rotate handles"}
+        onclick={() => {
+          if (!liftWhy && selectionMode === "selected") transform();
+        }}><Move size={16} /></button
+      >
+      <button
+        class="{iconBtn} {distortOn ? 'ui-on' : iconIdle} {dimmable}"
+        aria-pressed={distortOn}
+        aria-disabled={!!liftWhy}
+        title={liftWhy ? `Distort — ${liftWhy}` : "Distort (W) — 4-corner warp"}
+        onclick={() => {
+          if (!liftWhy) distort();
+        }}><SquareDashed size={16} /></button
+      >
+      <button
+        class="{iconBtn} {meshOn ? 'ui-on' : iconIdle} {dimmable}"
+        aria-pressed={meshOn}
+        aria-disabled={!!liftWhy}
+        title={liftWhy ? `Mesh warp — ${liftWhy}` : "Mesh warp (M) — 3×3 grid"}
+        onclick={() => {
+          if (!liftWhy) mesh();
+        }}><Grid3x3 size={16} /></button
+      >
+    </div>
+    <div class="h-6 w-px bg-border"></div>
+    <div class="flex items-center gap-1">
+      <button
+        class="{iconBtn} {iconIdle} {dimmable}"
+        aria-disabled={!!flipWhy}
+        title={flipWhy ? `Flip horizontal — ${flipWhy}` : "Flip horizontal"}
+        onclick={() => {
+          if (!flipWhy) flip("h");
+        }}><FlipHorizontal2 size={16} /></button
+      >
+      <button
+        class="{iconBtn} {iconIdle} {dimmable}"
+        aria-disabled={!!flipWhy}
+        title={flipWhy ? `Flip vertical — ${flipWhy}` : "Flip vertical"}
+        onclick={() => {
+          if (!flipWhy) flip("v");
+        }}><FlipVertical2 size={16} /></button
+      >
+      <button
+        class="{iconBtn} {app.keepProportions ? 'ui-on' : iconIdle}"
+        aria-pressed={app.keepProportions}
+        title={app.keepProportions
+          ? "Corners keep proportions (Shift: free)"
+          : "Corners scale freely (Shift: keep proportions)"}
+        onclick={toggleKeepProportions}
+        >{#if app.keepProportions}<Link2 size={16} />{:else}<Link2Off size={16} />{/if}</button
+      >
+    </div>
+    <div class="h-6 w-px bg-border"></div>
+    <div class="flex items-center gap-1">
+      <button
+        class="{iconBtn} {floating ? 'ui-on' : iconIdle} {dimmable}"
+        aria-disabled={!floating}
+        title={floating ? "Apply (Enter)" : "Apply — nothing lifted yet"}
+        onclick={() => {
+          if (floating) applyFloat();
+        }}><Check size={16} /></button
+      >
+      <button
+        class="{iconBtn} {iconIdle} {dimmable}"
+        aria-disabled={!floating}
+        title={floating ? "Cancel (Esc)" : "Cancel — nothing lifted yet"}
+        onclick={() => {
+          if (floating) cancelFloat();
+        }}><X size={16} /></button
+      >
+    </div>
+  {/if}
+
+  <!-- A marquee outlives the Select tool and silently limits where brush, eraser and fill paint:
+       say so, one tap from clearing it. Amber = "why this won't behave as you expect". -->
+  {#if hasSelection && activeTool !== "select" && activeTool !== "lasso"}
+    <div class="flex items-center">
+      <button
+        class="flex h-7 items-center gap-1 rounded-md border border-warn/50 bg-surface-raised px-2 text-xs whitespace-nowrap text-warn transition-colors hover:bg-surface-hover"
+        title="A selection limits where this tool paints — tap to deselect"
+        onclick={deselect}><SquareDashed size={14} />Deselect</button
+      >
+    </div>
   {/if}
 </div>

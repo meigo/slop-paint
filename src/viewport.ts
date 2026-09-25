@@ -182,6 +182,14 @@ export class Viewport {
     this.onChange?.();
   }
 
+  /** Pan by a screen-pixel delta (for wheel / trackpad scrolling). */
+  panBy(dx: number, dy: number) {
+    this.panX += dx;
+    this.panY += dy;
+    this.applyTransform();
+    this.onChange?.();
+  }
+
   resetView() {
     this.zoom = 1;
     this.panX = 0;

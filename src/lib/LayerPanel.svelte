@@ -9,7 +9,7 @@
     EyeOff,
     Lock,
     LockOpen,
-    Blend,
+    Grid2x2,
     ChevronRight,
     ChevronDown,
     GripVertical,
@@ -212,10 +212,10 @@
 
   // Every row toggle gets a real 20px box: these were bare 12-14px icons, the smallest targets in
   // an iPad-first app.
-  const rowBtn =
-    "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary transition-opacity";
+  const rowBtn = "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded";
+  // 28px list actions, borderless, as in slop-animator's layer list header.
   const headerBtn =
-    "flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-border bg-surface text-text-secondary hover:bg-surface-hover";
+    "flex size-7 cursor-pointer items-center justify-center rounded text-text-secondary hover:bg-surface-hover";
 </script>
 
 {#snippet nameCell(node: LayerNode)}
@@ -283,21 +283,15 @@
       use:thumbnail={layer}
     ></canvas>
     {@render nameCell(layer)}
+    <!-- Same columns, glyphs and colours as slop-animator's layer list. Alpha lock ("lock
+         transparency") is the checkerboard, the usual transparency glyph — a second padlock beside the
+         layer lock read as a duplicate — and fainter than the others when off, being the rarely-on one. -->
     <button
-      class="{rowBtn} {layer.locked ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
-      title={layer.locked ? "Unlock layer" : "Lock layer (no drawing)"}
-      onclick={(e) => {
-        e.stopPropagation();
-        layer.locked = !layer.locked;
-        pushNodeFieldEdit(layers, layer.id, "locked", !layer.locked, layer.locked);
-        bumpLayerVersion();
-      }}
-    >
-      {#if layer.locked}<Lock size={14} />{:else}<LockOpen size={14} />{/if}
-    </button>
-    <button
-      class="{rowBtn} {layer.alphaLock ? 'text-warn opacity-100' : 'opacity-30 hover:opacity-60'}"
-      title="Alpha lock — paint only where this layer already has pixels"
+      class="{rowBtn} {layer.alphaLock ? 'text-accent' : 'text-text-muted/50 hover:text-text'}"
+      aria-pressed={layer.alphaLock}
+      title={layer.alphaLock
+        ? "Alpha lock on — paint lands only on existing pixels; click to turn off"
+        : "Alpha lock off — click to paint only over existing pixels"}
       onclick={(e) => {
         e.stopPropagation();
         layer.alphaLock = !layer.alphaLock;
@@ -305,11 +299,23 @@
         bumpLayerVersion();
       }}
     >
-      <Blend size={14} />
+      <Grid2x2 size={15} />
     </button>
     <button
-      class="{rowBtn} {layer.visible ? 'opacity-60 hover:opacity-100' : 'text-warn opacity-100'}"
-      title={layer.visible ? "Hide layer" : "Show layer"}
+      class="{rowBtn} {layer.locked ? 'text-warn' : 'text-text-muted hover:text-text'}"
+      title={layer.locked ? "Locked — click to unlock" : "Unlocked — click to lock drawing"}
+      onclick={(e) => {
+        e.stopPropagation();
+        layer.locked = !layer.locked;
+        pushNodeFieldEdit(layers, layer.id, "locked", !layer.locked, layer.locked);
+        bumpLayerVersion();
+      }}
+    >
+      {#if layer.locked}<Lock size={15} />{:else}<LockOpen size={15} />{/if}
+    </button>
+    <button
+      class="{rowBtn} {layer.visible ? 'text-text-muted hover:text-text' : 'text-warn'}"
+      title={layer.visible ? "Visible — click to hide" : "Hidden — click to show"}
       onclick={(e) => {
         e.stopPropagation();
         layers.toggleVisibility(layer.id);
@@ -317,7 +323,7 @@
         bumpLayerVersion();
       }}
     >
-      {#if layer.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+      {#if layer.visible}<Eye size={15} />{:else}<EyeOff size={15} />{/if}
     </button>
   </div>
 {/snippet}
@@ -328,7 +334,7 @@
     data-node-id={group.id}
   >
     <div
-      class="flex min-w-0 cursor-default items-center gap-1 px-1.5 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
+      class="flex min-w-0 cursor-default items-center gap-1 px-2 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
       layers.activeId
         ? 'ui-selected'
         : 'bg-group-bg hover:bg-group-hover'}"
@@ -342,8 +348,10 @@
       <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
         ><GripVertical size={14} /></span
       >
+      <!-- `-ml-0.5 mr-0.5`: the chevron glyph carries its own padding on the left; shifting the box
+           2px left and giving it back on the right balances the ink without moving the name. -->
       <button
-        class="{rowBtn} text-text-muted"
+        class="mr-0.5 -ml-0.5 flex w-[15px] shrink-0 cursor-pointer justify-center text-text-secondary hover:text-text"
         title={group.collapsed ? "Expand group" : "Collapse group"}
         onclick={(e) => {
           e.stopPropagation();
@@ -351,12 +359,16 @@
           bumpLayerVersion();
         }}
       >
-        {#if group.collapsed}<ChevronRight size={12} />{:else}<ChevronDown size={12} />{/if}
+        {#if group.collapsed}<ChevronRight size={15} />{:else}<ChevronDown size={15} />{/if}
       </button>
       {@render nameCell(group)}
+      <!-- The alpha-lock and lock columns, empty: a group has no pixels and no lock of its own here,
+           and the slots keep its eye in the same column as every layer's. -->
+      <span class="size-5 shrink-0" role="presentation"></span>
+      <span class="size-5 shrink-0" role="presentation"></span>
       <button
-        class="{rowBtn} {group.visible ? 'opacity-60 hover:opacity-100' : 'text-warn opacity-100'}"
-        title={group.visible ? "Hide group" : "Show group"}
+        class="{rowBtn} {group.visible ? 'text-text-muted hover:text-text' : 'text-warn'}"
+        title={group.visible ? "Group visible — click to hide" : "Group hidden — click to show"}
         onclick={(e) => {
           e.stopPropagation();
           layers.toggleVisibility(group.id);
@@ -364,7 +376,7 @@
           bumpLayerVersion();
         }}
       >
-        {#if group.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+        {#if group.visible}<Eye size={15} />{:else}<EyeOff size={15} />{/if}
       </button>
     </div>
 
@@ -415,24 +427,25 @@
     class="flex items-center justify-between border-b border-border px-2.5 py-2 text-xs font-semibold text-text-secondary"
   >
     <span>Layers</span>
-    <div class="flex gap-0.5">
+    <div class="flex items-center gap-1">
+      <!-- Grouped create │ derive │ destroy, as in slop-animator (SLOP-TIMELINE-UI.md §4): Delete
+           stands alone so a mis-tap on Merge can't delete. -->
       <button class={headerBtn} onclick={addLayer} title="Add layer">
-        <Plus size={14} />
+        <Plus size={16} />
       </button>
       <button class={headerBtn} onclick={addGroup} title="Add group">
-        <FolderPlus size={14} />
+        <FolderPlus size={16} />
       </button>
+      <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
       <button class={headerBtn} onclick={duplicateLayer} title="Duplicate layer">
-        <Copy size={14} />
+        <Copy size={16} />
       </button>
       <button class={headerBtn} onclick={mergeDown} title="Merge down onto the layer below">
-        <ArrowDownToLine size={14} />
+        <ArrowDownToLine size={16} />
       </button>
-      <!-- Destructive action separated from the ones next to it, so a mis-tap on Merge can't
-           delete (SLOP-TIMELINE-UI.md §4). -->
-      <div class="mx-1 h-5 w-px self-center bg-border"></div>
+      <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
       <button class={headerBtn} onclick={removeNode} title="Delete layer or group">
-        <Trash2 size={14} />
+        <Trash2 size={16} />
       </button>
     </div>
   </div>

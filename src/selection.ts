@@ -322,6 +322,19 @@ export class Selection {
     this.drawOverlay();
   }
 
+  /** Replace any selection with a plain rectangle (Select all). Drops a float without committing
+   *  it — the caller decides what happens to one first. */
+  selectRect(rect: SelectionRect) {
+    this.cancel();
+    this.rect = { ...rect };
+    this.lassoPoints = [];
+    this.lassoPath = null;
+    this.matrix = identity();
+    this.state = "selected";
+    this.onStateChange?.();
+    this.drawOverlay();
+  }
+
   /** Copy the selected pixels (lasso-clipped if a lasso) into a new canvas at the source's
    *  physical resolution. The source is left untouched. */
   copyPixels(srcCtx: CanvasRenderingContext2D, dpr: number): HTMLCanvasElement | null {
