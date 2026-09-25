@@ -31,12 +31,17 @@
   } from "./outline";
   import { clampPanelWidth, panelBesideToolbar } from "./panel-layout";
   import { Selection, type SelectionRect } from "./selection";
-  import { placeExternalImage, placeInternalPaste } from "./paste";
+  import {
+    placeExternalImage,
+    placeInternalPaste,
+    referenceLayerName,
+    REFERENCE_OPACITY,
+  } from "./paste";
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
-  import { history, pushPixelEdit, setOnHistoryApplied } from "./undo";
+  import { history, pushPixelEdit, setOnHistoryApplied, structuralEdit } from "./undo";
   import { canShareFile, saveToFilesAvailable, shareFile } from "./share";
   import { downloadBlob } from "./download";
   import ShareReadyDialog from "./lib/ShareReadyDialog.svelte";
@@ -73,6 +78,7 @@
   // window turns or the panel is dragged wider.
   const panelBeside = $derived(panelBesideToolbar(viewportW, app.layerPanelWidth));
   let fileInputEl: HTMLInputElement;
+  let imageInputEl: HTMLInputElement;
 
   // --- Core objects (imperative, not $state) ---
   let viewport = $state.raw() as Viewport;
@@ -453,8 +459,28 @@
     bumpLayerVersion();
   }
 
+  /** Run `fn` (a save or export) with a lifted float drawn into its layer, as Apply would draw it,
+   *  then put the layer back. A lift leaves a hole in the layer until it is applied, and a save
+   *  stored that hole: an autosave during a transform — every reference import starts as one —
+   *  lost the lifted pixels if the tab closed before Enter. */
+  function withFloatApplied<T>(fn: () => T): T {
+    if (!selection?.hasFloating || !layers) return fn();
+    const layer = layers.active;
+    const snap = layers.snapshotOf(layer);
+    selection.renderFloatingTo(layer.ctx);
+    try {
+      return fn();
+    } finally {
+      layers.restoreTo(layer, snap);
+    }
+  }
+
   function saveImage() {
     if (!layers) return;
+    withFloatApplied(() => composeImage());
+  }
+
+  function composeImage() {
     const w = app.docWidth;
     const h = app.docHeight;
     const tmp = document.createElement("canvas");
@@ -474,12 +500,12 @@
 
   function doExportPsd() {
     if (!layers) return;
-    exportPsd(layers);
+    withFloatApplied(() => exportPsd(layers));
   }
 
   function doSavePsd() {
     if (!layers) return;
-    savePsd(layers);
+    withFloatApplied(() => savePsd(layers));
   }
 
   // --- Save to Files (iPad/iPhone) ---
@@ -489,7 +515,7 @@
 
   async function doSaveToFiles() {
     if (!layers) return;
-    const file = new File([psdBuffer(layers, false)], "project.psd", {
+    const file = new File([withFloatApplied(() => psdBuffer(layers, false))], "project.psd", {
       type: "application/octet-stream",
     });
     if (!canShareFile(file)) {
@@ -1396,7 +1422,7 @@
     autosaveDirty = false;
     let buffer: ArrayBuffer;
     try {
-      buffer = psdBuffer(layers, false);
+      buffer = withFloatApplied(() => psdBuffer(layers, false));
     } catch (e) {
       autosaveDirty = true;
       console.error("autosave encode failed", e);
@@ -1612,13 +1638,47 @@
       pasteInternal();
       return;
     }
-    const cvs = document.createElement("canvas");
-    cvs.width = bmp.width;
-    cvs.height = bmp.height;
-    cvs.getContext("2d")!.drawImage(bmp, 0, 0);
-    const rect = placeExternalImage(bmp.width, bmp.height, app.docWidth, app.docHeight);
+    // An image from another app is a reference (as in slop-animator), not pixels for this layer.
+    importReference(bmp); // a clipboard file is always "image.png", so the layer is just "ref"
     bmp.close();
-    startPasteFloat(cvs, rect);
+  }
+
+  /**
+   * Add `img` as a reference: a new ordinary layer just below the active one (under the drawing
+   * that traces over it), faint and tagged `[ignore]`
+   * so Spine skips it, fitted to the page (1 image px = 1 doc px, scaled down only). One undo step.
+   * Then it is lifted into Free transform to be placed — Enter keeps the move, Esc leaves it where
+   * it landed.
+   */
+  function importReference(img: ImageBitmap, fileName?: string) {
+    if (!layers || !selection) return;
+    if (outlineActive()) cancelOutline();
+    setTool("select"); // applies any float first
+    if (selection.active) selection.cancel();
+    const rect = placeExternalImage(img.width, img.height, app.docWidth, app.docHeight);
+    structuralEdit(layers, () => {
+      const layer = layers.addLayerBelow(referenceLayerName(fileName));
+      layer.opacity = REFERENCE_OPACITY;
+      layer.ctx.imageSmoothingQuality = "high";
+      layer.ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h); // layer.ctx is in doc units
+    });
+    layers.composite();
+    bumpLayerVersion();
+    selection.selectRect(rect);
+    enterFreeTransform();
+    flashStatus("Reference added — drag to place it, Enter to apply", 4000);
+  }
+
+  function handleImageFile() {
+    const file = imageInputEl?.files?.[0];
+    imageInputEl.value = "";
+    if (!file) return;
+    void createImageBitmap(file)
+      .then((bmp) => {
+        importReference(bmp, file.name);
+        bmp.close();
+      })
+      .catch(() => flashStatus("Couldn't read that image"));
   }
 
   /** Ctrl/Cmd+V: an image on the system clipboard wins, else the internal copy. */
@@ -1647,7 +1707,7 @@
     } catch {
       /* permission denied or unsupported: fall back to the internal copy */
     }
-    pasteInternal();
+    if (!pasteInternal()) flashStatus("Nothing to paste — copy a selection or an image first");
   }
 
   function init(): () => void {
@@ -1901,6 +1961,7 @@
           savePsd={doSavePsd}
           saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
           openPsd={doOpenPsd}
+          importReference={() => imageInputEl?.click()}
           newDoc={() => {
             showNewDocDialog = true;
           }}
@@ -1949,6 +2010,13 @@
     <StatusBar {selection} />
   {/if}
 
+  <input
+    type="file"
+    accept="image/*"
+    class="hidden"
+    bind:this={imageInputEl}
+    onchange={handleImageFile}
+  />
   <input
     type="file"
     accept=".psd"

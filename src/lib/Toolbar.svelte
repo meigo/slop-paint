@@ -72,6 +72,7 @@
     savePsd,
     saveToFiles,
     openPsd,
+    importReference,
     newDoc,
     resizeDoc,
     resetView,
@@ -116,6 +117,8 @@
     /** iPad/iPhone only: null elsewhere, and then the menu item is hidden. */
     saveToFiles: (() => void) | null;
     openPsd: () => void;
+    /** Pick an image file to add as a reference layer. */
+    importReference: () => void;
     newDoc: () => void;
     resizeDoc: () => void;
     resetView: () => void;
@@ -228,6 +231,13 @@
     "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";
   // Cut/Delete need a plain marquee; over a float (copy's other case) they wait for Apply/Cancel.
   let whyNoMarquee = $derived(canCopy ? "apply or cancel the transform first" : "nothing selected");
+  // Paste is never dimmed: the system clipboard can hold an image from another app (Photos on an
+  // iPad) that the app cannot see until it asks. An empty paste says so in the status bar.
+  let pasteTitle = $derived(
+    hasClipboard
+      ? "Paste (Ctrl+V)"
+      : "Paste (Ctrl+V) — an image from another app becomes a reference layer",
+  );
   let floating = $derived(selectionMode === "transforming" || selectionMode === "warping");
   let selecting = $derived(selectionMode !== "idle");
   // Transform, Distort, Mesh and Flip lift the marquee's pixels, so they need an editable layer.
@@ -310,6 +320,15 @@
         <button
           class={menuItem}
           role="menuitem"
+          title="Add an image as a faint reference layer to draw over (tagged [ignore] for Spine)"
+          onclick={() => {
+            importReference();
+            close();
+          }}>Import reference image…</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
           onclick={() => {
             savePsd();
             close();
@@ -360,12 +379,11 @@
           }}>Copy <span class={kbd}>Ctrl+C</span></button
         >
         <button
-          class="{menuItem} {dimmable}"
+          class={menuItem}
           role="menuitem"
-          aria-disabled={!hasClipboard}
-          title={hasClipboard ? "" : "Paste — nothing copied yet"}
+          title={pasteTitle}
           onclick={() => {
-            if (hasClipboard) paste();
+            paste();
             close();
           }}>Paste <span class={kbd}>Ctrl+V</span></button
         >
@@ -903,13 +921,8 @@
           if (hasSelection && !liftBlock) cut();
         }}><Scissors size={16} /></button
       >
-      <button
-        class="{iconBtn} {iconIdle} {dimmable}"
-        aria-disabled={!hasClipboard}
-        title={hasClipboard ? "Paste (Ctrl+V)" : "Paste — nothing copied yet"}
-        onclick={() => {
-          if (hasClipboard) paste();
-        }}><ClipboardPaste size={16} /></button
+      <button class="{iconBtn} {iconIdle}" title={pasteTitle} onclick={paste}
+        ><ClipboardPaste size={16} /></button
       >
       <button
         class="{iconBtn} {iconIdle} {dimmable}"

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { PASTE_OFFSET, placeExternalImage, placeInternalPaste } from "../paste";
+import { PASTE_OFFSET, placeExternalImage, placeInternalPaste, referenceLayerName } from "../paste";
+import { parseTags } from "../spine-tags";
 
 describe("placeExternalImage", () => {
   it("centres a small image at its own size", () => {
@@ -37,5 +38,21 @@ describe("placeInternalPaste", () => {
 
   it("pins a copy wider than the page to the left edge", () => {
     expect(placeInternalPaste({ x: 0, y: 0, w: 2000, h: 10 }, 1000, 1000).x).toBe(0);
+  });
+});
+
+describe("referenceLayerName", () => {
+  it("tags the file's name with [ignore] so Spine skips it", () => {
+    expect(referenceLayerName("photo.png")).toBe("[ignore]ref photo");
+    expect(parseTags(referenceLayerName("photo.png")).tags).toEqual(["ignore"]);
+  });
+
+  it("keeps dots inside the name and drops only the extension", () => {
+    expect(referenceLayerName("pose v2.final.jpeg")).toBe("[ignore]ref pose v2.final");
+  });
+
+  it("falls back to plain 'ref' for a paste or an empty name", () => {
+    expect(referenceLayerName()).toBe("[ignore]ref");
+    expect(referenceLayerName("  ")).toBe("[ignore]ref");
   });
 });

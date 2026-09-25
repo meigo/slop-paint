@@ -43,9 +43,15 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
   **Mesh warp** (3×3), flip, keep proportions
 - Copy, cut, paste and delete — including copying a transformed or warped selection as shown.
-  Copies also go to the system clipboard as PNG, and images pasted from other apps float centred
+  Copies also go to the system clipboard as PNG; an image pasted from another app becomes a reference
 - Every selection action is on the Select/Lasso toolbar row; with another tool active, an amber
   **Deselect** chip shows while a selection limits it
+
+**Reference images**
+
+- **File ▸ Import reference image…**, or paste an image copied in another app (Photos on an iPad):
+  it lands on its own faint layer just below the one you draw on, ready to move and scale, tagged
+  `[ignore]` so Spine skips it
 
 **Layers**
 

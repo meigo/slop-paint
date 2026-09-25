@@ -224,6 +224,18 @@ export class LayerManager {
     return layer;
   }
 
+  /** Add a layer directly BELOW the active node, in the same parent (the bottom of the tree if
+   *  nothing is active) — where a reference goes, under the drawing that traces over it. */
+  addLayerBelow(name?: string): Layer {
+    const layer = this.createLayer(name);
+    const loc = this.findParent(this.activeId);
+    if (loc) loc.parent.splice(loc.index, 0, layer);
+    else this.tree.unshift(layer);
+    this.activeId = layer.id;
+    this.onChange();
+    return layer;
+  }
+
   addGroup(name?: string): LayerGroup {
     const group: LayerGroup = {
       type: "group",
