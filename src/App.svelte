@@ -426,6 +426,31 @@
    * lifts pixels into a floating canvas. No-op if already transforming/warping
    * or if there's nothing to transform.
    */
+  /** Nothing selected: the transform actions take the whole active layer, as Photoshop's Ctrl+T —
+   *  a marquee around its pixels, so the handles hug the art rather than the page. False (and says
+   *  why) when there is nothing it could take. A reference is left to its own handles. */
+  function selectLayerContent(): boolean {
+    if (!selection || !layers) return false;
+    if (selection.active) return true;
+    const layer = layers.active;
+    if (layer.ref) return false;
+    if (layers.isLocked(layer)) return (flashStatus("Layer is locked"), false);
+    if (!layer.visible) return (flashStatus("Layer is hidden"), false);
+    const { width, height } = layer.canvas;
+    const b = alphaBounds(layer.ctx.getImageData(0, 0, width, height).data, width, height);
+    if (!b) return (flashStatus("The layer is empty — nothing to transform"), false);
+    const s = width / app.docWidth; // layer px per doc unit (the pixel ratio)
+    const x = Math.floor(b.x / s);
+    const y = Math.floor(b.y / s);
+    selection.selectRect({
+      x,
+      y,
+      w: Math.ceil((b.x + b.w) / s) - x,
+      h: Math.ceil((b.y + b.h) / s) - y,
+    });
+    return true;
+  }
+
   function enterFreeTransform() {
     if (!selection || !layers) return;
     // A reference shows its handles whenever it is active; say why when it can't.
@@ -434,7 +459,7 @@
       if (why) flashStatus(why);
       return;
     }
-    if (selection.state !== "selected") return;
+    if (!selectLayerContent() || selection.state !== "selected") return;
     const layer = layers.active;
     if (layers.isLocked(layer)) return;
     const dpr = window.devicePixelRatio || 1;
@@ -456,6 +481,7 @@
     if (refTransform || layers.active.ref) {
       return flashStatus("A reference moves, scales and rotates only — Bake it to warp it");
     }
+    if (!selectLayerContent()) return;
     if (selection.state === "selected") {
       const layer = layers.active;
       if (layers.isLocked(layer)) return;
@@ -1511,6 +1537,7 @@
       storeRefPlacement();
       return;
     }
+    if (!selectLayerContent()) return;
     if (selection.state === "selected") enterFreeTransform();
     selection.flip(axis);
   }

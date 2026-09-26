@@ -273,11 +273,12 @@
   );
   let floating = $derived(selectionMode === "transforming" || selectionMode === "warping");
   let selecting = $derived(selectionMode !== "idle");
-  // Transform, Distort, Mesh and Flip lift the marquee's pixels, so they need an editable layer.
-  // A reference transforms and flips whole, marquee or not, but never warps (Bake it first).
-  let liftWhy = $derived(
-    refActive ? "" : !selecting ? "nothing selected" : !floating && liftBlock ? liftBlock : "",
-  );
+  // Transform, Distort, Mesh and Flip lift the marquee's pixels — or, with nothing selected, the
+  // whole layer's — so they need an editable layer. A reference transforms and flips whole, but
+  // never warps (Bake it first).
+  let liftWhy = $derived(refActive || floating ? "" : liftBlock);
+  // With no marquee the actions take the whole layer: the titles say so.
+  let scope = $derived(selecting || refActive ? "" : " — whole layer");
   let warpWhy = $derived(
     refActive ? "a reference moves, scales and rotates only — Bake it to warp it" : liftWhy,
   );
@@ -1040,16 +1041,16 @@
             ? `Free transform — ${liftWhy}`
             : selectionMode === "warping"
               ? "Free transform — apply or cancel the warp first"
-              : "Free transform — scale/rotate handles"}
+              : `Free transform${scope || " — scale/rotate handles"}`}
         onclick={() => {
-          if (!liftWhy && (selectionMode === "selected" || refActive)) transform();
+          if (!liftWhy && !floating) transform();
         }}><Move size={16} /></button
       >
       <button
         class="{iconBtn} {distortOn ? 'ui-on' : iconIdle} {dimmable}"
         aria-pressed={distortOn}
         aria-disabled={!!warpWhy}
-        title={warpWhy ? `Distort — ${warpWhy}` : "Distort (W) — 4-corner warp"}
+        title={warpWhy ? `Distort — ${warpWhy}` : `Distort (W) — 4-corner warp${scope}`}
         onclick={() => {
           if (!warpWhy) distort();
         }}><SquareDashed size={16} /></button
@@ -1058,7 +1059,7 @@
         class="{iconBtn} {meshOn ? 'ui-on' : iconIdle} {dimmable}"
         aria-pressed={meshOn}
         aria-disabled={!!warpWhy}
-        title={warpWhy ? `Mesh warp — ${warpWhy}` : "Mesh warp (M) — 3×3 grid"}
+        title={warpWhy ? `Mesh warp — ${warpWhy}` : `Mesh warp (M) — 3×3 grid${scope}`}
         onclick={() => {
           if (!warpWhy) mesh();
         }}><Grid3x3 size={16} /></button
@@ -1069,7 +1070,7 @@
       <button
         class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!!flipWhy}
-        title={flipWhy ? `Flip horizontal — ${flipWhy}` : "Flip horizontal"}
+        title={flipWhy ? `Flip horizontal — ${flipWhy}` : `Flip horizontal${scope}`}
         onclick={() => {
           if (!flipWhy) flip("h");
         }}><FlipHorizontal2 size={16} /></button
@@ -1077,7 +1078,7 @@
       <button
         class="{iconBtn} {iconIdle} {dimmable}"
         aria-disabled={!!flipWhy}
-        title={flipWhy ? `Flip vertical — ${flipWhy}` : "Flip vertical"}
+        title={flipWhy ? `Flip vertical — ${flipWhy}` : `Flip vertical${scope}`}
         onclick={() => {
           if (!flipWhy) flip("v");
         }}><FlipVertical2 size={16} /></button

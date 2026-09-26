@@ -44,7 +44,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - Rectangle and lasso selection; brush, eraser, fill and Outline stay inside it
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
-  **Mesh warp** (3×3), flip, keep proportions
+  **Mesh warp** (3×3), flip, keep proportions — with nothing selected they take the whole layer
 - Copy, cut, paste and delete — including copying a transformed or warped selection as shown.
   Copies also go to the system clipboard as PNG; an image pasted from another app becomes a reference
 - Every selection action is on the Select/Lasso toolbar row; with another tool active, an amber

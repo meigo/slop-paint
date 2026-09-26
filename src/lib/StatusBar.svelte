@@ -28,7 +28,10 @@
     eyedropper: "Eyedropper",
     outline: "Outline",
   };
-  const toolLabel = $derived(toolLabels[app.currentTool] ?? app.currentTool);
+  // On a reference the handles are what the tool does, whichever tool it is.
+  const toolLabel = $derived(
+    state === "reference" ? "Reference" : (toolLabels[app.currentTool] ?? app.currentTool),
+  );
 
   const kbd =
     "font-mono text-[10px] px-1 py-px rounded-sm border border-border bg-surface-hover text-text mx-px";
