@@ -10,6 +10,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "slop-paint",
   "compatibility_date": "2026-09-25",
+  // No preview URLs (<alias>-slop-paint…, <version>-slop-paint…): the debug uploads of 2026-09-26
+  // served stale builds there. Set true again to try a `wrangler versions upload --preview-alias`.
+  "preview_urls": false,
   "assets": {
     "directory": "./dist",
   },

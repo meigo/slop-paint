@@ -23,7 +23,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `npm run dev` — start dev server
 - `npm run dev:lan` — start dev server exposed on local network (for iPad testing)
 - `npm run build` — production build (runs svelte-check + tsc + vite build)
-- `npm run deploy` — build, then `wrangler deploy` to the Cloudflare Worker `slop-paint` (`wrangler.jsonc`: assets-only, no Worker script, as slop-animator; `public/_headers` caches only the content-hashed `/assets/*`). Manual, not on push; the name matches the Worker first made in the Cloudflare dashboard, so a deploy replaces it in place
+- `npm run deploy` — build, then `wrangler deploy` to the Cloudflare Worker `slop-paint` (`wrangler.jsonc`: assets-only, no Worker script, as slop-animator; `public/_headers` caches only the content-hashed `/assets/*`). Manual, not on push; the name matches the Worker first made in the Cloudflare dashboard, so a deploy replaces it in place. `preview_urls: false`: no preview/alias URLs (the 2026-09-26 debug aliases were turned off this way — Wrangler can't delete an alias, and versions are immutable history)
 - `npm run test` — run tests once
 - `npm run test:watch` — run tests in watch mode
 - `npm run lint` — run ESLint
