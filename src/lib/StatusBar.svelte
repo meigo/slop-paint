@@ -9,7 +9,7 @@
   // or its warp grid resolution changes.
   let state = $derived.by(() => {
     void app.selectionVersion;
-    return selection?.state ?? "idle";
+    return selection?.handlesOnly ? "reference" : (selection?.state ?? "idle");
   });
 
   let warpRes = $derived.by(() => {
@@ -46,6 +46,12 @@
       <span class="text-text">{app.statusMessage}</span>
     {:else if app.statusHint}
       {app.statusHint}
+    {:else if state === "reference"}
+      <span class="font-medium text-text">Reference</span>
+      <span class={sep}>·</span>
+      drag to move, corners scale, top handle rotates
+      <span class={sep}>·</span>
+      Bake it (layer strip) to paint on it
     {:else if state === "idle"}
       Drag with the <kbd class={kbd}>S</kbd> or <kbd class={kbd}>L</kbd> tool to make a selection
     {:else if state === "selected"}

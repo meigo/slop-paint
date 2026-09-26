@@ -102,6 +102,8 @@ export function loadPsd(
   buffer: ArrayBuffer,
   manager: LayerManager,
   dpr: number,
+  /** Called as each reference's original finishes decoding (it can be transformed from then on). */
+  onRefDecoded?: () => void,
 ): { width: number; height: number } {
   const psd = readPsd(buffer);
   const w = psd.width;
@@ -188,19 +190,20 @@ export function loadPsd(
     manager.activeId = flat[flat.length - 1].id;
   }
 
-  decodeOpenedRefs(refSources.values());
+  decodeOpenedRefs(refSources.values(), onRefDecoded);
   return { width: w, height: h };
 }
 
 /** Decode the originals of the references an opened PSD brought back, filling in each shared
  *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
-function decodeOpenedRefs(sources: Iterable<RefSource>) {
+function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) {
   for (const src of sources) {
     decodeRefSource(src.bytes, src.name, src.id).then(
       (decoded) => {
         src.image = decoded.image;
         if (!src.width) src.width = decoded.width;
         if (!src.height) src.height = decoded.height;
+        onDecoded?.();
       },
       (e) => console.error(`reference "${src.name}" could not be decoded`, e),
     );

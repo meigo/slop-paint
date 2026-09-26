@@ -27,11 +27,8 @@
   let {
     layers,
     onWidthChange,
-    onRefTransform,
   }: {
     layers: LayerManager;
-    /** Move/scale a reference layer (App owns the selection float). */
-    onRefTransform: (layer: AppLayer) => void;
     /** Called when a resize drag ends, so the width can be saved. */
     onWidthChange: () => void;
   } = $props();
@@ -503,12 +500,7 @@
     </div>
   </div>
 
-  <LayerProps
-    {layers}
-    onSettingsChange={() => bumpLayerVersion()}
-    onRename={startEdit}
-    {onRefTransform}
-  />
+  <LayerProps {layers} onSettingsChange={() => bumpLayerVersion()} onRename={startEdit} />
 
   <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
   {#key `${version}:${dragNonce}`}

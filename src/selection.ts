@@ -181,6 +181,9 @@ export class Selection {
   warpRows = 2;
   warpCols = 2;
   floatingPixels: HTMLCanvasElement | null = null;
+  /** Handles without a float: the pixels stay in their layer, which the caller re-draws as the
+   *  matrix changes (a reference layer). Nothing is pending, so `hasFloating` is false. */
+  handlesOnly = false;
 
   /** Lasso path points (CSS coords) */
   private lassoPoints: { x: number; y: number }[] = [];
@@ -247,7 +250,9 @@ export class Selection {
 
   get hasFloating(): boolean {
     return (
-      (this.state === "transforming" || this.state === "warping") && this.floatingPixels !== null
+      (this.state === "transforming" || this.state === "warping") &&
+      this.floatingPixels !== null &&
+      !this.handlesOnly
     );
   }
 
@@ -442,7 +447,8 @@ export class Selection {
   /** Start a floating transform from external pixels (paste), drawn into `rect` (doc units). */
   /** Float `pixels` over `rect` with transform handles. `matrix` starts it already placed: a
    *  reference floats its full-size original under the matrix that puts it where it sits. */
-  pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect, matrix?: Mat): void {
+  pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect, matrix?: Mat, handlesOnly = false) {
+    this.handlesOnly = handlesOnly;
     this.rect = { ...rect };
     this.mode = "rect";
     this.lassoPath = null;
@@ -758,6 +764,7 @@ export class Selection {
     const wasActive = this.state !== "idle";
     this.rect = null;
     this.floatingPixels = null;
+    this.handlesOnly = false;
     this.lassoPoints = [];
     this.lassoPath = null;
     this.matrix = identity();
@@ -932,7 +939,7 @@ export class Selection {
     const rotHandle = this.rotateHandlePos(c);
 
     // Draw floating pixels under the matrix.
-    if (this.floatingPixels) {
+    if (this.floatingPixels && !this.handlesOnly) {
       const m = this.matrix;
       ctx.save();
       ctx.globalAlpha = this.contentAlpha; // content, unlike the box and handles below

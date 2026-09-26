@@ -1029,16 +1029,20 @@
     <div class="h-6 w-px bg-border"></div>
     <div class="flex items-center gap-1">
       <button
-        class="{iconBtn} {selectionMode === 'transforming' ? 'ui-on' : iconIdle} {dimmable}"
-        aria-pressed={selectionMode === "transforming"}
+        class="{iconBtn} {selectionMode === 'transforming' || refActive
+          ? 'ui-on'
+          : iconIdle} {dimmable}"
+        aria-pressed={selectionMode === "transforming" || refActive}
         aria-disabled={!!liftWhy || selectionMode === "warping"}
-        title={liftWhy
-          ? `Free transform — ${liftWhy}`
-          : selectionMode === "warping"
-            ? "Free transform — apply or cancel the warp first"
-            : "Free transform — scale/rotate handles"}
+        title={refActive
+          ? "Free transform — a reference shows its handles whenever it is the active layer"
+          : liftWhy
+            ? `Free transform — ${liftWhy}`
+            : selectionMode === "warping"
+              ? "Free transform — apply or cancel the warp first"
+              : "Free transform — scale/rotate handles"}
         onclick={() => {
-          if (!liftWhy && (selectionMode === "selected" || (refActive && !floating))) transform();
+          if (!liftWhy && (selectionMode === "selected" || refActive)) transform();
         }}><Move size={16} /></button
       >
       <button

@@ -206,19 +206,21 @@ export class LayerManager {
     return search(this.tree, 1) ?? 1;
   }
 
-  /** Redraw a reference layer from its original at its placement (a no-op until it has decoded). */
-  renderRef(layer: Layer) {
+  /** Redraw a reference layer from its original at its placement (a no-op until it has decoded).
+   *  `corners` draws it somewhere else without storing that (a drag in progress); `fast` trades
+   *  resampling quality for speed while it moves. */
+  renderRef(layer: Layer, corners?: Corners, fast = false) {
     const ref = layer.ref;
     if (!ref?.src.image) return;
     const img = ref.src.image;
-    const m = matrixFromCorners(img.width, img.height, ref.corners);
+    const m = matrixFromCorners(img.width, img.height, corners ?? ref.corners);
     const d = this.dpr;
     const ctx = layer.ctx;
     ctx.save();
     ctx.resetTransform();
     ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     ctx.setTransform(d * m.a, d * m.b, d * m.c, d * m.d, d * m.e, d * m.f);
-    ctx.imageSmoothingQuality = "high";
+    ctx.imageSmoothingQuality = fast ? "low" : "high";
     ctx.drawImage(img, 0, 0);
     ctx.restore();
   }

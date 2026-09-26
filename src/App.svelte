@@ -18,6 +18,7 @@
   } from "./layers";
   import { cornersFromMatrix, cornersFromRect, matrixFromCorners } from "./ref-placement";
   import { decodeRefSource } from "./ref-image";
+  import { refFocusChange } from "./ref-tool";
   import {
     enclosedFillRegion,
     fillRegionBehind,
@@ -173,6 +174,10 @@
     const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
     if (!isBrushTool || spaceHeld || viewport.panning || isDrawing) return hideBrushCursor();
     const layer = layers.active;
+    if (refTransform) {
+      hideBrushCursor(); // a drag moves the reference: handleCursorMove shows the handle cursors
+      return;
+    }
     if (layers.isLocked(layer) || !layer.visible || layer.ref) {
       hideBrushCursor();
       canvasClipEl.style.cursor = "not-allowed";
@@ -390,13 +395,6 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
-    // Undo while placing an imported reference takes back the import itself: cancelling only the
-    // placement left the image where it landed, so the undo seemed to do nothing.
-    if (referenceReturn && selection?.hasFloating) {
-      resolveFloat(false);
-      history.undo();
-      return;
-    }
     // A live Outline preview looks like an edit already made, and undo is the artist taking it
     // back. Cancel it and stop there, or the undo would also take back the edit before it.
     if (outlineActive()) {
@@ -430,8 +428,12 @@
    */
   function enterFreeTransform() {
     if (!selection || !layers) return;
-    // A reference transforms whole, from its original, marquee or not.
-    if (layers.active.ref && !selection.hasFloating) return enterRefTransform(layers.active);
+    // A reference shows its handles whenever it is active; say why when it can't.
+    if (layers.active.ref) {
+      const why = refHandlesBlock(layers.active);
+      if (why) flashStatus(why);
+      return;
+    }
     if (selection.state !== "selected") return;
     const layer = layers.active;
     if (layers.isLocked(layer)) return;
@@ -613,7 +615,7 @@
       if (outlineActive()) cancelOutline();
       app.projectName = nameFromFile(file.name);
       const dpr = window.devicePixelRatio || 1;
-      const { width, height } = loadPsd(buffer, layers, dpr);
+      const { width, height } = loadPsd(buffer, layers, dpr, syncRefHandles);
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
       app.docWidth = width;
@@ -725,6 +727,15 @@
       return;
     }
 
+    // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
+    if (refTransform) {
+      refGesture(points, done);
+      canvasClipEl.style.cursor = selection.getCursor(
+        selection.hitTest(points[points.length - 1].x, points[points.length - 1].y) ?? "move",
+      );
+      return;
+    }
+
     // Outline is driven from the toolbar; a canvas press only (re)starts a preview when none is live
     // (entering refused on a locked or empty layer, then the artist switched layers).
     if (app.currentTool === "outline") {
@@ -740,7 +751,7 @@
     // A reference is drawn from its original, so paint on it would be wiped by its next move:
     // brush, eraser and fill are refused until it is baked.
     if (layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
-      if (points.length === 1 && !done) flashStatus(REF_PAINT_REFUSED);
+      if (points.length === 1 && !done) flashStatus(refHandlesBlock(layer) || REF_PAINT_REFUSED);
       return;
     }
 
@@ -750,13 +761,10 @@
 
       if (points.length === 1 && !done) {
         const handle = selection.hitTest(p.x, p.y);
-        if (selection.state === "selected" && handle === "move" && layer.ref) {
-          // A reference moves whole, from its original — never a lifted piece of its pixels.
-          enterRefTransform(layer);
-          if (selection.hasFloating) {
-            selectionMode = "drag";
-            selection.startDrag("move", p.x, p.y);
-          }
+        if (layer.ref) {
+          // A reference without handles (loading, locked or hidden) can't be selected from.
+          flashStatus(refHandlesBlock(layer) || REF_PAINT_REFUSED);
+          return;
         } else if (selection.state === "selected" && handle === "move") {
           // First drag inside a fresh selection: lift pixels and enter transform mode.
           preSelectionSnapshot = layers.getSnapshot();
@@ -1442,6 +1450,32 @@
     if (untrack(outlineActive)) scheduleOutlinePreview();
   });
 
+  // Selecting a reference layer switches to Select (its row holds Free transform, Flip and Keep
+  // proportions); selecting away hands the tool back (`ref-tool.ts`, as slop-animator). Every way
+  // the active layer changes (a tap, ↑/↓, undo, an import, an opened file) lands here; the latch
+  // acts on a CHANGE only, so a tool picked while on a reference stays picked.
+  let lastOnRef = false;
+  let toolBeforeRef: Tool | null = null;
+  $effect(() => {
+    void app.layerVersion;
+    const onRef = layersReady && !!layers.active?.ref;
+    untrack(() => {
+      if (onRef === lastOnRef) return;
+      lastOnRef = onRef;
+      const next = refFocusChange<Tool>(onRef, app.currentTool, toolBeforeRef, "brush");
+      toolBeforeRef = next.before;
+      if (next.tool !== app.currentTool) setTool(next.tool);
+    });
+  });
+
+  // A reference's handles follow the active layer (see syncRefHandles). Selection changes too: a
+  // Select all or Esc clears the handles, and they come straight back.
+  $effect(() => {
+    void app.layerVersion;
+    void app.selectionVersion;
+    untrack(syncRefHandles);
+  });
+
   // The preview belongs to the layer it started on: selecting another layer (which add, duplicate
   // and merge also do) or locking this one cancels it rather than leaving it baked in.
   $effect(() => {
@@ -1471,9 +1505,13 @@
    *  shows as a float with handles; lift + commit stay one undo step. */
   function flipSelection(axis: "h" | "v") {
     if (!selection) return;
-    if (selection.state === "selected" || (layers.active.ref && !selection.hasFloating)) {
-      enterFreeTransform();
+    if (layers.active.ref) {
+      if (!refTransform) return enterFreeTransform(); // says why there are no handles
+      selection.flip(axis);
+      storeRefPlacement();
+      return;
     }
+    if (selection.state === "selected") enterFreeTransform();
     selection.flip(axis);
   }
 
@@ -1529,7 +1567,7 @@
       const buffer = await loadAutosave();
       if (!buffer || !layers) return true;
       const dpr = window.devicePixelRatio || 1;
-      const { width, height } = loadPsd(buffer, layers, dpr);
+      const { width, height } = loadPsd(buffer, layers, dpr, syncRefHandles);
       history.clear(); // restored document: nothing from this session to undo
       app.docWidth = width;
       app.docHeight = height;
@@ -1561,16 +1599,17 @@
   });
   const selectionActive = $derived.by(() => {
     void app.selectionVersion;
-    return selection?.state === "selected";
+    return selection?.state === "selected" && !selection.handlesOnly;
   });
   // Pixels at the layer's physical resolution, plus where they were copied from (doc units).
   // $state.raw so Paste's dimmed state follows a copy (a copy bumps no other version).
   let pixelClipboard: { canvas: HTMLCanvasElement; rect: SelectionRect } | null = $state.raw(null);
   const clipboardFull = $derived(pixelClipboard !== null);
   // The selection's state for the Select/Lasso row (the selection object itself is not reactive).
+  // A reference's handles are not a selection: nothing to apply, cancel or clip to.
   const selectionState = $derived.by(() => {
     void app.selectionVersion;
-    return selection?.state ?? "idle";
+    return selection?.handlesOnly ? "idle" : (selection?.state ?? "idle");
   });
   const warpIsMesh = $derived.by(() => {
     void app.selectionVersion;
@@ -1731,9 +1770,6 @@
     await importReferenceFile(blob); // a clipboard file is always "image.png": the layer is "ref"
   }
 
-  // Where to hand back to once placing an imported reference ends (see endReferencePlacement).
-  let referenceReturn: { layerId: number; tool: Tool } | null = null;
-
   /** Read an image file (or a pasted one) whole — its bytes go into the PSD as the Smart Object's
    *  embedded original — and add it as a reference. */
   async function importReferenceFile(blob: Blob, fileName?: string) {
@@ -1746,15 +1782,13 @@
    * Add a reference layer just below the active one (under the drawing that traces over it), faint
    * and tagged `[ignore]` so Spine skips it, fitted to the page (1 image px = 1 doc px, scaled down
    * only). It keeps its original, so it can be moved and scaled again later without losing quality;
-   * painting on it is refused until it is baked. One undo step; then it is lifted into Free
-   * transform to be placed — Enter keeps the move, Esc leaves it where it landed.
+   * painting on it is refused until it is baked. One undo step; it becomes the active layer, so its
+   * handles show at once (see syncRefHandles) — every drag is its own step, nothing to apply.
    */
   function importReference(src: RefSource, fileName?: string) {
     if (!layers || !selection) return;
     if (outlineActive()) cancelOutline();
-    const returnTo = { layerId: layers.activeId, tool: app.currentTool };
-    setTool("select"); // applies any float first
-    if (selection.active) selection.cancel();
+    if (selection.hasFloating) selection.commit(); // a float belongs to the layer it came from
     const rect = placeExternalImage(src.width, src.height, app.docWidth, app.docHeight);
     let added: Layer | null = null;
     structuralEdit(layers, () => {
@@ -1766,89 +1800,121 @@
     });
     layers.composite();
     bumpLayerVersion();
-    if (added) enterRefTransform(added);
-    // Set only now: the setTool/cancel above resolve an earlier float, which would end it.
-    if (selection.hasFloating) referenceReturn = returnTo;
-    flashStatus(
-      "Reference added — drag to place it, then tap ✓ or outside the page to apply",
-      6000,
-    );
+    if (added) syncRefHandles();
+    flashStatus("Reference added — drag to place it; pick your layer to draw again", 6000);
   }
 
-  // --- Reference transform ---
-  // A reference is transformed from its ORIGINAL, not its layer's pixels: the full-size image
-  // floats under the matrix that puts it where it sits, and Apply stores the new corners and
-  // re-draws the layer from the original — so scaling it down and up again never loses detail.
-  let refTransform: { layer: Layer; before: RefPlacement } | null = null;
+  // --- Reference handles ---
+  // As slop-animator: while a reference is the active layer its transform handles show, whatever
+  // the tool, and any drag on the canvas moves it (corners scale, top handle rotates). It moves
+  // from its ORIGINAL, re-drawn in its own layer as it goes — so it keeps its place in the layer
+  // order, and scaling down and up again loses nothing. Each drag is one undo step; there is
+  // nothing to apply, so picking another layer (or anything else) simply leaves it where it is.
+  // The Selection only supplies the handles (`handlesOnly`: no float, nothing pending).
+  let refTransform: { layer: Layer; at: RefPlacement } | null = null;
   const REF_PAINT_REFUSED = "It's a reference — Bake it (in the layer strip) to paint on it";
 
-  function enterRefTransform(layer: Layer) {
-    const ref = layer.ref;
-    if (!ref || !selection || !layers) return;
-    const img = ref.src.image;
-    if (!img) return flashStatus("The reference is still loading — try again in a moment");
-    if (layers.isLocked(layer)) return flashStatus("Layer is locked");
-    if (outlineActive()) cancelOutline();
-    if (app.currentTool !== "select" && app.currentTool !== "lasso") setTool("select");
+  /** Why the active reference shows no handles, or "" — also the reason a drag on it does nothing. */
+  function refHandlesBlock(layer: Layer): string {
+    if (!layer.ref) return "";
+    if (!layer.ref.src.image) return "The reference is still loading — try again in a moment";
+    if (layers.isLocked(layer)) return "Layer is locked";
+    if (!layer.visible) return "Layer is hidden";
+    return "";
+  }
+
+  /** Show the active reference's handles, or drop them when the active layer is no longer one —
+   *  called on every layer / selection change. A float from another layer is left to resolve
+   *  first; a plain marquee gives way (a reference has no pixels of its own to select). */
+  function syncRefHandles() {
+    if (!layersReady || !selection) return;
+    const layer = layers.active;
+    const want = !!layer.ref && !refHandlesBlock(layer) && !outlineActive();
+    // Still showing, for this layer, at the placement it has (undo/redo replaces `ref`)?
+    const current =
+      !!refTransform &&
+      refTransform.layer === layer &&
+      refTransform.at === layer.ref &&
+      selection.handlesOnly;
+    if (current && want) return;
+    if (refTransform) {
+      refTransform = null;
+      if (selection.handlesOnly) selection.cancel();
+    }
+    if (!want || selection.hasFloating || !layer.ref?.src.image) return;
     if (selection.active) selection.cancel();
-    layers.activeId = layer.id;
-    // The float shows the reference while it moves; the layer is emptied under it, and Cancel puts
-    // these pixels back.
-    preSelectionSnapshot = layers.snapshotOf(layer);
-    layer.ctx.save();
-    layer.ctx.resetTransform();
-    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    layer.ctx.restore();
-    layers.composite();
-    refTransform = { layer, before: { src: ref.src, corners: ref.corners } };
+    const img = layer.ref.src.image;
+    refTransform = { layer, at: layer.ref };
     selection.pasteFloat(
       img,
       { x: 0, y: 0, w: img.width, h: img.height },
-      matrixFromCorners(img.width, img.height, ref.corners),
+      matrixFromCorners(img.width, img.height, layer.ref.corners),
+      true,
     );
-    bumpLayerVersion();
   }
 
-  /** Apply a reference transform: new corners from the float's box and matrix, a re-draw from the
-   *  original, and one undo step — none when it didn't move. */
-  function commitRefTransform() {
+  /** A canvas gesture while a reference's handles show: a handle scales/rotates, anywhere else
+   *  moves it. The layer is re-drawn as it goes; the release stores the placement (one step). */
+  function refGesture(points: InputPoint[], done: boolean) {
+    if (!refTransform || !selection) return;
+    const p = points[points.length - 1];
+    if (points.length === 1 && !done) {
+      selection.startDrag(selection.hitTest(p.x, p.y) ?? "move", p.x, p.y);
+      return;
+    }
+    selection.updateDrag(p.x, p.y);
+    if (done) {
+      selection.endDrag();
+      storeRefPlacement();
+    }
+  }
+
+  let refRenderFrame = 0;
+  /** Re-draw the reference where its handles are now, once per frame while they move. */
+  function scheduleRefRender() {
+    if (refRenderFrame) return;
+    refRenderFrame = requestAnimationFrame(() => {
+      refRenderFrame = 0;
+      if (!refTransform || !selection?.rect) return;
+      layers.renderRef(
+        refTransform.layer,
+        cornersFromMatrix(selection.rect, selection.matrix),
+        true,
+      );
+      layers.composite();
+    });
+  }
+
+  /** The handles' placement becomes the reference's, drawn at full quality — one undo step, none
+   *  when it didn't move (a tap). */
+  function storeRefPlacement() {
     if (!refTransform || !selection?.rect) return;
-    const { layer, before } = refTransform;
-    refTransform = null;
+    const { layer, at: before } = refTransform;
+    cancelAnimationFrame(refRenderFrame);
+    refRenderFrame = 0;
     const after: RefPlacement = {
       src: before.src,
       corners: cornersFromMatrix(selection.rect, selection.matrix),
     };
-    layer.ref = after;
-    layers.renderRef(layer);
     const moved = after.corners.some(
-      (p, i) =>
-        Math.abs(p.x - before.corners[i].x) > 1e-6 || Math.abs(p.y - before.corners[i].y) > 1e-6,
+      (q, i) =>
+        Math.abs(q.x - before.corners[i].x) > 1e-6 || Math.abs(q.y - before.corners[i].y) > 1e-6,
     );
-    if (moved) pushRefEdit(layers, layer.id, before, after);
-  }
-
-  /** Placing a reference ended — applied, cancelled, or applied by a tap elsewhere. The layer the
-   *  artist was drawing on becomes active again: the next stroke belongs there, not on the faint
-   *  `[ignore]` reference (it landed there, invisibly, before). The tool comes back separately, in
-   *  resolveFloat — a tap elsewhere is already a Select gesture in progress. */
-  function endReferencePlacement() {
-    const r = referenceReturn;
-    if (!r) return;
-    referenceReturn = null;
-    if (layers.findNode(r.layerId)) layers.activeId = r.layerId;
+    if (moved) {
+      layer.ref = after;
+      refTransform.at = after;
+      pushRefEdit(layers, layer.id, before, after);
+    }
+    layers.renderRef(layer);
+    layers.composite();
     bumpLayerVersion();
-    if (app.statusMessage.startsWith("Reference added")) flashStatus(""); // its how-to is done
   }
 
-  /** Enter/Esc and ✓/✗: apply or cancel the selection. After placing a reference, also return to
-   *  the tool it was imported from. */
+  /** Enter/Esc and ✓/✗: apply or cancel the selection. */
   function resolveFloat(apply: boolean) {
     if (!selection) return;
-    const back = referenceReturn?.tool ?? null;
     if (apply) selection.commit();
     else selection.cancel();
-    if (back && back !== app.currentTool) setTool(back);
   }
 
   function handleImageFile() {
@@ -1936,34 +2002,28 @@
       const layer = layers.active;
       const before = preSelectionSnapshot;
       preSelectionSnapshot = null;
-      if (refTransform) {
-        commitRefTransform(); // a reference stores its placement; its pixels are re-drawn
-      } else {
-        selection.renderFloatingTo(layer.ctx);
-        // Applying an untouched lift changes nothing: no empty undo step (an import applied as
-        // it landed made the next undo appear to do nothing).
-        if (before && !sameImageData(before, layers.snapshotOf(layer))) {
-          pushPixelEdit(layers, layer, before);
-        }
+      selection.renderFloatingTo(layer.ctx);
+      // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
+      // landed made the next undo appear to do nothing).
+      if (before && !sameImageData(before, layers.snapshotOf(layer))) {
+        pushPixelEdit(layers, layer, before);
       }
-      endReferencePlacement();
       layers.composite();
       bumpLayerVersion();
     };
 
     selection.onCancel = () => {
-      refTransform = null; // the snapshot below puts the reference's pixels back
       if (preSelectionSnapshot) {
         layers.restoreSnapshot(preSelectionSnapshot);
         preSelectionSnapshot = null;
         layers.composite();
         bumpLayerVersion();
       }
-      endReferencePlacement();
     };
 
     selection.onChange = () => {
-      scheduleComposite();
+      if (refTransform) scheduleRefRender();
+      else scheduleComposite();
     };
 
     selection.onStateChange = () => {
@@ -2099,6 +2159,13 @@
 
       // Non-brush tools manage their own cursor here (brush tools delegate to updateBrushCursor).
       // When a selection / transform / warp is live, hit-test for the right handle cursor.
+      if (refTransform && app.currentTool !== "eyedropper") {
+        // Any drag moves a reference whose handles show, so off the handles the cursor says move.
+        const p = viewport.screenToCanvas(e.clientX, e.clientY);
+        canvasClipEl.style.cursor = selection.getCursor(selection.hitTest(p.x, p.y) ?? "move");
+        hideBrushCursor();
+        return;
+      }
       if (!isBrushTool) {
         if (selection?.active) {
           const p = viewport.screenToCanvas(e.clientX, e.clientY);
@@ -2255,7 +2322,7 @@
 
     {#if layersReady}
       <div class="flex min-h-0" style:grid-area="panel">
-        <LayerPanel {layers} onWidthChange={debouncedSave} onRefTransform={enterRefTransform} />
+        <LayerPanel {layers} onWidthChange={debouncedSave} />
       </div>
     {/if}
   </div>

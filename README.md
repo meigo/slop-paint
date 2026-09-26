@@ -56,8 +56,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   an image copied in another app (Photos on an iPad):
   it lands on its own faint layer just below the one you draw on, ready to move and scale, tagged
   `[ignore]` so Spine skips it
-- A reference keeps its **original image**: move, scale, rotate and flip it any time (the ⤢ button
-  in the layer strip) without losing detail. **Bake** turns it into a plain layer to paint on or
+- A reference keeps its **original image**: select its layer and its handles are there (the Select
+  tool comes on, and your tool comes back when you pick a drawing layer) — drag to move, corners
+  scale, the top handle rotates — without losing detail. **Bake** turns it into a plain layer to paint on or
   warp it
 - Saved in the PSD as a **Smart Object** (the original embedded), so it stays a reference when
   reopened here or in Photoshop

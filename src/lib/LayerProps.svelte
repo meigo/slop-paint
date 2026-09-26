@@ -3,7 +3,7 @@
   // row. One strip at the top of the panel for whatever is selected (the Photoshop/Krita
   // convention, and what slop-animator moved to): list rows stay one line, so a row never grows
   // when selected and the row under the Pencil never moves.
-  import { Blend, Pencil, Scaling, Stamp, Tag } from "@lucide/svelte";
+  import { Blend, Pencil, Stamp, Tag } from "@lucide/svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import type { Layer, LayerManager, LayerNode } from "../layers";
   import { clickOutside } from "./click-outside";
@@ -22,15 +22,12 @@
     layers,
     onSettingsChange,
     onRename,
-    onRefTransform,
   }: {
     layers: LayerManager;
     /** Called after an edit, so the caller can recomposite / persist. */
     onSettingsChange: () => void;
     /** Start renaming the selected row in the list (the pencil — double-tap still works too). */
     onRename: (node: LayerNode) => void;
-    /** Move/scale a reference layer from its original (App owns the selection float). */
-    onRefTransform: (layer: Layer) => void;
   } = $props();
 
   // The layer tree is imperative, so layerVersion is what re-derives all of this. The node's
@@ -50,7 +47,7 @@
     return target ? parseTags(target.name).tags : [];
   });
 
-  // A reference layer (a Smart Object in the PSD) gets Transform and Bake in place of nothing.
+  // A reference layer (a Smart Object in the PSD) gets Bake; its handles show on the canvas.
   const refLayer = $derived.by<Layer | null>(() => {
     void app.layerVersion;
     return target?.type === "layer" && target.ref ? target : null;
@@ -121,12 +118,6 @@
     </span>
 
     {#if refLayer}
-      {@const ref = refLayer}
-      <button
-        class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
-        title="Move, scale or rotate the reference — from its original, so nothing is lost"
-        onclick={() => onRefTransform(ref)}><Scaling size={13} /></button
-      >
       <button
         class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
         title="Bake the reference into plain pixels (to paint on or warp it)"
