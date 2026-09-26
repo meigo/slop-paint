@@ -37,6 +37,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation)
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
+- A bug seen only on the deployed site: reproduce it against the production build (`npm run build && npx vite preview`), not `npm run dev` — the minified bundle can behave differently (see Undo)
 - Run `npm run check` to verify Svelte components
 - Run `npx tsc --noEmit` to type-check non-Svelte TypeScript
 
@@ -174,7 +175,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `pushNameEdit` / `pushNodeFieldEdit` look their node up by id at apply time: `restoreStructure` rebuilds group nodes as fresh clones, so a captured group object can be detached by an unrelated structural undo
 - The stack is cleared by New, Open, autosave restore and canvas resize (its snapshots are the old canvas size)
 - Budget: 50 steps or 256 MB of pixel snapshots, whichever comes first
-- iPad undo fix (2026-09-25): on iPad (Safari and Chrome) undo emptied its stack while the stroke stayed on screen until the next stroke, and brushes were slow. Two changes fixed it together, and which one was needed was NOT isolated: the on-screen canvas lost `willReadFrequently` (it is now accelerated, as slop-animator's display — the likelier cause, and the slow brushes), and layer pixel restores go through `blitImageData` (`pixels.ts`: a fresh canvas + `drawImage` instead of `putImageData` on the layer). slop-animator uses plain `putImageData` and works on the same iPad, so `blitImageData` may be removable — test on an iPad before removing it
+- Undo redrawing (2026-09-26): the real cause of "undo empties its stack but the stroke stays until the next stroke" was the PRODUCTION MINIFIER, in every browser, never in `npm run dev`. `undo.ts` held the redraw hook in an `export let` reassigned by `setOnHistoryApplied`; the minifier inlined its initial no-op and deleted every call. The hook now lives on an object (`hooks.onHistoryApplied`). Do not bring back an exported `let` that a setter reassigns. The earlier iPad changes (on-screen canvas without `willReadFrequently`, `blitImageData` in `pixels.ts`) were made while chasing this and were not the fix: keep the accelerated canvas (as slop-animator), and `blitImageData` can likely go back to plain `putImageData`
 
 ## Status Bar
 

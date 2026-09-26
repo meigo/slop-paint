@@ -8,10 +8,13 @@ import type { Layer, LayerManager } from "./layers";
 
 export const history = new History();
 
-/** Called after an undo/redo so the app can recomposite and refresh the UI. */
-export let onHistoryApplied: () => void = () => {};
+/** Called after an undo/redo so the app can recomposite and refresh the UI. Held on an object, not
+ *  in an `export let` the setter reassigns: the production minifier treated that binding as never
+ *  changing, inlined its initial no-op and dropped every call — undo restored the pixels but never
+ *  redrew the screen (until the next stroke did), in every browser, while `npm run dev` was fine. */
+const hooks = { onHistoryApplied: () => {} };
 export function setOnHistoryApplied(fn: () => void) {
-  onHistoryApplied = fn;
+  hooks.onHistoryApplied = fn;
 }
 
 /** Record a pixel change already made to `layer`, given its pixels from before the change. */
@@ -21,11 +24,11 @@ export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageD
     pixelCommand(
       () => {
         layers.restoreTo(layer, before);
-        onHistoryApplied();
+        hooks.onHistoryApplied();
       },
       () => {
         layers.restoreTo(layer, after);
-        onHistoryApplied();
+        hooks.onHistoryApplied();
       },
       before,
       after,
@@ -52,12 +55,12 @@ export function structuralEdit<T>(
     undo: () => {
       if (target && beforePixels) layers.restoreTo(target, beforePixels);
       layers.restoreStructure(beforeTree);
-      onHistoryApplied();
+      hooks.onHistoryApplied();
     },
     redo: () => {
       if (target && afterPixels) layers.restoreTo(target, afterPixels);
       layers.restoreStructure(afterTree);
-      onHistoryApplied();
+      hooks.onHistoryApplied();
     },
     bytes: (beforePixels?.data.byteLength ?? 0) + (afterPixels?.data.byteLength ?? 0),
   });
@@ -76,7 +79,7 @@ export function pushNameEdit(layers: LayerManager, id: number, before: string, a
   const apply = (name: string) => {
     const node = layers.findNode(id);
     if (node) node.name = name;
-    onHistoryApplied();
+    hooks.onHistoryApplied();
   };
   history.push({ undo: () => apply(before), redo: () => apply(after) });
 }
@@ -103,7 +106,7 @@ export function pushNodeFieldEdit(
     const node = layers.findNode(id);
     // `locked`/`alphaLock` only exist on layers; a group never records them.
     if (node) (node as unknown as Record<NodeField, boolean | number>)[field] = value;
-    onHistoryApplied();
+    hooks.onHistoryApplied();
   };
   history.push({ undo: () => apply(before), redo: () => apply(after) });
 }
