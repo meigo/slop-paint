@@ -1580,7 +1580,7 @@
         autosaveDirty = true;
         console.error("autosave failed", e);
         flashStatus(
-          `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save project so this work isn't lost.`,
+          `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save so this work isn't lost.`,
           0,
         );
       },
@@ -1608,7 +1608,7 @@
     } catch (e) {
       console.error("autosave restore failed", e);
       flashStatus(
-        `Couldn't load your autosaved work (${e instanceof Error ? e.message : String(e)}). Autosave is off so the saved copy isn't overwritten — reload to retry, or use File ▸ Open project.`,
+        `Couldn't load your autosaved work (${e instanceof Error ? e.message : String(e)}). Autosave is off so the saved copy isn't overwritten — reload to retry, or use File ▸ Open.`,
         0,
       );
       return false;
@@ -1964,7 +1964,7 @@
   }
 
   /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
-  /** File ▸ Import reference from clipboard: only an image on the SYSTEM clipboard, always as a
+  /** File ▸ Import image from clipboard: only an image on the SYSTEM clipboard, always as a
    *  reference (Edit ▸ Paste also falls back to the internal copy, so it is not obviously this).
    *  `clipboard.read()` is called before any await, so Safari still counts it as the tap's. */
   async function importReferenceFromClipboard() {
@@ -1976,10 +1976,7 @@
       // Say what the browser said: iOS refuses for several reasons (the Paste callout dismissed, no
       // tap to count the read as the user's, no support), and each has a different remedy.
       const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      return flashStatus(
-        `Can't read the clipboard (${why}) — try File ▸ Import reference image…`,
-        0,
-      );
+      return flashStatus(`Can't read the clipboard (${why}) — try File ▸ Import image…`, 0);
     }
     for (const item of items) {
       const type = item.types.find((t) => t.startsWith("image/"));

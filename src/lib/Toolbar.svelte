@@ -343,22 +343,11 @@
   >
 
   <div class="ml-auto flex shrink-0 items-center gap-1">
+    <!-- The same four menus, in the same order, as slop-animator: File (the project and what goes
+         in and out of it), Edit, Document (what changes the file itself), View (only how you look
+         at it). Short verbs, "…" when a dialog follows, shortcuts as key chips. -->
     <ToolbarMenu label="File">
       {#snippet children(close)}
-        <!-- The project's name, editable in place: save and export file names come from it. -->
-        <label
-          class="flex items-center gap-2 px-3 py-1.5 text-sm text-text-secondary"
-          title="Project name — used for the saved and exported file names"
-        >
-          Name
-          <input
-            type="text"
-            value={app.projectName}
-            onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
-            class="h-7 min-w-0 flex-1 rounded border border-border bg-surface-raised px-2 text-sm text-text"
-          />
-        </label>
-        <div class="my-1 h-px bg-border"></div>
         <button
           class={menuItem}
           role="menuitem"
@@ -373,33 +362,16 @@
           onclick={() => {
             openPsd();
             close();
-          }}>Open project… <span class={kbd}>Ctrl+O</span></button
+          }}>Open… <span class={kbd}>Ctrl+O</span></button
         >
         <button
           class={menuItem}
           role="menuitem"
-          title="Add an image as a faint reference layer to draw over (tagged [ignore] for Spine)"
-          onclick={() => {
-            importReference();
-            close();
-          }}>Import reference image…</button
-        >
-        <button
-          class={menuItem}
-          role="menuitem"
-          title="Add the image on the clipboard (copied in Photos or another app) as a reference layer"
-          onclick={() => {
-            importReferenceFromClipboard();
-            close();
-          }}>Import reference from clipboard</button
-        >
-        <button
-          class={menuItem}
-          role="menuitem"
+          title="Save the project as a PSD — references stay Smart Objects"
           onclick={() => {
             savePsd();
             close();
-          }}>Save project <span class={kbd}>Ctrl+S</span></button
+          }}>Save <span class={kbd}>Ctrl+S</span></button
         >
         {#if saveToFiles}
           <button
@@ -416,15 +388,65 @@
         <button
           class={menuItem}
           role="menuitem"
+          title="Add an image as a faint reference layer to draw over — it moves and scales without loss (tagged [ignore] for Spine)"
           onclick={() => {
-            resizeDoc();
+            importReference();
             close();
-          }}>Resize canvas… <span class={kbd}>{app.docWidth} × {app.docHeight}</span></button
+          }}>Import image…</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          title="Add the image on the clipboard (copied in Photos or another app) as a reference layer"
+          onclick={() => {
+            importReferenceFromClipboard();
+            close();
+          }}>Import image from clipboard</button
+        >
+        <div class="my-1 h-px bg-border"></div>
+        <button
+          class={menuItem}
+          role="menuitem"
+          title="The drawing flattened to one image"
+          onclick={() => {
+            saveImage();
+            close();
+          }}>Export PNG</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
+          title="Layered PSD for Spine: layers trimmed to their pixels, groups as folders"
+          onclick={() => {
+            exportPsd();
+            close();
+          }}>Export PSD for Spine</button
         >
       {/snippet}
     </ToolbarMenu>
     <ToolbarMenu label="Edit">
       {#snippet children(close)}
+        <button
+          class="{menuItem} {dimmable}"
+          role="menuitem"
+          aria-disabled={!canUndo}
+          title={canUndo ? "" : "Undo — nothing to undo"}
+          onclick={() => {
+            if (canUndo) undo();
+            close();
+          }}>Undo <span class={kbd}>Ctrl+Z</span></button
+        >
+        <button
+          class="{menuItem} {dimmable}"
+          role="menuitem"
+          aria-disabled={!canRedo}
+          title={canRedo ? "" : "Redo — nothing to redo"}
+          onclick={() => {
+            if (canRedo) redo();
+            close();
+          }}>Redo <span class={kbd}>Ctrl+Shift+Z</span></button
+        >
+        <div class="my-1 h-px bg-border"></div>
         <button
           class="{menuItem} {dimmable}"
           role="menuitem"
@@ -462,7 +484,26 @@
           onclick={() => {
             if (hasSelection) deleteSelection();
             close();
-          }}>Delete selection <span class={kbd}>Del</span></button
+          }}>Delete <span class={kbd}>Del</span></button
+        >
+        <div class="my-1 h-px bg-border"></div>
+        <button
+          class={menuItem}
+          role="menuitem"
+          onclick={() => {
+            selectAll();
+            close();
+          }}>Select all</button
+        >
+        <button
+          class="{menuItem} {dimmable}"
+          role="menuitem"
+          aria-disabled={!hasSelection}
+          title={hasSelection ? "" : "Deselect — nothing selected"}
+          onclick={() => {
+            if (hasSelection) deselect();
+            close();
+          }}>Deselect <span class={kbd}>Esc</span></button
         >
         <div class="my-1 h-px bg-border"></div>
         <button
@@ -475,24 +516,29 @@
         >
       {/snippet}
     </ToolbarMenu>
-    <ToolbarMenu label="Export">
+    <ToolbarMenu label="Document">
       {#snippet children(close)}
-        <button
-          class={menuItem}
-          role="menuitem"
-          onclick={() => {
-            saveImage();
-            close();
-          }}>PNG image</button
+        <!-- The project's name, editable in place: save and export file names come from it. -->
+        <label
+          class="flex items-center gap-2 px-3 py-1.5 text-sm text-text-secondary"
+          title="Project name — used for the saved and exported file names"
         >
+          Name
+          <input
+            type="text"
+            value={app.projectName}
+            onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
+            class="h-7 min-w-0 flex-1 rounded border border-border bg-surface-raised px-2 text-sm text-text"
+          />
+        </label>
+        <div class="my-1 h-px bg-border"></div>
         <button
           class={menuItem}
           role="menuitem"
-          title="Layered PSD for Photoshop / Spine"
           onclick={() => {
-            exportPsd();
+            resizeDoc();
             close();
-          }}>PSD (layers)</button
+          }}>Resize canvas… <span class={kbd}>{app.docWidth} × {app.docHeight}</span></button
         >
       {/snippet}
     </ToolbarMenu>

@@ -131,7 +131,7 @@
 
       <p class="text-[11px] text-warn">
         Replaces the current drawing, its undo history and the autosaved copy. Save first (File ▸
-        Save project) to keep it.
+        Save) to keep it.
       </p>
 
       <div class="flex justify-end gap-2 pt-1">

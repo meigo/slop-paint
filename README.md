@@ -52,7 +52,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Reference images**
 
-- **File ▸ Import reference image…** (a file), **File ▸ Import reference from clipboard**, or paste
+- **File ▸ Import image…** (a file), **File ▸ Import image from clipboard**, or paste
   an image copied in another app (Photos on an iPad):
   it lands on its own faint layer just below the one you draw on, ready to move and scale, tagged
   `[ignore]` so Spine skips it
@@ -87,7 +87,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Files**
 
-- A **project name** (set in New, or at the top of the File menu) names the saved and exported files
+- A **project name** (set in New, or in the Document menu) names the saved and exported files
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
   groups and reference Smart Objects, and open PSDs from Photoshop, GIMP and others
 - Export a flattened **PNG** or a **PSD** for Spine (groups become PSD folders, layer order is draw
