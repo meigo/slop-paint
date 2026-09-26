@@ -39,3 +39,9 @@ strike them through or move to a "Done" log when shipped.
 
 - **`exportPsd` / `savePsd` consolidation done** — leaving a marker in case we
   want to extend with options like "include thumbnail", "flatten on export", etc.
+
+## Browser AI
+
+- **Small in-browser models** — photo → line art and background removal on references, sketch
+  clean-up (desktop), smart select. Tiers (iPad / desktop with WebGPU), ground rules, candidates and
+  suggested order: see [docs/browser-ai.md](docs/browser-ai.md).

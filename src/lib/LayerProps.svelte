@@ -126,8 +126,10 @@
     {/if}
 
     <!-- Spine tags: the chips (tap one to remove it), then the menu to add. -->
+    <!-- Settings ▸ Spine tools off hides the chips and the menu; the span stays as the spacer that
+         keeps the rename pencil on the right. -->
     <span class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-      {#each tags as t (t)}
+      {#each app.spineTools ? tags : [] as t (t)}
         <button
           class="shrink-0 cursor-pointer rounded border border-border bg-surface-raised px-1 font-mono text-[9px] leading-[14px] text-text-secondary hover:bg-surface-hover"
           title="[{t}] — click to remove"
@@ -135,48 +137,50 @@
         >
       {/each}
     </span>
-    <div class="relative flex shrink-0" use:clickOutside={() => (tagsOpen = false)}>
-      <button
-        class="flex size-5 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
-        title="Spine tags for the selected {target.type}"
-        aria-haspopup="menu"
-        aria-expanded={tagsOpen}
-        onclick={() => (tagsOpen = !tagsOpen)}
-      >
-        <Tag size={13} />
-      </button>
-      {#if tagsOpen}
-        <div
-          class="absolute top-full right-0 z-50 mt-1 flex min-w-[200px] flex-col gap-0.5 rounded-lg border border-border bg-surface p-1 text-xs shadow-lg"
-          role="menu"
+    {#if app.spineTools}
+      <div class="relative flex shrink-0" use:clickOutside={() => (tagsOpen = false)}>
+        <button
+          class="flex size-5 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
+          title="Spine tags for the selected {target.type}"
+          aria-haspopup="menu"
+          aria-expanded={tagsOpen}
+          onclick={() => (tagsOpen = !tagsOpen)}
         >
-          {#each tagsForNodeType(target.type) as t (t)}
-            {@const conflict = tagConflictReason(t, tags)}
-            <button
-              class="flex items-center gap-2 rounded-md px-2 py-1 text-left {conflict
-                ? 'cursor-not-allowed text-text-muted opacity-50'
-                : 'cursor-pointer text-text-secondary hover:bg-surface-hover'}"
-              role="menuitem"
-              disabled={!!conflict}
-              title={conflict ?? TAG_DESCRIPTIONS[t]}
-              onclick={() => toggleNodeTag(t)}
-            >
-              <span
-                class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-border text-[9px] {tags.includes(
-                  t,
-                )
-                  ? 'ui-on'
-                  : ''}">{tags.includes(t) ? "✓" : ""}</span
+          <Tag size={13} />
+        </button>
+        {#if tagsOpen}
+          <div
+            class="absolute top-full right-0 z-50 mt-1 flex min-w-[200px] flex-col gap-0.5 rounded-lg border border-border bg-surface p-1 text-xs shadow-lg"
+            role="menu"
+          >
+            {#each tagsForNodeType(target.type) as t (t)}
+              {@const conflict = tagConflictReason(t, tags)}
+              <button
+                class="flex items-center gap-2 rounded-md px-2 py-1 text-left {conflict
+                  ? 'cursor-not-allowed text-text-muted opacity-50'
+                  : 'cursor-pointer text-text-secondary hover:bg-surface-hover'}"
+                role="menuitem"
+                disabled={!!conflict}
+                title={conflict ?? TAG_DESCRIPTIONS[t]}
+                onclick={() => toggleNodeTag(t)}
               >
-              <span class="flex-1 font-mono text-text">[{t}]</span>
-              <span class="truncate text-[10px] text-text-muted"
-                >{conflict ?? TAG_DESCRIPTIONS[t]}</span
-              >
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+                <span
+                  class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-border text-[9px] {tags.includes(
+                    t,
+                  )
+                    ? 'ui-on'
+                    : ''}">{tags.includes(t) ? "✓" : ""}</span
+                >
+                <span class="flex-1 font-mono text-text">[{t}]</span>
+                <span class="truncate text-[10px] text-text-muted"
+                  >{conflict ?? TAG_DESCRIPTIONS[t]}</span
+                >
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
     <button
       class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
       title="Rename the selected {target.type}"

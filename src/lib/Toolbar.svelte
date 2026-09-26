@@ -78,6 +78,7 @@
     importReferenceFromClipboard,
     newDoc,
     resizeDoc,
+    openSettings,
     resetView,
     reset100,
     onSettingsChange,
@@ -128,6 +129,7 @@
     importReferenceFromClipboard: () => void;
     newDoc: () => void;
     resizeDoc: () => void;
+    openSettings: () => void;
     resetView: () => void;
     reset100: () => void;
     onSettingsChange: () => void;
@@ -388,7 +390,9 @@
         <button
           class={menuItem}
           role="menuitem"
-          title="Add an image as a faint reference layer to draw over — it moves and scales without loss (tagged [ignore] for Spine)"
+          title="Add an image as a faint reference layer to draw over — it moves and scales without loss{app.spineTools
+            ? ' (tagged [ignore] for Spine)'
+            : ''}"
           onclick={() => {
             importReference();
             close();
@@ -416,11 +420,13 @@
         <button
           class={menuItem}
           role="menuitem"
-          title="Layered PSD for Spine: layers trimmed to their pixels, groups as folders"
+          title="Layered PSD{app.spineTools
+            ? ' for Spine'
+            : ''}: layers trimmed to their pixels, groups as folders"
           onclick={() => {
             exportPsd();
             close();
-          }}>Export PSD for Spine</button
+          }}>{app.spineTools ? "Export PSD for Spine" : "Export PSD (trimmed)"}</button
         >
       {/snippet}
     </ToolbarMenu>
@@ -513,6 +519,16 @@
             clearLayer();
             close();
           }}>Clear layer</button
+        >
+        <div class="my-1 h-px bg-border"></div>
+        <button
+          class={menuItem}
+          role="menuitem"
+          title="App preferences, such as the Spine tools"
+          onclick={() => {
+            openSettings();
+            close();
+          }}>Settings…</button
         >
       {/snippet}
     </ToolbarMenu>

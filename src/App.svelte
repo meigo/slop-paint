@@ -3,6 +3,7 @@
   import LayerPanel from "./lib/LayerPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import NewDocDialog from "./lib/NewDocDialog.svelte";
+  import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke } from "./brush";
@@ -99,6 +100,7 @@
   // --- Expose layers for child components ---
   let layersReady = $state(false);
   let showNewDocDialog = $state(false);
+  let showSettingsDialog = $state(false);
   let showResizeDialog = $state(false);
 
   // --- Batched composite: coalesce multiple composite calls per frame ---
@@ -278,6 +280,7 @@
     fillAlphaThreshold?: number;
     fillExpand?: number;
     keepProportions?: boolean;
+    spineTools?: boolean;
     fillEnclosedGap?: number;
     fillColor?: string;
     projectName?: string;
@@ -320,6 +323,7 @@
       fillAlphaThreshold: app.fillSettings.alphaThreshold,
       fillExpand: app.fillSettings.expand,
       keepProportions: app.keepProportions,
+      spineTools: app.spineTools,
       fillEnclosedGap: app.fillEnclosedGap,
       layerPanelWidth: app.layerPanelWidth,
       nibAngle: app.brushSettings.nibAngle,
@@ -362,6 +366,7 @@
         app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
+      if (typeof data.spineTools === "boolean") app.spineTools = data.spineTools;
       if (data.fillEnclosedGap != null) app.fillEnclosedGap = clampGap(data.fillEnclosedGap);
       if (data.layerPanelWidth != null) {
         app.layerPanelWidth = clampPanelWidth(data.layerPanelWidth, window.innerWidth);
@@ -1009,7 +1014,7 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (selection) selection.shiftHeld = e.shiftKey;
     // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
-    if (showNewDocDialog || showResizeDialog || shareFileReady) return;
+    if (showNewDocDialog || showResizeDialog || showSettingsDialog || shareFileReady) return;
     const target = e.target as HTMLElement;
     if (isTextEntry(target)) return;
     // A dropdown keeps focus after a pick; its letter keys jump between options, so only the
@@ -2301,6 +2306,9 @@
           resizeDoc={() => {
             showResizeDialog = true;
           }}
+          openSettings={() => {
+            showSettingsDialog = true;
+          }}
           {resetView}
           reset100={resetTo100Percent}
           onSettingsChange={debouncedSave}
@@ -2368,6 +2376,14 @@
     class="hidden"
     bind:this={fileInputEl}
     onchange={handleFileLoad}
+  />
+
+  <SettingsDialog
+    open={showSettingsDialog}
+    onChange={debouncedSave}
+    onClose={() => {
+      showSettingsDialog = false;
+    }}
   />
 
   <NewDocDialog

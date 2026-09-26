@@ -23,6 +23,8 @@ interface AppStateShape {
   docHeight: number;
   /** Selection transform: corner handles keep the aspect ratio. */
   keepProportions: boolean;
+  /** Settings: show the Spine tag UI (layer strip chips/menu, "for Spine" export wording). */
+  spineTools: boolean;
   /** Fill enclosed: bridge outline breaks of about 2×this px (0..MAX_GAP). */
   fillEnclosedGap: number;
   /** Bumped by the undo stack so canUndo/canRedo can drive the UI (a class getter is not reactive). */
@@ -76,6 +78,7 @@ export const app: AppStateShape = $state({
   docWidth: 1920,
   docHeight: 1080,
   keepProportions: true,
+  spineTools: true,
   fillEnclosedGap: 0,
   historyVersion: 0,
   layerPanelWidth: DEFAULT_PANEL_WIDTH,

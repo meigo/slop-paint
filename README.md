@@ -70,7 +70,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   locking a group locks everything in it
 - Duplicate a layer or a whole group, merge down; a resizable panel with thumbnails and a properties strip for the selected
   row
-- Spine tags on layer and group names: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
+- Spine tags on layer and group names: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`;
+  not using Spine? **Edit ▸ Settings…** hides the tag controls
 
 **Undo**
 
