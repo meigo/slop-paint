@@ -57,6 +57,7 @@
     selectionMode,
     warpIsMesh,
     liftBlock,
+    refActive,
     transform,
     distort,
     mesh,
@@ -102,6 +103,8 @@
     warpIsMesh: boolean;
     /** Why transform/flip/cut/delete can't act on the active layer ("the layer is locked"), or "". */
     liftBlock: string;
+    /** The active layer is a reference: it transforms whole (no marquee needed) and can't warp. */
+    refActive: boolean;
     transform: () => void;
     distort: () => void;
     mesh: () => void;
@@ -271,7 +274,13 @@
   let floating = $derived(selectionMode === "transforming" || selectionMode === "warping");
   let selecting = $derived(selectionMode !== "idle");
   // Transform, Distort, Mesh and Flip lift the marquee's pixels, so they need an editable layer.
-  let liftWhy = $derived(!selecting ? "nothing selected" : !floating && liftBlock ? liftBlock : "");
+  // A reference transforms and flips whole, marquee or not, but never warps (Bake it first).
+  let liftWhy = $derived(
+    refActive ? "" : !selecting ? "nothing selected" : !floating && liftBlock ? liftBlock : "",
+  );
+  let warpWhy = $derived(
+    refActive ? "a reference moves, scales and rotates only — Bake it to warp it" : liftWhy,
+  );
   let flipWhy = $derived(liftWhy || (selectionMode === "warping" ? "not while warping" : ""));
   let distortOn = $derived(selectionMode === "warping" && !warpIsMesh);
   let meshOn = $derived(selectionMode === "warping" && warpIsMesh);
@@ -1029,25 +1038,25 @@
             ? "Free transform — apply or cancel the warp first"
             : "Free transform — scale/rotate handles"}
         onclick={() => {
-          if (!liftWhy && selectionMode === "selected") transform();
+          if (!liftWhy && (selectionMode === "selected" || (refActive && !floating))) transform();
         }}><Move size={16} /></button
       >
       <button
         class="{iconBtn} {distortOn ? 'ui-on' : iconIdle} {dimmable}"
         aria-pressed={distortOn}
-        aria-disabled={!!liftWhy}
-        title={liftWhy ? `Distort — ${liftWhy}` : "Distort (W) — 4-corner warp"}
+        aria-disabled={!!warpWhy}
+        title={warpWhy ? `Distort — ${warpWhy}` : "Distort (W) — 4-corner warp"}
         onclick={() => {
-          if (!liftWhy) distort();
+          if (!warpWhy) distort();
         }}><SquareDashed size={16} /></button
       >
       <button
         class="{iconBtn} {meshOn ? 'ui-on' : iconIdle} {dimmable}"
         aria-pressed={meshOn}
-        aria-disabled={!!liftWhy}
-        title={liftWhy ? `Mesh warp — ${liftWhy}` : "Mesh warp (M) — 3×3 grid"}
+        aria-disabled={!!warpWhy}
+        title={warpWhy ? `Mesh warp — ${warpWhy}` : "Mesh warp (M) — 3×3 grid"}
         onclick={() => {
-          if (!liftWhy) mesh();
+          if (!warpWhy) mesh();
         }}><Grid3x3 size={16} /></button
       >
     </div>

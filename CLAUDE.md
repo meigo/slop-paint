@@ -34,7 +34,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation)
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - A bug seen only on the deployed site: reproduce it against the production build (`npm run build && npx vite preview`), not `npm run dev` — the minified bundle can behave differently (see Undo)
@@ -84,6 +84,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `mask-ops.ts` — circular dilate/erode on binary masks (shared by expand and Fill enclosed)
 - `export-psd.ts` — PSD save/load/export with layer groups (Spine 2D compatible); `psdBuffer()` is the buffer used by both the file writer and autosave
 - `persist/` — `db.ts` (IndexedDB helper), `autosave.ts` (single-slot project autosave), `generation.ts` (supersede guard)
+- `ref-placement.ts` — pure: a reference's placement as 4 page corners (tl, tr, br, bl; always a parallelogram, as only move/scale/rotate/flip are offered), `matrixFromCorners` / `cornersFromMatrix`, PSD `placedLayer` transform conversion, `fitDecodedSize` (decoded copy ≤ 4096 a side and 16M px, for iPad), `smartObjectFor` / `refFromPlaced`
+- `ref-image.ts` — `decodeRefSource`: the file's bytes kept whole + a capped drawing copy
 - `paste.ts` — where pasted pixels land (`placeInternalPaste`: copied spot + 8px, kept on the page; `placeExternalImage`: centred, 1 image px = 1 doc px, scaled down to fit)
 
 ### State Management
@@ -158,6 +160,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Drag to aim (a swatch follows above-left of the point), release to pick; then returns to the previous tool
 - Sets the colour of the tool it returns to: the fill's when it came from Fill (`app.eyedropperTarget`), else the brush's
 
+## Reference Layers (Smart Objects)
+
+- An imported/pasted image becomes a layer with `layer.ref = { src, corners }`: `src` holds the ORIGINAL file bytes and a decoded copy (shared by duplicates), `corners` where it sits. `layers.renderRef` re-draws the layer from the original, so scaling down and up loses nothing
+- Transform (strip button, Free transform, Flip, or a Select drag inside a marquee) floats the original under `matrixFromCorners`; Apply stores `cornersFromMatrix(rect, matrix)` and pushes `pushRefEdit` (no step if it didn't move). Distort/Mesh are dimmed ("Bake it to warp it")
+- Painting, fill, Fill enclosed, Outline, clear, delete, cut and paste-into are refused with a status message; Merge down refuses onto a reference (its re-draw would wipe the merge). Bake (`pushRefEdit(…, ref, undefined)`) makes it a plain layer, one undo step
+- PSD: written as `placedLayer` + `linkedFiles` (ag-psd), with the rendered pixels as the layer image; opening decodes the originals async (until then it can't be transformed). Canvas resize shifts the corners with the pixels
+
 ## Clipboard
 
 - On iPad (no keyboard) the clipboard actions are in row 2 of the Select/Lasso tools (see Svelte UI Layer); the Edit menu keeps them too
@@ -169,8 +178,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Reference Images
 
-- File ▸ Import reference image… (a file), File ▸ Import reference from clipboard (only the system clipboard's image; says so when there is none), or pasting an image from another app, adds a reference: an ORDINARY layer (not a special kind, unlike slop-animator's) named `[ignore]ref <file>` (`referenceLayerName`, `paste.ts`) so Spine's PSD import skips it, at 60% (`REFERENCE_OPACITY`), inserted just BELOW the active layer (`addLayerBelow`) so the drawing traces over it, fitted to the page (1 image px = 1 doc px, scaled down only). One undo step; then it is lifted into Free transform to place — Enter keeps the move, Esc leaves it where it landed. When placing ends the layer you were drawing on is active again (the next stroke used to land on the faint reference), and Enter/Esc/✓/✗ also return to the tool you imported from (`resolveFloat`). Undo while placing takes back the whole import
-- It is plain pixels once applied (rescaling later resamples), and PNG export includes it unless hidden
+- File ▸ Import reference image… (a file), File ▸ Import reference from clipboard (only the system clipboard's image; says so when there is none), or pasting an image from another app, adds a reference: a layer carrying `ref` (see Reference Layers above) named `[ignore]ref <file>` (`referenceLayerName`, `paste.ts`) so Spine's PSD import skips it, at 60% (`REFERENCE_OPACITY`), inserted just BELOW the active layer (`addLayerBelow`) so the drawing traces over it, fitted to the page (1 image px = 1 doc px, scaled down only). One undo step; then it is lifted into Free transform to place — Enter keeps the move, Esc leaves it where it landed. When placing ends the layer you were drawing on is active again (the next stroke used to land on the faint reference), and Enter/Esc/✓/✗ also return to the tool you imported from (`resolveFloat`). Undo while placing takes back the whole import
+- It keeps its original, so rescaling later loses nothing (Bake makes it plain pixels); PNG export includes it unless hidden
 - Saves and exports (`withFloatApplied`) draw a lifted float into its layer for the save and put the layer back: a lift leaves a hole until applied, and an autosave mid-transform stored that hole
 
 ## Undo
@@ -233,7 +242,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - The project has a name (`app.projectName`, saved with the settings; `filename.ts`): set in New, taken from an opened file, editable at the top of the File menu; the tab title shows it. Files: `name.psd` (save, Save to Files), `name-export.psd` (Spine export), `name.png`
 - iPad/iPhone only: File ▸ Save to Files… shares the PSD through the share sheet, the only way a web page can put a file where the user picks (Safari has no save picker; a download always lands in Downloads). It tries the sheet on the tap that started it and, if that tap has expired (`NotAllowedError`), opens a dialog whose fresh tap retries; the dialog also offers a plain download. "Shared" means the sheet completed, not that the file reached Files
 - `share.ts` (pure: device check, error classification), `download.ts` (`downloadBlob`, revokes the object URL after 60s — an immediate revoke can kill a large download on iPad), `lib/ShareReadyDialog.svelte`
-- Round-trips layer tree, names, opacity, visibility, groups
+- Round-trips layer tree, names, opacity, visibility, groups, reference Smart Objects
 - Interoperable with Photoshop, GIMP, Spine, etc.
 
 ## Settings Persistence

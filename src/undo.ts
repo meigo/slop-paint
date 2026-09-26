@@ -4,7 +4,7 @@
  * you actually did rather than through the active layer's own history.
  */
 import { History, pixelCommand } from "./history";
-import type { Layer, LayerManager } from "./layers";
+import type { Layer, LayerManager, RefPlacement } from "./layers";
 
 export const history = new History();
 
@@ -106,6 +106,24 @@ export function pushNodeFieldEdit(
     const node = layers.findNode(id);
     // `alphaLock` only exists on layers; `locked` on layers and groups.
     if (node) (node as unknown as Record<NodeField, boolean | number>)[field] = value;
+    hooks.onHistoryApplied();
+  };
+  history.push({ undo: () => apply(before), redo: () => apply(after) });
+}
+
+/** Record a reference layer's placement changing, or the reference being baked (`after`
+ *  undefined) — no pixel snapshots: a reference is always re-drawn from its original. */
+export function pushRefEdit(
+  layers: LayerManager,
+  id: number,
+  before: RefPlacement | undefined,
+  after: RefPlacement | undefined,
+) {
+  const apply = (value: RefPlacement | undefined) => {
+    const layer = layers.findLayer(id);
+    if (!layer) return;
+    layer.ref = value;
+    if (value) layers.renderRef(layer);
     hooks.onHistoryApplied();
   };
   history.push({ undo: () => apply(before), redo: () => apply(after) });

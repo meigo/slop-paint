@@ -13,8 +13,9 @@
     ChevronRight,
     ChevronDown,
     GripVertical,
+    Image,
   } from "@lucide/svelte";
-  import { app, bumpLayerVersion } from "../appState.svelte.js";
+  import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
   import Sortable from "sortablejs";
@@ -26,8 +27,11 @@
   let {
     layers,
     onWidthChange,
+    onRefTransform,
   }: {
     layers: LayerManager;
+    /** Move/scale a reference layer (App owns the selection float). */
+    onRefTransform: (layer: AppLayer) => void;
     /** Called when a resize drag ends, so the width can be saved. */
     onWidthChange: () => void;
   } = $props();
@@ -99,6 +103,13 @@
   }
 
   function mergeDown() {
+    // A reference is re-drawn from its original, which would wipe what was merged onto it.
+    const loc = layers.findParent(layers.activeId);
+    const target = loc && loc.index > 0 ? loc.parent[loc.index - 1] : null;
+    if (target?.type === "layer" && target.ref) {
+      flashStatus("The layer below is a reference — Bake it first to merge onto it");
+      return;
+    }
     // Merge also writes pixels onto the layer below, so that layer's pixels join the undo step.
     structuralEdit(
       layers,
@@ -292,6 +303,13 @@
       use:thumbnail={layer}
     ></canvas>
     {@render nameCell(layer)}
+    {#if layer.ref}
+      <span
+        class="flex shrink-0 text-text-muted"
+        title="Reference — moves and scales from its original; Bake it to paint on it"
+        ><Image size={13} /></span
+      >
+    {/if}
     <!-- Same columns, glyphs and colours as slop-animator's layer list. Alpha lock ("lock
          transparency") is the checkerboard, the usual transparency glyph — a second padlock beside the
          layer lock read as a duplicate — and fainter than the others when off, being the rarely-on one. -->
@@ -485,7 +503,12 @@
     </div>
   </div>
 
-  <LayerProps {layers} onSettingsChange={() => bumpLayerVersion()} onRename={startEdit} />
+  <LayerProps
+    {layers}
+    onSettingsChange={() => bumpLayerVersion()}
+    onRename={startEdit}
+    {onRefTransform}
+  />
 
   <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
   {#key `${version}:${dragNonce}`}

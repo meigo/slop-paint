@@ -9,7 +9,15 @@
   import { drawInkStroke } from "./ink-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
-  import { LayerManager, adjacentRow, type Layer } from "./layers";
+  import {
+    LayerManager,
+    adjacentRow,
+    type Layer,
+    type RefPlacement,
+    type RefSource,
+  } from "./layers";
+  import { cornersFromMatrix, cornersFromRect, matrixFromCorners } from "./ref-placement";
+  import { decodeRefSource } from "./ref-image";
   import {
     enclosedFillRegion,
     fillRegionBehind,
@@ -43,7 +51,7 @@
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
-  import { history, pushPixelEdit, setOnHistoryApplied, structuralEdit } from "./undo";
+  import { history, pushPixelEdit, pushRefEdit, setOnHistoryApplied, structuralEdit } from "./undo";
   import { canShareFile, saveToFilesAvailable, shareFile } from "./share";
   import { downloadBlob } from "./download";
   import ShareReadyDialog from "./lib/ShareReadyDialog.svelte";
@@ -165,7 +173,7 @@
     const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
     if (!isBrushTool || spaceHeld || viewport.panning || isDrawing) return hideBrushCursor();
     const layer = layers.active;
-    if (layers.isLocked(layer) || !layer.visible) {
+    if (layers.isLocked(layer) || !layer.visible || layer.ref) {
       hideBrushCursor();
       canvasClipEl.style.cursor = "not-allowed";
       return;
@@ -422,6 +430,8 @@
    */
   function enterFreeTransform() {
     if (!selection || !layers) return;
+    // A reference transforms whole, from its original, marquee or not.
+    if (layers.active.ref && !selection.hasFloating) return enterRefTransform(layers.active);
     if (selection.state !== "selected") return;
     const layer = layers.active;
     if (layers.isLocked(layer)) return;
@@ -441,6 +451,9 @@
    */
   function enterWarp(rows: number, cols: number) {
     if (!selection || !layers) return;
+    if (refTransform || layers.active.ref) {
+      return flashStatus("A reference moves, scales and rotates only — Bake it to warp it");
+    }
     if (selection.state === "selected") {
       const layer = layers.active;
       if (layers.isLocked(layer)) return;
@@ -460,6 +473,7 @@
 
   function clearLayer() {
     if (!layers) return;
+    if (layers.active.ref) return flashStatus(REF_PAINT_REFUSED);
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
     const before = layers.snapshotOf(layer);
@@ -723,6 +737,12 @@
 
     if (layers.isLocked(layer) && app.currentTool !== "select" && app.currentTool !== "lasso")
       return;
+    // A reference is drawn from its original, so paint on it would be wiped by its next move:
+    // brush, eraser and fill are refused until it is baked.
+    if (layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
+      if (points.length === 1 && !done) flashStatus(REF_PAINT_REFUSED);
+      return;
+    }
 
     // Selection tool
     if (app.currentTool === "select" || app.currentTool === "lasso") {
@@ -730,7 +750,14 @@
 
       if (points.length === 1 && !done) {
         const handle = selection.hitTest(p.x, p.y);
-        if (selection.state === "selected" && handle === "move") {
+        if (selection.state === "selected" && handle === "move" && layer.ref) {
+          // A reference moves whole, from its original — never a lifted piece of its pixels.
+          enterRefTransform(layer);
+          if (selection.hasFloating) {
+            selectionMode = "drag";
+            selection.startDrag("move", p.x, p.y);
+          }
+        } else if (selection.state === "selected" && handle === "move") {
           // First drag inside a fresh selection: lift pixels and enter transform mode.
           preSelectionSnapshot = layers.getSnapshot();
           const lifted = selection.liftPixels(layer.ctx, dpr);
@@ -1187,6 +1214,7 @@
     if (!layers) return;
     const layer = layers.active;
     if (layers.isLocked(layer)) return flashStatus("Layer is locked");
+    if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
     // Fill enclosed only paints EMPTY interiors, which alpha lock refuses: it could never land.
     if (layer.alphaLock)
       return flashStatus("Alpha lock is on — Fill enclosed only paints empty areas");
@@ -1262,6 +1290,7 @@
     if (outlineActive() || !layers) return;
     const layer = layers.active;
     if (layers.isLocked(layer)) return flashStatus("Layer is locked — nothing to outline");
+    if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
     if (!layer.visible) return flashStatus("Layer is hidden — show it to outline it");
     const cw = layer.canvas.width,
       ch = layer.canvas.height;
@@ -1442,7 +1471,9 @@
    *  shows as a float with handles; lift + commit stay one undo step. */
   function flipSelection(axis: "h" | "v") {
     if (!selection) return;
-    if (selection.state === "selected") enterFreeTransform();
+    if (selection.state === "selected" || (layers.active.ref && !selection.hasFloating)) {
+      enterFreeTransform();
+    }
     selection.flip(axis);
   }
 
@@ -1545,11 +1576,17 @@
     void app.selectionVersion;
     return !!selection && (selection.warpRows !== 2 || selection.warpCols !== 2);
   });
+  const refActive = $derived.by(() => {
+    void app.layerVersion;
+    void app.selectionVersion;
+    return layersReady && !!layers.active?.ref;
+  });
   // Why the lifting actions (transform, flip, cut, delete) can't act on the active layer, or "".
   const liftBlock = $derived.by(() => {
     void app.layerVersion;
     const layer = layersReady ? layers.active : null;
     if (layer && layers.isLocked(layer)) return "the layer is locked";
+    if (layer?.ref) return "it's a reference — Bake it to edit its pixels";
     if (layer && !layer.visible) return "the layer is hidden";
     return "";
   });
@@ -1634,6 +1671,7 @@
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
     if (layers.isLocked(layer)) return;
+    if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
     const dpr = window.devicePixelRatio || 1;
     const before = layers.getSnapshot();
     selection.clearRegion(layer.ctx, dpr);
@@ -1652,6 +1690,10 @@
   /** Float `pixels` at `rect` on the active layer with transform handles; Enter/Esc resolves it. */
   function startPasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): boolean {
     if (!selection || !layers || layers.isLocked(layers.active)) return false;
+    if (layers.active.ref) {
+      flashStatus("This layer is a reference — pick a drawing layer to paste onto");
+      return false;
+    }
     setTool("select"); // commits any floating selection first
     if (selection.active) selection.cancel();
     preSelectionSnapshot = layers.getSnapshot(); // commit pushes it; cancel restores it (no-op)
@@ -1684,44 +1726,106 @@
       pasteInternal();
       return;
     }
-    // An image from another app is a reference (as in slop-animator), not pixels for this layer.
-    importReference(bmp); // a clipboard file is always "image.png", so the layer is just "ref"
     bmp.close();
+    // An image from another app is a reference (as in slop-animator), not pixels for this layer.
+    await importReferenceFile(blob); // a clipboard file is always "image.png": the layer is "ref"
   }
 
-  /**
-   * Add `img` as a reference: a new ordinary layer just below the active one (under the drawing
-   * that traces over it), faint and tagged `[ignore]`
-   * so Spine skips it, fitted to the page (1 image px = 1 doc px, scaled down only). One undo step.
-   * Then it is lifted into Free transform to be placed — Enter keeps the move, Esc leaves it where
-   * it landed.
-   */
   // Where to hand back to once placing an imported reference ends (see endReferencePlacement).
   let referenceReturn: { layerId: number; tool: Tool } | null = null;
 
-  function importReference(img: ImageBitmap, fileName?: string) {
+  /** Read an image file (or a pasted one) whole — its bytes go into the PSD as the Smart Object's
+   *  embedded original — and add it as a reference. */
+  async function importReferenceFile(blob: Blob, fileName?: string) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const ext = blob.type.startsWith("image/") ? blob.type.slice(6) : "png";
+    importReference(await decodeRefSource(bytes, fileName ?? `pasted.${ext}`), fileName);
+  }
+
+  /**
+   * Add a reference layer just below the active one (under the drawing that traces over it), faint
+   * and tagged `[ignore]` so Spine skips it, fitted to the page (1 image px = 1 doc px, scaled down
+   * only). It keeps its original, so it can be moved and scaled again later without losing quality;
+   * painting on it is refused until it is baked. One undo step; then it is lifted into Free
+   * transform to be placed — Enter keeps the move, Esc leaves it where it landed.
+   */
+  function importReference(src: RefSource, fileName?: string) {
     if (!layers || !selection) return;
     if (outlineActive()) cancelOutline();
     const returnTo = { layerId: layers.activeId, tool: app.currentTool };
     setTool("select"); // applies any float first
     if (selection.active) selection.cancel();
-    const rect = placeExternalImage(img.width, img.height, app.docWidth, app.docHeight);
+    const rect = placeExternalImage(src.width, src.height, app.docWidth, app.docHeight);
+    let added: Layer | null = null;
     structuralEdit(layers, () => {
       const layer = layers.addLayerBelow(referenceLayerName(fileName));
       layer.opacity = REFERENCE_OPACITY;
-      layer.ctx.imageSmoothingQuality = "high";
-      layer.ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h); // layer.ctx is in doc units
+      layer.ref = { src, corners: cornersFromRect(rect) };
+      layers.renderRef(layer);
+      added = layer;
     });
     layers.composite();
     bumpLayerVersion();
-    selection.selectRect(rect);
-    enterFreeTransform();
+    if (added) enterRefTransform(added);
     // Set only now: the setTool/cancel above resolve an earlier float, which would end it.
     if (selection.hasFloating) referenceReturn = returnTo;
     flashStatus(
       "Reference added — drag to place it, then tap ✓ or outside the page to apply",
       6000,
     );
+  }
+
+  // --- Reference transform ---
+  // A reference is transformed from its ORIGINAL, not its layer's pixels: the full-size image
+  // floats under the matrix that puts it where it sits, and Apply stores the new corners and
+  // re-draws the layer from the original — so scaling it down and up again never loses detail.
+  let refTransform: { layer: Layer; before: RefPlacement } | null = null;
+  const REF_PAINT_REFUSED = "It's a reference — Bake it (in the layer strip) to paint on it";
+
+  function enterRefTransform(layer: Layer) {
+    const ref = layer.ref;
+    if (!ref || !selection || !layers) return;
+    const img = ref.src.image;
+    if (!img) return flashStatus("The reference is still loading — try again in a moment");
+    if (layers.isLocked(layer)) return flashStatus("Layer is locked");
+    if (outlineActive()) cancelOutline();
+    if (app.currentTool !== "select" && app.currentTool !== "lasso") setTool("select");
+    if (selection.active) selection.cancel();
+    layers.activeId = layer.id;
+    // The float shows the reference while it moves; the layer is emptied under it, and Cancel puts
+    // these pixels back.
+    preSelectionSnapshot = layers.snapshotOf(layer);
+    layer.ctx.save();
+    layer.ctx.resetTransform();
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.restore();
+    layers.composite();
+    refTransform = { layer, before: { src: ref.src, corners: ref.corners } };
+    selection.pasteFloat(
+      img,
+      { x: 0, y: 0, w: img.width, h: img.height },
+      matrixFromCorners(img.width, img.height, ref.corners),
+    );
+    bumpLayerVersion();
+  }
+
+  /** Apply a reference transform: new corners from the float's box and matrix, a re-draw from the
+   *  original, and one undo step — none when it didn't move. */
+  function commitRefTransform() {
+    if (!refTransform || !selection?.rect) return;
+    const { layer, before } = refTransform;
+    refTransform = null;
+    const after: RefPlacement = {
+      src: before.src,
+      corners: cornersFromMatrix(selection.rect, selection.matrix),
+    };
+    layer.ref = after;
+    layers.renderRef(layer);
+    const moved = after.corners.some(
+      (p, i) =>
+        Math.abs(p.x - before.corners[i].x) > 1e-6 || Math.abs(p.y - before.corners[i].y) > 1e-6,
+    );
+    if (moved) pushRefEdit(layers, layer.id, before, after);
   }
 
   /** Placing a reference ended — applied, cancelled, or applied by a tap elsewhere. The layer the
@@ -1751,12 +1855,7 @@
     const file = imageInputEl?.files?.[0];
     imageInputEl.value = "";
     if (!file) return;
-    void createImageBitmap(file)
-      .then((bmp) => {
-        importReference(bmp, file.name);
-        bmp.close();
-      })
-      .catch(() => flashStatus("Couldn't read that image"));
+    void importReferenceFile(file, file.name).catch(() => flashStatus("Couldn't read that image"));
   }
 
   /** Ctrl/Cmd+V: an image on the system clipboard wins, else the internal copy. */
@@ -1792,9 +1891,7 @@
     for (const item of items) {
       const type = item.types.find((t) => t.startsWith("image/"));
       if (!type) continue;
-      const bmp = await createImageBitmap(await item.getType(type));
-      importReference(bmp);
-      bmp.close();
+      await importReferenceFile(await item.getType(type));
       return;
     }
     flashStatus("No image on the clipboard — copy one first");
@@ -1839,11 +1936,15 @@
       const layer = layers.active;
       const before = preSelectionSnapshot;
       preSelectionSnapshot = null;
-      selection.renderFloatingTo(layer.ctx);
-      // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
-      // landed made the next undo appear to do nothing).
-      if (before && !sameImageData(before, layers.snapshotOf(layer))) {
-        pushPixelEdit(layers, layer, before);
+      if (refTransform) {
+        commitRefTransform(); // a reference stores its placement; its pixels are re-drawn
+      } else {
+        selection.renderFloatingTo(layer.ctx);
+        // Applying an untouched lift changes nothing: no empty undo step (an import applied as
+        // it landed made the next undo appear to do nothing).
+        if (before && !sameImageData(before, layers.snapshotOf(layer))) {
+          pushPixelEdit(layers, layer, before);
+        }
       }
       endReferencePlacement();
       layers.composite();
@@ -1851,6 +1952,7 @@
     };
 
     selection.onCancel = () => {
+      refTransform = null; // the snapshot below puts the reference's pixels back
       if (preSelectionSnapshot) {
         layers.restoreSnapshot(preSelectionSnapshot);
         preSelectionSnapshot = null;
@@ -2083,6 +2185,7 @@
           selectionMode={selectionState}
           {warpIsMesh}
           {liftBlock}
+          {refActive}
           transform={enterFreeTransform}
           distort={() => enterWarp(2, 2)}
           mesh={() => enterWarp(3, 3)}
@@ -2152,7 +2255,7 @@
 
     {#if layersReady}
       <div class="flex min-h-0" style:grid-area="panel">
-        <LayerPanel {layers} onWidthChange={debouncedSave} />
+        <LayerPanel {layers} onWidthChange={debouncedSave} onRefTransform={enterRefTransform} />
       </div>
     {/if}
   </div>

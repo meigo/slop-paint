@@ -1,3 +1,26 @@
+import { matrixFromCorners, type Corners } from "./ref-placement";
+
+/** A reference's ORIGINAL image: the file as imported (kept whole for the PSD's embedded Smart
+ *  Object) and a decoded copy for drawing (capped to what an iPad canvas allows). */
+export interface RefSource {
+  /** Matches the placed layer to its embedded file in the PSD. */
+  id: string;
+  name: string;
+  bytes: Uint8Array;
+  /** The original's own pixel size (the file's, not the capped decode's). */
+  width: number;
+  height: number;
+  /** Decoded copy, or null while an opened file is still decoding. */
+  image: HTMLCanvasElement | null;
+}
+
+/** A reference layer: drawn from its original at `corners`, so moving and scaling never resample
+ *  the layer's own pixels. Painting on it is refused; Bake drops this and keeps the pixels. */
+export interface RefPlacement {
+  src: RefSource;
+  corners: Corners;
+}
+
 export interface Layer {
   type: "layer";
   id: number;
@@ -8,6 +31,8 @@ export interface Layer {
   opacity: number;
   locked: boolean;
   alphaLock: boolean;
+  /** Set on a reference layer (a Smart Object in the PSD); absent on every ordinary layer. */
+  ref?: RefPlacement;
 }
 
 export interface LayerGroup {
@@ -181,6 +206,23 @@ export class LayerManager {
     return search(this.tree, 1) ?? 1;
   }
 
+  /** Redraw a reference layer from its original at its placement (a no-op until it has decoded). */
+  renderRef(layer: Layer) {
+    const ref = layer.ref;
+    if (!ref?.src.image) return;
+    const img = ref.src.image;
+    const m = matrixFromCorners(img.width, img.height, ref.corners);
+    const d = this.dpr;
+    const ctx = layer.ctx;
+    ctx.save();
+    ctx.resetTransform();
+    ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    ctx.setTransform(d * m.a, d * m.b, d * m.c, d * m.d, d * m.e, d * m.f);
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0);
+    ctx.restore();
+  }
+
   /** Update display pixel ratio */
   setDpr(dpr: number) {
     this.dpr = dpr;
@@ -213,6 +255,16 @@ export class LayerManager {
       layer.ctx.resetTransform();
       layer.ctx.drawImage(tmp, offsetX, offsetY);
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // A reference moves with its pixels, and is re-drawn whole (the resize may have cut it).
+      if (layer.ref) {
+        const dx = offsetX / dpr;
+        const dy = offsetY / dpr;
+        layer.ref = {
+          src: layer.ref.src,
+          corners: layer.ref.corners.map((p) => ({ x: p.x + dx, y: p.y + dy })) as Corners,
+        };
+        this.renderRef(layer);
+      }
     }
   }
 
@@ -362,6 +414,10 @@ export class LayerManager {
     dup.visible = src.visible;
     dup.locked = src.locked;
     dup.alphaLock = src.alphaLock;
+    // A copy of a reference is a reference too: same original, its own placement.
+    if (src.ref) {
+      dup.ref = { src: src.ref.src, corners: src.ref.corners.map((p) => ({ ...p })) as Corners };
+    }
     dup.ctx.resetTransform();
     dup.ctx.drawImage(src.canvas, 0, 0);
     dup.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);

@@ -56,6 +56,11 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   an image copied in another app (Photos on an iPad):
   it lands on its own faint layer just below the one you draw on, ready to move and scale, tagged
   `[ignore]` so Spine skips it
+- A reference keeps its **original image**: move, scale, rotate and flip it any time (the ⤢ button
+  in the layer strip) without losing detail. **Bake** turns it into a plain layer to paint on or
+  warp it
+- Saved in the PSD as a **Smart Object** (the original embedded), so it stays a reference when
+  reopened here or in Photoshop
 
 **Layers**
 
@@ -82,8 +87,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Files**
 
 - A **project name** (set in New, or at the top of the File menu) names the saved and exported files
-- **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility
-  and groups, and open PSDs from Photoshop, GIMP and others
+- **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
+  groups and reference Smart Objects, and open PSDs from Photoshop, GIMP and others
 - Export a flattened **PNG** or a **PSD** for Spine (groups become PSD folders, layer order is draw
   order); exports use document pixels, not the screen's
 - **Autosave** to the browser (IndexedDB) a few seconds after each change and when the tab is hidden,

@@ -440,12 +440,18 @@ export class Selection {
   }
 
   /** Start a floating transform from external pixels (paste), drawn into `rect` (doc units). */
-  pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): void {
+  /** Float `pixels` over `rect` with transform handles. `matrix` starts it already placed: a
+   *  reference floats its full-size original under the matrix that puts it where it sits. */
+  pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect, matrix?: Mat): void {
     this.rect = { ...rect };
     this.mode = "rect";
     this.lassoPath = null;
     this.lassoPoints = [];
     this.beginTransform(pixels);
+    if (matrix) {
+      this.matrix = { ...matrix };
+      this.drawOverlay();
+    }
   }
 
   /**

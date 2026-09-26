@@ -1,6 +1,8 @@
-import { writePsd, readPsd, type Psd, type Layer as PsdLayer } from "ag-psd";
+import { writePsd, readPsd, type Psd, type Layer as PsdLayer, type LinkedFile } from "ag-psd";
 import { downloadBlob } from "./download";
-import type { LayerNode, LayerManager, Layer, LayerGroup } from "./layers";
+import type { LayerNode, LayerManager, Layer, LayerGroup, RefSource } from "./layers";
+import { refFromPlaced, smartObjectFor } from "./ref-placement";
+import { decodeRefSource } from "./ref-image";
 
 let importIdCounter = 1000;
 
@@ -18,6 +20,10 @@ function writePsdFile(manager: LayerManager, opts: { trim: boolean; filename: st
 export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
   const w = manager.docWidth;
   const h = manager.docHeight;
+  // A reference is written as a Smart Object — its placement plus its original file, so it can be
+  // moved and scaled again after reopening. Project saves only (`!trim`): the trimmed export is for
+  // Spine, which wants plain pixels. Duplicates share one original, embedded once.
+  const linkedFiles: LinkedFile[] = [];
 
   function buildChildren(nodes: LayerNode[]): PsdLayer[] {
     return nodes.map((node) => {
@@ -35,7 +41,7 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
       cvs.height = h;
       // node.canvas is dpr-scaled (physical pixels); scale down to CSS-sized PSD canvas.
       cvs.getContext("2d")!.drawImage(node.canvas, 0, 0, w, h);
-      return {
+      const out: PsdLayer = {
         name: node.name,
         canvas: cvs,
         opacity: node.opacity / 100,
@@ -43,6 +49,12 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
         left: 0,
         top: 0,
       };
+      if (node.ref && !trim) {
+        const so = smartObjectFor(node.ref);
+        out.placedLayer = so.placedLayer;
+        if (!linkedFiles.some((f) => f.id === so.linkedFile.id)) linkedFiles.push(so.linkedFile);
+      }
+      return out;
     });
   }
 
@@ -57,11 +69,13 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
   }
   compCtx.globalAlpha = 1;
 
+  const children = buildChildren(manager.tree);
   const psd: Psd = {
     width: w,
     height: h,
     canvas: composite,
-    children: buildChildren(manager.tree),
+    children,
+    ...(linkedFiles.length ? { linkedFiles } : {}),
   };
 
   return writePsd(psd, {
@@ -92,6 +106,9 @@ export function loadPsd(
   const psd = readPsd(buffer);
   const w = psd.width;
   const h = psd.height;
+  // Smart Objects become references again. Their originals decode in the background, one decode
+  // per embedded file however many layers share it; the layer's saved pixels show meanwhile.
+  const refSources = new Map<string, RefSource>();
 
   // Clear existing tree
   manager.tree.length = 0;
@@ -143,6 +160,12 @@ export function loadPsd(
         locked: false,
         alphaLock: false,
       };
+      const ref = refFromPlaced(psdLayer.placedLayer, psd.linkedFiles);
+      if (ref) {
+        const shared = refSources.get(ref.src.id) ?? ref.src;
+        refSources.set(shared.id, shared);
+        layer.ref = { src: shared, corners: ref.corners };
+      }
       return layer;
     }
   }
@@ -165,5 +188,21 @@ export function loadPsd(
     manager.activeId = flat[flat.length - 1].id;
   }
 
+  decodeOpenedRefs(refSources.values());
   return { width: w, height: h };
+}
+
+/** Decode the originals of the references an opened PSD brought back, filling in each shared
+ *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
+function decodeOpenedRefs(sources: Iterable<RefSource>) {
+  for (const src of sources) {
+    decodeRefSource(src.bytes, src.name, src.id).then(
+      (decoded) => {
+        src.image = decoded.image;
+        if (!src.width) src.width = decoded.width;
+        if (!src.height) src.height = decoded.height;
+      },
+      (e) => console.error(`reference "${src.name}" could not be decoded`, e),
+    );
+  }
 }
