@@ -7,7 +7,7 @@
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke } from "./brush";
   import { drawInkStroke } from "./ink-brush";
-  import { drawCalligraphyStroke } from "./calligraphy-brush";
+  import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import { LayerManager, type Layer } from "./layers";
   import {
@@ -31,7 +31,6 @@
   } from "./outline";
   import { clampPanelWidth, panelBesideToolOptions } from "./panel-layout";
   import { isTextEntry } from "./lib/text-entry";
-  import { blitImageData } from "./pixels";
   import { Selection, type SelectionRect } from "./selection";
   import {
     placeExternalImage,
@@ -151,53 +150,43 @@
 
   // --- Brush cursor ---
   let brushCursorEl: HTMLDivElement;
+  let brushDotEl: HTMLDivElement;
   let brushCursorVisible = false;
   let isDrawing = false;
 
+  /** The brush outline under the pointer, as slop-animator's BrushCursor: the nominal stroke width
+   *  (the size slider; light pressure draws thinner and full pressure wider, by Press), drawn as the
+   *  actual nib for Calligraphy — flattened, and turned by the nib angle plus the view's own
+   *  rotation — dashed for the eraser, with a dot on the exact point. Shown anywhere in the canvas
+   *  area (a stroke can start off the page); hidden where no stroke can land (locked/hidden layer). */
   function updateBrushCursor(screenX: number, screenY: number) {
-    if (!brushCursorEl || !canvasClipEl || !viewport) return;
+    if (!brushCursorEl || !brushDotEl || !canvasClipEl || !viewport || !layers) return;
     const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
-    const shouldShow = isBrushTool && !spaceHeld && !viewport.panning && !isDrawing;
-    if (!shouldShow) {
-      if (brushCursorVisible) {
-        brushCursorEl.style.display = "none";
-        brushCursorVisible = false;
-      }
-      return;
-    }
-    // Check if pointer is over the document area
-    const canvasPos = viewport.screenToCanvas(screenX, screenY);
-    const overCanvas =
-      canvasPos.x >= 0 &&
-      canvasPos.x <= app.docWidth &&
-      canvasPos.y >= 0 &&
-      canvasPos.y <= app.docHeight;
-    if (!overCanvas) {
-      if (brushCursorVisible) {
-        brushCursorEl.style.display = "none";
-        brushCursorVisible = false;
-      }
+    if (!isBrushTool || spaceHeld || viewport.panning || isDrawing) return hideBrushCursor();
+    const layer = layers.active;
+    if (layer.locked || !layer.visible) {
+      hideBrushCursor();
+      canvasClipEl.style.cursor = "not-allowed";
       return;
     }
     const rect = canvasClipEl.getBoundingClientRect();
     const x = screenX - rect.left;
     const y = screenY - rect.top;
-    // Cursor is the size slider: the mouse width, and the pen's nominal width. Light pressure
-    // draws thinner and full pressure wider, by Press.
     const diameter = app.brushSettings.size * viewport.zoom;
-    if (diameter < 4) {
-      if (brushCursorVisible) {
-        brushCursorEl.style.display = "none";
-        brushCursorVisible = false;
-      }
-      canvasClipEl.style.cursor = "crosshair";
-      return;
+    let height = diameter;
+    let turn = 0;
+    if (app.brushType === "calligraphy") {
+      height = nibSemiAxes(diameter / 2, app.brushSettings.nibFlatness ?? 0).b * 2;
+      turn = (app.brushSettings.nibAngle ?? 0) + (viewport.rotation * 180) / Math.PI;
     }
-    brushCursorEl.style.display = "block";
+    const at = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
     brushCursorEl.style.width = diameter + "px";
-    brushCursorEl.style.height = diameter + "px";
-    brushCursorEl.style.left = x - diameter / 2 + "px";
-    brushCursorEl.style.top = y - diameter / 2 + "px";
+    brushCursorEl.style.height = height + "px";
+    brushCursorEl.style.transform = `${at} rotate(${turn}deg)`;
+    brushCursorEl.style.borderStyle = app.currentTool === "eraser" ? "dashed" : "solid";
+    brushDotEl.style.transform = at;
+    brushCursorEl.style.display = "block";
+    brushDotEl.style.display = "block";
     canvasClipEl.style.cursor = "none";
     brushCursorVisible = true;
   }
@@ -205,6 +194,7 @@
   function hideBrushCursor() {
     if (brushCursorEl && brushCursorVisible) {
       brushCursorEl.style.display = "none";
+      brushDotEl.style.display = "none";
       brushCursorVisible = false;
     }
   }
@@ -1292,13 +1282,13 @@
     // the line meets the cut it is simply truncated — no line is drawn along the marquee itself.
     if (selection?.state === "selected") {
       const dpr = window.devicePixelRatio || 1;
-      blitImageData(ctx, src, r.x, r.y); // outside the marquee nothing changes
-      if (!outlineScratch) outlineScratch = document.createElement("canvas");
-      // Setting the size resets the backing store even when it matches. A reused
-      // canvas would hand drawImage the previous preview on iPad.
-      outlineScratch.width = w;
-      outlineScratch.height = h;
-      outlineScratch.getContext("2d", { willReadFrequently: true })!.putImageData(next, 0, 0);
+      ctx.putImageData(src, r.x, r.y); // outside the marquee nothing changes
+      if (!outlineScratch) {
+        outlineScratch = document.createElement("canvas");
+        outlineScratch.width = w;
+        outlineScratch.height = h;
+      }
+      outlineScratch.getContext("2d")!.putImageData(next, 0, 0);
       ctx.save();
       try {
         selection.applyClip(ctx); // layer.ctx carries the dpr transform applyClip expects
@@ -1310,7 +1300,7 @@
         ctx.restore();
       }
     } else {
-      blitImageData(ctx, next, r.x, r.y);
+      ctx.putImageData(next, r.x, r.y);
     }
     layers.composite();
   }
@@ -1338,7 +1328,7 @@
   /** Put the art back. `handBack` returns to the tool Outline was entered from; setTool passes
    *  false, being mid-switch already. */
   function cancelOutline(handBack = true) {
-    if (outlineLayer && outlineBefore) blitImageData(outlineLayer.ctx, outlineBefore);
+    if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
     clearOutline();
     layers?.composite();
     if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline);
@@ -2091,10 +2081,17 @@
         bind:this={selectionOverlayEl}
         class="pointer-events-none absolute inset-0 z-10 h-full w-full touch-none"
       ></canvas>
+      <!-- Brush outline + centre dot, styled as slop-animator's (a dark ring with a light halo reads
+           on any colour; the old `mix-blend-mode: difference` tinted it). Positioned by transform. -->
       <div
         bind:this={brushCursorEl}
-        class="pointer-events-none absolute z-20 rounded-full border"
-        style="display: none; border-color: rgba(0,0,0,0.5); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); mix-blend-mode: difference;"
+        class="pointer-events-none absolute top-0 left-0 z-20 rounded-full"
+        style="display: none; border: 1.5px solid rgba(0,0,0,0.7); box-shadow: 0 0 0 1.5px rgba(255,255,255,0.6);"
+      ></div>
+      <div
+        bind:this={brushDotEl}
+        class="pointer-events-none absolute top-0 left-0 z-20 size-[3px] rounded-full"
+        style="display: none; background: rgba(0,0,0,0.7); box-shadow: 0 0 0 1px rgba(255,255,255,0.6);"
       ></div>
       <div
         bind:this={eyedropperSwatchEl}

@@ -147,6 +147,10 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Color and draw-behind are shared. Draw-behind stays on the bar
 - Saved as the top-level fields (brush) plus an `eraser` object in the settings
 
+## Brush Cursor
+
+- As slop-animator's BrushCursor (`updateBrushCursor` in App.svelte): the nominal stroke width at the current zoom, drawn as the nib itself for Calligraphy (flattened by nib flatness, turned by nib angle + the view's rotation), dashed for the eraser, with a centre dot; a dark ring with a light halo. Shown anywhere in the canvas area; hidden, with a not-allowed cursor, on a locked or hidden layer
+
 ## Eyedropper
 
 - Samples the composited document (ignores layer lock); transparent pixels pick nothing
@@ -175,7 +179,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `pushNameEdit` / `pushNodeFieldEdit` look their node up by id at apply time: `restoreStructure` rebuilds group nodes as fresh clones, so a captured group object can be detached by an unrelated structural undo
 - The stack is cleared by New, Open, autosave restore and canvas resize (its snapshots are the old canvas size)
 - Budget: 50 steps or 256 MB of pixel snapshots, whichever comes first
-- Undo redrawing (2026-09-26): the real cause of "undo empties its stack but the stroke stays until the next stroke" was the PRODUCTION MINIFIER, in every browser, never in `npm run dev`. `undo.ts` held the redraw hook in an `export let` reassigned by `setOnHistoryApplied`; the minifier inlined its initial no-op and deleted every call. The hook now lives on an object (`hooks.onHistoryApplied`). Do not bring back an exported `let` that a setter reassigns. The earlier iPad changes (on-screen canvas without `willReadFrequently`, `blitImageData` in `pixels.ts`) were made while chasing this and were not the fix: keep the accelerated canvas (as slop-animator), and `blitImageData` can likely go back to plain `putImageData`
+- Undo redrawing (2026-09-26): the real cause of "undo empties its stack but the stroke stays until the next stroke" was the PRODUCTION MINIFIER, in every browser, never in `npm run dev`. `undo.ts` held the redraw hook in an `export let` reassigned by `setOnHistoryApplied`; the minifier inlined its initial no-op and deleted every call. The hook now lives on an object (`hooks.onHistoryApplied`). Do not bring back an exported `let` that a setter reassigns. Changes made while chasing it that were NOT the fix: a `putImageData` workaround (removed again — undo writes layers with plain `putImageData`, as slop-animator), and the on-screen canvas losing `willReadFrequently` (kept: it is accelerated, as slop-animator's display)
 
 ## Status Bar
 

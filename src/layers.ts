@@ -1,5 +1,3 @@
-import { blitImageData } from "./pixels";
-
 export interface Layer {
   type: "layer";
   id: number;
@@ -382,9 +380,9 @@ export class LayerManager {
     return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
   }
 
-  /** Put pixels back on one layer. See `blitImageData` — `putImageData` alone does not show on iPad. */
+  /** Put pixels back on one layer. putImageData ignores the ctx transform. */
   restoreTo(layer: Layer, data: ImageData) {
-    blitImageData(layer.ctx, data);
+    layer.ctx.putImageData(data, 0, 0);
   }
 
   /**
@@ -408,6 +406,6 @@ export class LayerManager {
   }
 
   restoreSnapshot(data: ImageData) {
-    this.restoreTo(this.active, data);
+    this.active.ctx.putImageData(data, 0, 0);
   }
 }

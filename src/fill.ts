@@ -5,7 +5,6 @@
 
 import { dilateMask } from "./mask-ops";
 import { enclosedRegion } from "./fill-holes";
-import { blitImageData } from "./pixels";
 
 export interface FillOptions {
   /** Color tolerance for matching the clicked pixel's color (0-255) */
@@ -142,7 +141,7 @@ export function floodFill(
     const tempCanvas = document.createElement("canvas");
     tempCanvas.width = w;
     tempCanvas.height = h;
-    const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true })!;
+    const tempCtx = tempCanvas.getContext("2d")!;
     const tempData = tempCtx.createImageData(w, h);
     const td = tempData.data;
 
@@ -174,7 +173,7 @@ export function floodFill(
         data[pi + 3] = fillColor.a;
       }
     }
-    blitImageData(ctx, imageData);
+    ctx.putImageData(imageData, 0, 0);
   }
 }
 
@@ -239,7 +238,7 @@ export function fillRegionBehind(
   const temp = document.createElement("canvas");
   temp.width = w;
   temp.height = h;
-  const tctx = temp.getContext("2d", { willReadFrequently: true })!;
+  const tctx = temp.getContext("2d")!;
   const img = tctx.createImageData(w, h);
   const td = img.data;
   for (let i = 0; i < w * h; i++) {
