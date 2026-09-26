@@ -8,5 +8,8 @@
       "mcp__plugin_compound-engineering_context7__query-docs",
       "Bash(curl -s -L \"https://esotericsoftware.com/spine-import-psd\")"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": false
   }
 }
