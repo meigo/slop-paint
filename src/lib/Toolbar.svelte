@@ -131,7 +131,21 @@
   } = $props();
 
   let sizeDisplay = $derived(String(app.brushSettings.size));
-  let opacityDisplay = $derived(app.brushSettings.opacity + "%");
+  // Fill has its own colour and opacity; the swatch and opacity slider edit whichever tool is active.
+  let fillActive = $derived(app.currentTool === "fill");
+  let paintColor = $derived(fillActive ? app.fillColor : app.brushSettings.color);
+  let paintOpacity = $derived(fillActive ? app.fillOpacity : app.brushSettings.opacity);
+  let opacityDisplay = $derived(paintOpacity + "%");
+  function setPaintColor(color: string) {
+    if (fillActive) app.fillColor = color;
+    else app.brushSettings.color = color;
+    onSettingsChange();
+  }
+  function setPaintOpacity(value: number) {
+    if (fillActive) app.fillOpacity = value;
+    else app.brushSettings.opacity = value;
+    onSettingsChange();
+  }
   let fillThresholdDisplay = $derived(String(app.fillSettings.alphaThreshold ?? 0));
   let fillExpandDisplay = $derived((app.fillSettings.expand ?? 0) + "px");
 
@@ -187,15 +201,33 @@
     editor.redraw();
   });
 
+  // Three rows of eight: neutrals, hues, then skin/earth tones and tints. `#1a1a1a` stays the ink
+  // black (the default brush colour), so an existing selection keeps its marker.
   const swatches = [
-    { color: "#1a1a1a", name: "Black" },
+    { color: "#000000", name: "Black" },
+    { color: "#1a1a1a", name: "Ink" },
+    { color: "#4b4b4b", name: "Dark grey" },
+    { color: "#808080", name: "Grey" },
+    { color: "#b3b3b3", name: "Light grey" },
+    { color: "#d9d9d9", name: "Pale grey" },
+    { color: "#f5f0e6", name: "Paper" },
     { color: "#ffffff", name: "White" },
-    { color: "#ef4444", name: "Red" },
-    { color: "#3b82f6", name: "Blue" },
-    { color: "#22c55e", name: "Green" },
-    { color: "#f59e0b", name: "Yellow" },
-    { color: "#8b5cf6", name: "Purple" },
-    { color: "#ec4899", name: "Pink" },
+    { color: "#e53935", name: "Red" },
+    { color: "#fb8c00", name: "Orange" },
+    { color: "#fdd835", name: "Yellow" },
+    { color: "#43a047", name: "Green" },
+    { color: "#00897b", name: "Teal" },
+    { color: "#1e88e5", name: "Blue" },
+    { color: "#3949ab", name: "Indigo" },
+    { color: "#8e24aa", name: "Purple" },
+    { color: "#d81b60", name: "Pink" },
+    { color: "#6d4c41", name: "Brown" },
+    { color: "#a1887f", name: "Tan" },
+    { color: "#f1c8a9", name: "Light skin" },
+    { color: "#d7a17d", name: "Medium skin" },
+    { color: "#8d5a3b", name: "Dark skin" },
+    { color: "#90caf9", name: "Light blue" },
+    { color: "#a5d6a7", name: "Light green" },
   ];
 
   function onBrushTypeChange(e: Event) {
@@ -303,6 +335,20 @@
   <div class="ml-auto flex shrink-0 items-center gap-1">
     <ToolbarMenu label="File">
       {#snippet children(close)}
+        <!-- The project's name, editable in place: save and export file names come from it. -->
+        <label
+          class="flex items-center gap-2 px-3 py-1.5 text-sm text-text-secondary"
+          title="Project name — used for the saved and exported file names"
+        >
+          Name
+          <input
+            type="text"
+            value={app.projectName}
+            onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
+            class="h-7 min-w-0 flex-1 rounded border border-border bg-surface-raised px-2 text-sm text-text"
+          />
+        </label>
+        <div class="my-1 h-px bg-border"></div>
         <button
           class={menuItem}
           role="menuitem"
@@ -570,9 +616,9 @@
         min="1"
         max="100"
         class="w-16"
-        style={sliderFill(app.brushSettings.opacity, 1, 100)}
-        bind:value={app.brushSettings.opacity}
-        oninput={onSettingsChange}
+        style={sliderFill(paintOpacity, 1, 100)}
+        value={paintOpacity}
+        oninput={(e) => setPaintOpacity(Number(e.currentTarget.value))}
       />
       <span class="min-w-7 text-[11px] text-text-muted">{opacityDisplay}</span>
     </label>
@@ -779,29 +825,26 @@
     <div class="relative flex items-center" use:clickOutside={() => (colorOpen = false)}>
       <button
         class="size-7 shrink-0 rounded-md border-2 border-border transition-colors hover:border-text-muted"
-        style:background={app.brushSettings.color}
+        style:background={paintColor}
         aria-haspopup="dialog"
         aria-expanded={colorOpen}
         onclick={() => (colorOpen = !colorOpen)}
-        title="Color — {app.brushSettings.color}"
+        title="{fillActive ? 'Fill colour' : 'Brush colour'} — {paintColor}"
       ></button>
       {#if colorOpen}
         <div
-          class="absolute top-full right-0 z-30 mt-1 flex w-56 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
+          class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
         >
-          <div class="grid grid-cols-4 gap-2">
+          <div class="grid grid-cols-8 gap-1.5">
             {#each swatches as { color, name }}
               <button
-                class="h-8 w-full cursor-pointer rounded-md border-2 transition-transform hover:scale-105 {color ===
-                app.brushSettings.color
+                class="aspect-square w-full cursor-pointer rounded-md border-2 transition-transform hover:scale-105 {color ===
+                paintColor
                   ? 'border-accent'
                   : 'border-border'}"
                 style:background={color}
                 title={name}
-                onclick={() => {
-                  app.brushSettings.color = color;
-                  onSettingsChange();
-                }}
+                onclick={() => setPaintColor(color)}
               ></button>
             {/each}
           </div>
@@ -809,8 +852,8 @@
             Custom
             <input
               type="color"
-              bind:value={app.brushSettings.color}
-              oninput={onSettingsChange}
+              value={paintColor}
+              oninput={(e) => setPaintColor(e.currentTarget.value)}
               title="Pick any color"
             />
           </label>
@@ -823,8 +866,10 @@
     <div class="flex items-center gap-2 text-xs text-text-secondary">
       <span
         class="h-5 w-5 rounded-full border border-text-muted"
-        style:background={app.brushSettings.color}
-        title="Current color"
+        style:background={app.eyedropperTarget === "fill" ? app.fillColor : app.brushSettings.color}
+        title={app.eyedropperTarget === "fill"
+          ? "Fill colour to replace"
+          : "Brush colour to replace"}
       ></span>
       <span class="text-text-muted">Drag to aim, release to pick a color</span>
     </div>

@@ -53,10 +53,10 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `lib/ToolbarMenu.svelte` — `Label ▾` dropdown (closes on outside pointerdown or Escape); items get a `close()` via the children snippet
 - `lib/click-outside.ts` — Svelte action: call back on a pointerdown outside the node (capture phase); put it on a wrapper holding both trigger and popup
 - Selection actions have NO floating bar over the canvas (unlike slop-animator): all of them sit in row 2 of the Select/Lasso tools — Copy, Cut, Paste, Delete, Deselect, Select all (icons) │ Free transform, Distort, Mesh │ Flip H/V, keep proportions │ Apply, Cancel. A float can only exist on Select/Lasso (switching tools applies it), so the row is always showing when there is one. Buttons that can't act are dimmed with a reason (nothing selected, layer locked/hidden, apply or cancel first), never removed, so nothing moves. For every other tool, row 2 ends in an amber Deselect chip while a marquee exists: it silently limits where brush, eraser, fill and Outline paint
-- `lib/LayerProps.svelte` — properties strip for the selected layer or group: opacity and Spine tags
+- `lib/LayerProps.svelte` — properties strip for the selected layer or group, ONE compact row as slop-animator's: opacity (Blend icon, slider, number), Spine tag chips + tag menu, and a pencil that starts the rename (`onRename`)
   - Layer/group objects are NOT `$state`, so a field needs its own `$derived` that reads `app.layerVersion` (`opacity`, `tags`). A template reading `target.opacity` never re-runs — the node's identity doesn't change on an edit — and the strip showed a stale value while the canvas already had the new one
 - `lib/LayerPanel.svelte` — layer tree in Svelte markup: recursive snippets, Lucide icons, thumbnails via a canvas action, inline rename on double-click AND double-tap (`lib/double-tap.ts`; iPad doesn't fire dblclick reliably), Spine tag popover. Every control carries a `title`, which is also what the status bar shows on touch
-- Row layout: ONE line — identity on the left (grip, thumbnail, name), state on the right in fixed 20px columns (alpha lock, lock, eye — same order, glyphs and colours as slop-animator; a group row leaves the first two empty) so it lines up across rows. Per-layer CONTROLS (opacity, Spine tags) live in `lib/LayerProps.svelte`, a fixed-height strip above the list that follows the selected row (as slop-animator did), so a row never grows when selected and the row under the Pencil never moves. Nested rows carry `.group-rail`, a background-image rail that the selected-row bar paints over (a border on the container drew a second line)
+- Row layout (as slop-animator's): ONE line, `text-sm` names (the selected one `text-text`), 20px thumbnails drawn at 40px; rows run full width and indent their CONTENT 16px per group level (`depth`), so the rail and the selected bar sit on the panel edge; group headers have no band of their own. Identity on the left (grip, thumbnail, name), state on the right in fixed 20px columns (alpha lock, lock, eye — same order, glyphs and colours as slop-animator; a group row leaves the first two empty) so it lines up across rows. Per-layer CONTROLS (opacity, Spine tags) live in `lib/LayerProps.svelte`, a fixed-height strip above the list that follows the selected row (as slop-animator did), so a row never grows when selected and the row under the Pencil never moves. Nested rows carry `.group-rail`, a background-image rail that the selected-row bar paints over (a border on the container drew a second line)
 - The panel is resizable by dragging its left edge (`panel-layout.ts`: min 184px, max half the viewport); the width is saved with the other settings
 - Placement: App.svelte lays the two toolbar rows (Toolbar's roots carry `grid-area` row1 / row2), the canvas and the panel out in ONE grid with two arrangements (so nothing re-mounts). Toolbar row 1 always spans the full width. The panel starts right under it, beside the tool-options row, when that row still fits next to it (`panelBesideToolOptions`: viewport − panel ≥ `TOOL_OPTIONS_WIDTH`, 960px — the brush row measured 949; re-measure when a row gains a control), else it starts below the options row too (iPad). Wheel/trackpad pan-zoom listens on the canvas area only, so the layer list scrolls
 - The list is rebuilt by `{#key version:dragNonce}` — the layer tree is imperative, so a `layerVersion` bump is what re-renders it. After a SortableJS drop: read the order back from the DOM, remove the node SortableJS relocated (a bottom drop lands past the `{#each}` anchor and would survive as a duplicate), then bump `dragNonce` to rebuild from state. A drop can fire `onEnd` twice (cross-list), so a latch runs the rebuild once
@@ -127,14 +127,15 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Ctrl+Z / Ctrl+Shift+Z — undo/redo
 - Ctrl+C / Ctrl+X / Ctrl+V — copy / cut / paste selection; Delete or Backspace — clear selection
 - Ctrl+S / Ctrl+O — save/open project (PSD)
+- ↑ / ↓ — select the layer or group row above/below (`adjacentRow`; skips a collapsed group's members; ignored while a slider/dropdown has focus or a selection is lifted)
 - Space+drag or middle mouse — pan
 - Trackpad: two-finger swipe pans, pinch zooms; mouse wheel pans, Ctrl/Cmd+wheel zooms (as in slop-animator)
 
 ## Layer Features
 
-- Lock: prevent editing
+- Lock: prevent editing. Groups lock too, and lock every member without changing the members' own locks; check with `layers.isLocked(node)` (`lockedInTree`), never `.locked`. A layer locked only by its group shows an amber lock with its own icon. Locks are not saved in the PSD (nor autosave)
 - Alpha lock: paint only on existing pixels
-- Duplicate layer
+- Duplicate layer, or a whole group (`duplicateGroup`: every member copied with fresh ids, placed above the original)
 - Merge down (onto layer below)
 - Per-layer opacity, visibility
 - Drag-and-drop reordering with groups
@@ -144,7 +145,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Brush and eraser each keep their own size, opacity, smoothing, streamline, Press (size range), brush type (eraser defaults to size 8) and pressure curve
 - Press is 1–8, default 3, on the brush bar (slop-animator's model): size is the nominal width, light pressure thins to size/Press, full pressure widens to size×Press. Mouse strokes ignore it and draw at size. A saved value outside 1–8 is clamped
 - Smoothing and taper apply to Smooth only; Pool (how much ink swells where the pen lingers) to Ink only; nib angle and flatness to Calligraphy only
-- Color and draw-behind are shared. Draw-behind stays on the bar
+- Brush colour and draw-behind are shared by brush and eraser. Draw-behind stays on the bar. Fill has its OWN colour and opacity (`app.fillColor` / `fillOpacity`, as slop-animator): the toolbar's swatch and opacity slider edit the active tool's; a save without a fill colour seeds it from the brush's
 - Saved as the top-level fields (brush) plus an `eraser` object in the settings
 
 ## Brush Cursor
@@ -155,7 +156,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - Samples the composited document (ignores layer lock); transparent pixels pick nothing
 - Drag to aim (a swatch follows above-left of the point), release to pick; then returns to the previous tool
-- Sets the shared color, which the brush and the fill tool both use
+- Sets the colour of the tool it returns to: the fill's when it came from Fill (`app.eyedropperTarget`), else the brush's
 
 ## Clipboard
 
@@ -229,6 +230,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Project Save/Load
 
 - PSD is the project format — Ctrl+S to save, Ctrl+O to open
+- The project has a name (`app.projectName`, saved with the settings; `filename.ts`): set in New, taken from an opened file, editable at the top of the File menu; the tab title shows it. Files: `name.psd` (save, Save to Files), `name-export.psd` (Spine export), `name.png`
 - iPad/iPhone only: File ▸ Save to Files… shares the PSD through the share sheet, the only way a web page can put a file where the user picks (Safari has no save picker; a download always lands in Downloads). It tries the sheet on the tap that started it and, if that tap has expired (`NotAllowedError`), opens a dialog whose fresh tap retries; the dialog also offers a plain download. "Shared" means the sheet completed, not that the file reached Files
 - `share.ts` (pure: device check, error classification), `download.ts` (`downloadBlob`, revokes the object URL after 60s — an immediate revoke can kill a large download on iPad), `lib/ShareReadyDialog.svelte`
 - Round-trips layer tree, names, opacity, visibility, groups

@@ -71,8 +71,8 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
 }
 
 /** Export layer tree as a PSD with trimmed layer bounds (smaller file, Photoshop/Spine-friendly). */
-export function exportPsd(manager: LayerManager) {
-  writePsdFile(manager, { trim: true, filename: "drawing.psd" });
+export function exportPsd(manager: LayerManager, filename = "drawing.psd") {
+  writePsdFile(manager, { trim: true, filename });
 }
 
 /** Save the project as a PSD with full-size layers (preserves positions on round-trip). */
@@ -107,6 +107,7 @@ export function loadPsd(
         opacity: Math.round((psdLayer.opacity ?? 1) * 100),
         children: [],
         collapsed: !(psdLayer.opened ?? true),
+        locked: false,
       };
       for (const child of psdLayer.children) {
         const node = buildNode(child);

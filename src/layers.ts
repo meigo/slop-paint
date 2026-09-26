@@ -18,6 +18,8 @@ export interface LayerGroup {
   opacity: number;
   children: LayerNode[];
   collapsed: boolean;
+  /** Locks every member while set; the members keep their own locks (as slop-animator). */
+  locked: boolean;
 }
 
 export type LayerNode = Layer | LayerGroup;
@@ -29,6 +31,40 @@ export interface StructSnapshot {
 }
 
 /** Copy the arrays and group nodes; keep Layer objects (and their canvases) shared. */
+/** Whether node `id` refuses edits: its own lock, or any enclosing group's. */
+export function lockedInTree(tree: LayerNode[], id: number): boolean {
+  const walk = (nodes: LayerNode[], inherited: boolean): boolean | null => {
+    for (const n of nodes) {
+      const locked = inherited || n.locked;
+      if (n.id === id) return locked;
+      if (n.type === "group") {
+        const found = walk(n.children, locked);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  };
+  return walk(tree, false) ?? false;
+}
+
+/** The row above or below `id` as the layer panel lists them — top first, a group before its
+ *  members, a collapsed group's members skipped — or null at either end (↑/↓, as slop-animator). */
+export function adjacentRow(tree: LayerNode[], id: number, dir: "up" | "down"): number | null {
+  const rows: number[] = [];
+  const list = (nodes: LayerNode[]) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      rows.push(n.id);
+      if (n.type === "group" && !n.collapsed) list(n.children);
+    }
+  };
+  list(tree);
+  const i = rows.indexOf(id);
+  if (i < 0) return null;
+  const j = dir === "up" ? i - 1 : i + 1;
+  return j >= 0 && j < rows.length ? rows[j] : null;
+}
+
 function cloneTree(nodes: LayerNode[]): LayerNode[] {
   return nodes.map((n) => (n.type === "group" ? { ...n, children: cloneTree(n.children) } : n));
 }
@@ -106,6 +142,11 @@ export class LayerManager {
       if (node.id === id) return node;
     }
     return null;
+  }
+
+  /** Whether `node` refuses edits: its own lock or an enclosing group's. Use this, never `.locked`. */
+  isLocked(node: LayerNode): boolean {
+    return lockedInTree(this.tree, node.id);
   }
 
   /** Find the parent array and index of a node by id */
@@ -245,6 +286,7 @@ export class LayerManager {
       opacity: 100,
       children: [],
       collapsed: false,
+      locked: false,
     };
     this.insertAtSelection(group);
     this.onChange();
@@ -286,7 +328,36 @@ export class LayerManager {
     const loc = this.findParent(id);
     if (!loc) return null;
 
-    const dup = this.createLayer(src.name + " copy");
+    const dup = this.copyLayer(src, src.name + " copy");
+
+    // Insert above the source
+    loc.parent.splice(loc.index + 1, 0, dup);
+    this.activeId = dup.id;
+    this.onChange();
+    return dup;
+  }
+
+  /** Duplicate a group with everything in it — layers keep their pixels and settings, every node
+   *  gets a fresh id — placed right above the original and made active (as slop-animator). */
+  duplicateGroup(id: number): LayerGroup | null {
+    const src = this.findNode(id);
+    if (!src || src.type !== "group") return null;
+    const loc = this.findParent(id);
+    if (!loc) return null;
+    const copy = (n: LayerNode): LayerNode =>
+      n.type === "group"
+        ? { ...n, id: nextId++, children: n.children.map(copy) }
+        : this.copyLayer(n, n.name);
+    const dup = { ...(copy(src) as LayerGroup), name: src.name + " copy" };
+    loc.parent.splice(loc.index + 1, 0, dup);
+    this.activeId = dup.id;
+    this.onChange();
+    return dup;
+  }
+
+  /** A new layer with `src`'s pixels and settings (not yet in the tree). */
+  private copyLayer(src: Layer, name: string): Layer {
+    const dup = this.createLayer(name);
     dup.opacity = src.opacity;
     dup.visible = src.visible;
     dup.locked = src.locked;
@@ -294,11 +365,6 @@ export class LayerManager {
     dup.ctx.resetTransform();
     dup.ctx.drawImage(src.canvas, 0, 0);
     dup.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-
-    // Insert above the source
-    loc.parent.splice(loc.index + 1, 0, dup);
-    this.activeId = dup.id;
-    this.onChange();
     return dup;
   }
 

@@ -28,6 +28,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Fill**
 
+- The bucket has its own colour and opacity, so line colour and flat colour stay separate
 - Paint bucket with gap closing (semi-transparent edges count as walls) and expand (grows the fill
   under the outline so no seam shows)
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
@@ -59,8 +60,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Layers**
 
 - Layers and nested groups, drag-and-drop reordering, double-tap (or double-click) a name to rename
-- Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group
-- Duplicate, merge down; a resizable panel with thumbnails and a properties strip for the selected
+- Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
+  locking a group locks everything in it
+- Duplicate a layer or a whole group, merge down; a resizable panel with thumbnails and a properties strip for the selected
   row
 - Spine tags on layer and group names: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`
 
@@ -79,6 +81,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Files**
 
+- A **project name** (set in New, or at the top of the File menu) names the saved and exported files
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility
   and groups, and open PSDs from Photoshop, GIMP and others
 - Export a flattened **PNG** or a **PSD** for Spine (groups become PSD folders, layer order is draw
@@ -105,6 +108,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 | 0 / 1                      | Fit the view / 100% zoom                            |
 | R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise   |
 | Ctrl+S / Ctrl+O / Ctrl+N   | Save / open project (PSD) / new document            |
+| ↑ / ↓                      | Select the layer above / below                      |
 
 Cmd works in place of Ctrl on a Mac.
 

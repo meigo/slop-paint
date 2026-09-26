@@ -5,10 +5,11 @@
     onCancel,
   }: {
     open: boolean;
-    onConfirm: (width: number, height: number) => void;
+    onConfirm: (width: number, height: number, name: string) => void;
     onCancel: () => void;
   } = $props();
 
+  let name = $state("untitled");
   let width = $state(1920);
   let height = $state(1080);
 
@@ -36,7 +37,7 @@
   function confirm() {
     const w = Math.max(1, Math.min(8192, Math.round(width)));
     const h = Math.max(1, Math.min(8192, Math.round(height)));
-    onConfirm(w, h);
+    onConfirm(w, h, name);
   }
 
   function onWindowKey(e: KeyboardEvent) {
@@ -67,6 +68,18 @@
   >
     <div class="flex w-80 flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-xl">
       <h2 class="text-sm font-semibold text-text">New Document</h2>
+
+      <label
+        class="flex items-center gap-2 text-xs text-text-secondary"
+        title="Project name — used for the saved and exported file names"
+      >
+        Name
+        <input
+          type="text"
+          bind:value={name}
+          class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+        />
+      </label>
 
       <div class="flex flex-col gap-2">
         <label class="flex items-center gap-2 text-xs text-text-secondary">

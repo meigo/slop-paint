@@ -104,7 +104,7 @@ export function pushNodeFieldEdit(
   if (before === after) return;
   const apply = (value: boolean | number) => {
     const node = layers.findNode(id);
-    // `locked`/`alphaLock` only exist on layers; a group never records them.
+    // `alphaLock` only exists on layers; `locked` on layers and groups.
     if (node) (node as unknown as Record<NodeField, boolean | number>)[field] = value;
     hooks.onHistoryApplied();
   };

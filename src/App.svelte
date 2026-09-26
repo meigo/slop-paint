@@ -9,7 +9,7 @@
   import { drawInkStroke } from "./ink-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
-  import { LayerManager, type Layer } from "./layers";
+  import { LayerManager, adjacentRow, type Layer } from "./layers";
   import {
     enclosedFillRegion,
     fillRegionBehind,
@@ -31,6 +31,7 @@
   } from "./outline";
   import { clampPanelWidth, panelBesideToolOptions } from "./panel-layout";
   import { isTextEntry } from "./lib/text-entry";
+  import { nameFromFile, sanitizeFilename } from "./filename";
   import { Selection, type SelectionRect } from "./selection";
   import {
     placeExternalImage,
@@ -164,7 +165,7 @@
     const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
     if (!isBrushTool || spaceHeld || viewport.panning || isDrawing) return hideBrushCursor();
     const layer = layers.active;
-    if (layer.locked || !layer.visible) {
+    if (layers.isLocked(layer) || !layer.visible) {
       hideBrushCursor();
       canvasClipEl.style.cursor = "not-allowed";
       return;
@@ -265,6 +266,9 @@
     fillExpand?: number;
     keepProportions?: boolean;
     fillEnclosedGap?: number;
+    fillColor?: string;
+    projectName?: string;
+    fillOpacity?: number;
     layerPanelWidth?: number;
     nibAngle?: number;
     nibFlatness?: number;
@@ -288,6 +292,9 @@
       opacity: slots.brush.opacity,
       smoothing: slots.brush.smoothing,
       color: app.brushSettings.color,
+      fillColor: app.fillColor,
+      projectName: app.projectName,
+      fillOpacity: app.fillOpacity,
       sizeRange: slots.brush.sizeRange,
       streamline: slots.brush.streamline,
       eraser: slots.eraser,
@@ -331,6 +338,10 @@
       if (data.opacity != null) app.brushSettings.opacity = data.opacity;
       if (data.smoothing != null) app.brushSettings.smoothing = data.smoothing;
       if (data.color) app.brushSettings.color = data.color;
+      // Fill got its own colour later: a save without one starts from the brush's, so nothing changes.
+      app.fillColor = data.fillColor ?? data.color ?? app.fillColor;
+      if (data.fillOpacity != null) app.fillOpacity = data.fillOpacity;
+      if (data.projectName) app.projectName = data.projectName;
       if (data.sizeRange != null) app.sizeRange = clampPress(data.sizeRange);
       if (data.streamline != null) app.streamline = data.streamline;
       if (data.drawBehind != null) app.brushSettings.drawBehind = data.drawBehind;
@@ -413,7 +424,7 @@
     if (!selection || !layers) return;
     if (selection.state !== "selected") return;
     const layer = layers.active;
-    if (layer.locked) return;
+    if (layers.isLocked(layer)) return;
     const dpr = window.devicePixelRatio || 1;
     preSelectionSnapshot = layers.getSnapshot();
     const lifted = selection.liftPixels(layer.ctx, dpr);
@@ -432,7 +443,7 @@
     if (!selection || !layers) return;
     if (selection.state === "selected") {
       const layer = layers.active;
-      if (layer.locked) return;
+      if (layers.isLocked(layer)) return;
       const dpr = window.devicePixelRatio || 1;
       preSelectionSnapshot = layers.getSnapshot();
       const lifted = selection.liftPixels(layer.ctx, dpr);
@@ -492,19 +503,20 @@
       ctx.drawImage(layer.canvas, 0, 0, w, h);
     }
     const link = document.createElement("a");
-    link.download = "drawing.png";
+    link.download = `${sanitizeFilename(app.projectName)}.png`;
     link.href = tmp.toDataURL("image/png");
     link.click();
   }
 
   function doExportPsd() {
     if (!layers) return;
-    withFloatApplied(() => exportPsd(layers));
+    // "-export": the trimmed Spine PSD must not overwrite the project saved under the same name.
+    withFloatApplied(() => exportPsd(layers, `${sanitizeFilename(app.projectName)}-export.psd`));
   }
 
   function doSavePsd() {
     if (!layers) return;
-    withFloatApplied(() => savePsd(layers));
+    withFloatApplied(() => savePsd(layers, `${sanitizeFilename(app.projectName)}.psd`));
   }
 
   // --- Save to Files (iPad/iPhone) ---
@@ -514,7 +526,8 @@
 
   async function doSaveToFiles() {
     if (!layers) return;
-    const file = new File([withFloatApplied(() => psdBuffer(layers, false))], "project.psd", {
+    const name = `${sanitizeFilename(app.projectName)}.psd`;
+    const file = new File([withFloatApplied(() => psdBuffer(layers, false))], name, {
       type: "application/octet-stream",
     });
     if (!canShareFile(file)) {
@@ -537,8 +550,9 @@
     shareFileReady = file;
   }
 
-  function newDocument(width: number, height: number) {
+  function newDocument(width: number, height: number, name: string) {
     if (!layers) return;
+    app.projectName = name.trim() || "untitled";
     if (outlineActive()) cancelOutline();
     void clearAutosave().catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
@@ -583,6 +597,7 @@
     reader.onload = () => {
       const buffer = reader.result as ArrayBuffer;
       if (outlineActive()) cancelOutline();
+      app.projectName = nameFromFile(file.name);
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = loadPsd(buffer, layers, dpr);
       history.clear(); // the stack's commands point at the layers this just replaced
@@ -689,7 +704,8 @@
       }
       eyedropperSwatchEl.style.display = "none";
       if (color) {
-        app.brushSettings.color = color;
+        if (app.eyedropperTarget === "fill") app.fillColor = color;
+        else app.brushSettings.color = color;
         setTool(toolBeforeEyedropper);
       }
       return;
@@ -705,7 +721,8 @@
     const layer = layers.active;
     const dpr = window.devicePixelRatio || 1;
 
-    if (layer.locked && app.currentTool !== "select" && app.currentTool !== "lasso") return;
+    if (layers.isLocked(layer) && app.currentTool !== "select" && app.currentTool !== "lasso")
+      return;
 
     // Selection tool
     if (app.currentTool === "select" || app.currentTool === "lasso") {
@@ -757,7 +774,7 @@
     if (app.currentTool === "fill") {
       if (points.length === 1 && !done) {
         const before = layers.getSnapshot();
-        const color = hexToRgba(app.brushSettings.color, app.brushSettings.opacity);
+        const color = hexToRgba(app.fillColor, app.fillOpacity);
         const clipSel = selection?.state === "selected" ? selection : null;
         if (clipSel || layer.alphaLock) {
           // Run flood fill on a temp canvas (1:1 with layer's physical pixels), then composite
@@ -895,6 +912,7 @@
     }
     if (tool === "eyedropper" && app.currentTool !== "eyedropper") {
       toolBeforeEyedropper = app.currentTool;
+      app.eyedropperTarget = app.currentTool === "fill" ? "fill" : "brush";
     }
     // Leaving Outline cancels a live preview: entering it already rewrote the layer, so keeping
     // it would outline the drawing on a stray tap. The knobs survive, so re-entering is cheap.
@@ -1010,6 +1028,27 @@
       return;
     }
 
+    // ↑/↓: the row above/below becomes active (as slop-animator). A focused slider or dropdown
+    // keeps its own arrow keys, and a lifted selection keeps its layer: Apply draws onto the
+    // ACTIVE layer, so switching mid-transform would land it on another one.
+    if (
+      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+      !selection?.hasFloating &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      target.tagName !== "INPUT" &&
+      target.tagName !== "SELECT"
+    ) {
+      e.preventDefault();
+      const next = adjacentRow(layers.tree, layers.activeId, e.key === "ArrowUp" ? "up" : "down");
+      if (next !== null) {
+        layers.activeId = next;
+        bumpLayerVersion();
+      }
+      return;
+    }
+
     if (e.key === "b") setTool("brush");
     if (e.key === "e") setTool("eraser");
     if (e.key === "s") setTool("select");
@@ -1094,6 +1133,17 @@
     autosaveTimer = setTimeout(flushAutosave, 3000);
   });
 
+  // The tab shows which project is open.
+  $effect(() => {
+    document.title = `${app.projectName} — slop-paint`;
+  });
+
+  // Re-save the settings (they carry the project name) when it is renamed.
+  $effect(() => {
+    void app.projectName;
+    untrack(() => debouncedSave());
+  });
+
   // A lift paints the active layer's own content on the selection overlay, so it has to fade with
   // the layer's (and its groups') opacity, or it jumps to full strength until it is committed.
   $effect(() => {
@@ -1136,7 +1186,7 @@
   function fillAllEnclosed() {
     if (!layers) return;
     const layer = layers.active;
-    if (layer.locked) return flashStatus("Layer is locked");
+    if (layers.isLocked(layer)) return flashStatus("Layer is locked");
     // Fill enclosed only paints EMPTY interiors, which alpha lock refuses: it could never land.
     if (layer.alphaLock)
       return flashStatus("Alpha lock is on — Fill enclosed only paints empty areas");
@@ -1150,7 +1200,7 @@
       );
     }
     const before = layers.getSnapshot();
-    const color = hexToRgba(app.brushSettings.color, app.brushSettings.opacity);
+    const color = hexToRgba(app.fillColor, app.fillOpacity);
     if (selection?.state === "selected") {
       // Same as the click fill: paint a temp copy, composite back through the clip.
       const dpr = window.devicePixelRatio || 1;
@@ -1211,7 +1261,7 @@
     // Cancel would then restore an outline instead of the original art.
     if (outlineActive() || !layers) return;
     const layer = layers.active;
-    if (layer.locked) return flashStatus("Layer is locked — nothing to outline");
+    if (layers.isLocked(layer)) return flashStatus("Layer is locked — nothing to outline");
     if (!layer.visible) return flashStatus("Layer is hidden — show it to outline it");
     const cw = layer.canvas.width,
       ch = layer.canvas.height;
@@ -1368,7 +1418,7 @@
   $effect(() => {
     void app.layerVersion;
     untrack(() => {
-      if (outlineLayer && (layers.activeId !== outlineLayer.id || outlineLayer.locked)) {
+      if (outlineLayer && (layers.activeId !== outlineLayer.id || layers.isLocked(outlineLayer))) {
         cancelOutline();
       }
     });
@@ -1499,7 +1549,7 @@
   const liftBlock = $derived.by(() => {
     void app.layerVersion;
     const layer = layersReady ? layers.active : null;
-    if (layer?.locked) return "the layer is locked";
+    if (layer && layers.isLocked(layer)) return "the layer is locked";
     if (layer && !layer.visible) return "the layer is hidden";
     return "";
   });
@@ -1583,7 +1633,7 @@
     if (!selection || selection.state !== "selected" || !layers) return;
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
-    if (layer.locked) return;
+    if (layers.isLocked(layer)) return;
     const dpr = window.devicePixelRatio || 1;
     const before = layers.getSnapshot();
     selection.clearRegion(layer.ctx, dpr);
@@ -1601,7 +1651,7 @@
 
   /** Float `pixels` at `rect` on the active layer with transform handles; Enter/Esc resolves it. */
   function startPasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): boolean {
-    if (!selection || !layers || layers.active.locked) return false;
+    if (!selection || !layers || layers.isLocked(layers.active)) return false;
     setTool("select"); // commits any floating selection first
     if (selection.active) selection.cancel();
     preSelectionSnapshot = layers.getSnapshot(); // commit pushes it; cancel restores it (no-op)

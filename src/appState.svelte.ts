@@ -33,6 +33,14 @@ interface AppStateShape {
   statusMessage: string;
   /** What the control under the pointer does — iPad has no hover, so titles go here. */
   statusHint: string;
+  /** Fill's own colour and opacity (as slop-animator): outlines and flats are different colours, so
+   *  the bucket no longer shares the brush's swatch. */
+  fillColor: string;
+  fillOpacity: number;
+  /** The project's name: save and export file names come from it (as slop-animator). */
+  projectName: string;
+  /** Which colour the eyedropper sets: the fill's when it will hand back to Fill, else the brush's. */
+  eyedropperTarget: "brush" | "fill";
   /** Outline tool knobs (see `outline.ts`). Session-only, not saved with the settings. */
   outline: { thickness: number; wobble: number; variation: number; seed: number };
   /** An Outline preview is live in the active layer (Apply/Cancel can act). */
@@ -73,6 +81,10 @@ export const app: AppStateShape = $state({
   layerPanelWidth: DEFAULT_PANEL_WIDTH,
   statusMessage: "",
   statusHint: "",
+  fillColor: "#1a1a1a",
+  fillOpacity: 100,
+  eyedropperTarget: "brush",
+  projectName: "untitled",
   outline: { thickness: 3, wobble: 0.35, variation: 0.35, seed: 1 },
   outlineActive: false,
 });

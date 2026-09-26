@@ -87,7 +87,13 @@
   }
 
   function duplicateLayer() {
-    structuralEdit(layers, () => layers.duplicateLayer(layers.activeId));
+    // The selected row decides: a group duplicates with everything in it.
+    const node = layers.findNode(layers.activeId);
+    structuralEdit(layers, () =>
+      node?.type === "group"
+        ? layers.duplicateGroup(node.id)
+        : layers.duplicateLayer(layers.activeId),
+    );
     layers.composite();
     bumpLayerVersion();
   }
@@ -252,18 +258,21 @@
   {/if}
 {/snippet}
 
-{#snippet layerRow(layer: AppLayer, nested: boolean)}
+{#snippet layerRow(layer: AppLayer, depth: number)}
   <!-- ONE line. Left is identity (grip, thumbnail, name); right is state you scan ACROSS rows in
        fixed 20px columns — lock, alpha lock, eye — so they line up whatever the nesting. The
        per-layer CONTROLS (opacity, tags) live in the properties strip above the list, so a row
        never grows when selected and the row under the Pencil never moves. -->
+  <!-- As slop-animator's rows: full width, so the rail and the selected bar sit on the panel edge,
+       with the CONTENT indented 16px per group level; names at text-sm, the selected one brighter. -->
   <div
-    class="layer-item {nested
+    class="layer-item {depth > 0
       ? 'group-rail'
-      : ''} flex min-w-0 cursor-pointer items-center gap-1.5 border-b border-border-light px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-hover {layer.id ===
+      : ''} flex min-w-0 cursor-pointer items-center gap-1 border-b border-border-light py-1 pr-[6px] text-sm transition-colors hover:bg-surface-hover {layer.id ===
     layers.activeId
-      ? 'ui-selected'
-      : ''}"
+      ? 'ui-selected text-text'
+      : 'text-text-secondary'}"
+    style:padding-left="{8 + 16 * depth}px"
     data-node-id={layer.id}
     title="Tap to draw on this layer · double-tap the name to rename"
     onclick={() => {
@@ -275,11 +284,11 @@
     <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
       ><GripVertical size={14} /></span
     >
+    <!-- 20px (was 28), drawn at 40 so it stays sharp on a retina screen. -->
     <canvas
-      class="thumb-checkerboard h-7 w-7 shrink-0 rounded-sm border border-border"
-      style="image-rendering: pixelated"
-      width="28"
-      height="28"
+      class="thumb-checkerboard size-5 shrink-0 rounded-sm border border-border"
+      width="40"
+      height="40"
       use:thumbnail={layer}
     ></canvas>
     {@render nameCell(layer)}
@@ -301,9 +310,15 @@
     >
       <Grid2x2 size={15} />
     </button>
+    <!-- Amber when the layer can't be drawn on, whether by its own lock or a locked group's; the
+         icon is the layer's OWN lock, which a group lock leaves as it was (as slop-animator). -->
     <button
-      class="{rowBtn} {layer.locked ? 'text-warn' : 'text-text-muted hover:text-text'}"
-      title={layer.locked ? "Locked — click to unlock" : "Unlocked — click to lock drawing"}
+      class="{rowBtn} {layers.isLocked(layer) ? 'text-warn' : 'text-text-muted hover:text-text'}"
+      title={layer.locked
+        ? "Locked — click to unlock"
+        : layers.isLocked(layer)
+          ? "Locked by its group — click to lock this layer too"
+          : "Unlocked — click to lock drawing"}
       onclick={(e) => {
         e.stopPropagation();
         layer.locked = !layer.locked;
@@ -328,16 +343,17 @@
   </div>
 {/snippet}
 
-{#snippet groupRow(group: LayerGroup, nested: boolean)}
+{#snippet groupRow(group: LayerGroup, depth: number)}
   <div
-    class="layer-group {nested ? 'group-rail' : ''} border-b border-border"
+    class="layer-group {depth > 0 ? 'group-rail' : ''} border-b border-border"
     data-node-id={group.id}
   >
     <div
-      class="flex min-w-0 cursor-default items-center gap-1 px-2 py-1 text-xs font-semibold text-text-secondary transition-colors {group.id ===
+      class="flex min-w-0 cursor-default items-center gap-1 py-1 pr-[6px] text-sm font-semibold transition-colors {group.id ===
       layers.activeId
-        ? 'ui-selected'
-        : 'bg-group-bg hover:bg-group-hover'}"
+        ? 'ui-selected text-text'
+        : 'text-text-secondary hover:bg-surface-hover'}"
+      style:padding-left="{8 + 16 * depth}px"
       title="Layer group · double-tap the name to rename"
       onclick={() => {
         layers.activeId = group.id;
@@ -362,10 +378,25 @@
         {#if group.collapsed}<ChevronRight size={15} />{:else}<ChevronDown size={15} />{/if}
       </button>
       {@render nameCell(group)}
-      <!-- The alpha-lock and lock columns, empty: a group has no pixels and no lock of its own here,
-           and the slots keep its eye in the same column as every layer's. -->
+      <!-- The alpha-lock column, empty (a group has no pixels of its own), so the group's lock and
+           eye line up with every layer's. -->
       <span class="size-5 shrink-0" role="presentation"></span>
-      <span class="size-5 shrink-0" role="presentation"></span>
+      <button
+        class="{rowBtn} {layers.isLocked(group) ? 'text-warn' : 'text-text-muted hover:text-text'}"
+        title={group.locked
+          ? "Group locked — click to unlock (members keep their own locks)"
+          : layers.isLocked(group)
+            ? "Locked by its parent group — click to lock this group too"
+            : "Unlocked — click to lock every layer in this group"}
+        onclick={(e) => {
+          e.stopPropagation();
+          group.locked = !group.locked;
+          pushNodeFieldEdit(layers, group.id, "locked", !group.locked, group.locked);
+          bumpLayerVersion();
+        }}
+      >
+        {#if group.locked}<Lock size={15} />{:else}<LockOpen size={15} />{/if}
+      </button>
       <button
         class="{rowBtn} {group.visible ? 'text-text-muted hover:text-text' : 'text-warn'}"
         title={group.visible ? "Group visible — click to hide" : "Group hidden — click to show"}
@@ -382,23 +413,25 @@
 
     <!-- Always rendered (hidden when collapsed) so rows can still be dropped into a collapsed
          group's container and the DOM walk keeps seeing its members. -->
+    <!-- No margin or padding: members run full width (their rail on the panel edge) and indent
+         their own content by depth, as slop-animator's `group-members`. -->
     <div
-      class="layer-group-children mt-0 ml-1 min-h-1 pl-2"
+      class="layer-group-children min-h-1"
       style:display={group.collapsed ? "none" : "block"}
       use:sortable
     >
-      {@render nodeList(group.children, true)}
+      {@render nodeList(group.children, depth + 1)}
     </div>
   </div>
 {/snippet}
 
-{#snippet nodeList(nodes: LayerNode[], nested = false)}
+{#snippet nodeList(nodes: LayerNode[], depth = 0)}
   <!-- Top of the list is the top of the stack: render the array in reverse. -->
   {#each [...nodes].reverse() as node (node.id)}
     {#if node.type === "group"}
-      {@render groupRow(node, nested)}
+      {@render groupRow(node, depth)}
     {:else}
-      {@render layerRow(node, nested)}
+      {@render layerRow(node, depth)}
     {/if}
   {/each}
 {/snippet}
@@ -439,7 +472,7 @@
         <FolderPlus size={16} />
       </button>
       <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
-      <button class={headerBtn} onclick={duplicateLayer} title="Duplicate layer">
+      <button class={headerBtn} onclick={duplicateLayer} title="Duplicate layer or group">
         <Copy size={16} />
       </button>
       <button class={headerBtn} onclick={mergeDown} title="Merge down onto the layer below">
@@ -452,7 +485,7 @@
     </div>
   </div>
 
-  <LayerProps {layers} onSettingsChange={() => bumpLayerVersion()} />
+  <LayerProps {layers} onSettingsChange={() => bumpLayerVersion()} onRename={startEdit} />
 
   <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
   {#key `${version}:${dragNonce}`}
