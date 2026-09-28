@@ -1,3 +1,5 @@
+import { ropeLength, ropeStep } from "./stroke-smoothing";
+
 export interface InputPoint {
   x: number;
   y: number;
@@ -13,7 +15,8 @@ export type CoordTransform = (screenX: number, screenY: number) => { x: number; 
 export interface InputOptions {
   onStroke: StrokeHandler;
   transformCoords?: CoordTransform;
-  /** Streamline factor 0-1, or a getter for dynamic values. Smooths input points (0 = none, 1 = max) */
+  /** Stream 0-1, or a getter for dynamic values: the line trails the pen on a string of
+   *  `ropeLength(v)` screen px (0 = follows the pen exactly). See stroke-smoothing.ts. */
   streamline?: number | (() => number);
   /** Called when a pencil double-tap is detected (two quick taps with minimal movement) */
   onPencilDoubleTap?: () => void;
@@ -35,14 +38,14 @@ export function setupInput(
   let drawPointer = -1;
   let currentPoints: InputPoint[] = [];
 
-  // Streamline: interpolate toward raw input with factor t.
-  // streamline=0 → t=1 (no smoothing), streamline=1 → t≈0.12 (heavy smoothing)
+  // Stream: the brush end of the rope, in screen (client) px — screen space, so the string is
+  // the same length on screen at any zoom or rotation.
   const streamlineOpt = options?.streamline;
-  function getStreamlineT(): number {
+  function getRopeLength(): number {
     const v = typeof streamlineOpt === "function" ? streamlineOpt() : (streamlineOpt ?? 0);
-    return 1 - v * 0.88;
+    return ropeLength(v);
   }
-  let lastStreamlined: InputPoint | null = null;
+  let rope: { x: number; y: number } | null = null;
 
   // Pencil double-tap detection
   let lastPenTapTime = 0;
@@ -51,16 +54,18 @@ export function setupInput(
   let penDownY = 0;
   let penMoved = false;
 
-  function getPoint(e: PointerEvent): InputPoint {
+  /** The event as a stroke point, at client position (`cx`, `cy`) — the pen's own unless the rope
+   *  holds the brush elsewhere. */
+  function getPoint(e: PointerEvent, cx = e.clientX, cy = e.clientY): InputPoint {
     let x: number, y: number;
     if (transformCoords) {
-      const p = transformCoords(e.clientX, e.clientY);
+      const p = transformCoords(cx, cy);
       x = p.x;
       y = p.y;
     } else {
       const rect = canvas.getBoundingClientRect();
-      x = e.clientX - rect.left;
-      y = e.clientY - rect.top;
+      x = cx - rect.left;
+      y = cy - rect.top;
     }
     return {
       x,
@@ -88,7 +93,7 @@ export function setupInput(
     isDrawing = true;
     drawPointer = e.pointerId;
     const first = getPoint(e);
-    lastStreamlined = first;
+    rope = { x: e.clientX, y: e.clientY };
     currentPoints = [first];
     onStroke(currentPoints, false);
 
@@ -120,22 +125,13 @@ export function setupInput(
     const coalesced = e.getCoalescedEvents?.();
     const events = coalesced && coalesced.length > 0 ? coalesced : [e];
     for (const ce of events) {
-      const raw = getPoint(ce);
-
-      // Streamline: lerp toward raw input to smooth jitter
-      let pt: InputPoint;
-      const sT = getStreamlineT();
-      if (lastStreamlined && sT < 1) {
-        pt = {
-          x: lastStreamlined.x + (raw.x - lastStreamlined.x) * sT,
-          y: lastStreamlined.y + (raw.y - lastStreamlined.y) * sT,
-          pressure: lastStreamlined.pressure + (raw.pressure - lastStreamlined.pressure) * sT,
-          timestamp: raw.timestamp,
-        };
-      } else {
-        pt = raw;
-      }
-      lastStreamlined = pt;
+      // Stream: the brush moves only once the string is taut; while it's slack there is no new
+      // point (the pen's pressure then is dropped with it).
+      const pen = { x: ce.clientX, y: ce.clientY };
+      const next = rope ? ropeStep(rope, pen, getRopeLength()) : pen;
+      if (next === rope) continue;
+      rope = next;
+      const pt = getPoint(ce, next.x, next.y);
 
       // Interpolate if gap between consecutive points is too large (iPad sparse events)
       if (currentPoints.length > 0) {
@@ -166,7 +162,9 @@ export function setupInput(
     e.preventDefault();
     isDrawing = false;
     drawPointer = -1;
-    lastStreamlined = null;
+    rope = null;
+    // The stroke ends at the pen, not where the rope held the brush: the line catches up, so a
+    // short hatch still reaches the lift point.
     // Pen pointerup reports pressure 0; keep the last move's pressure so the stroke doesn't taper
     const up = getPoint(e);
     const last = currentPoints[currentPoints.length - 1];

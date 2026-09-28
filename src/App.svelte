@@ -7,6 +7,7 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke } from "./brush";
+  import { pathSmoothRadius } from "./stroke-smoothing";
   import { drawInkStroke } from "./ink-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
@@ -895,7 +896,12 @@
     const fullRedraw = kind === "smooth" || kind === "ink" || kind === "calligraphy";
     // Mouse input has no pressure: draw at the nominal width instead of the widest.
     const sizeRange = (points[0]?.hasPressure ?? true) ? app.sizeRange : 1;
-    const strokeSettings = { ...app.brushSettings, alphaLock: layer.alphaLock };
+    const strokeSettings = {
+      ...app.brushSettings,
+      alphaLock: layer.alphaLock,
+      // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
+      pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
+    };
 
     function drawFullStroke(ctx: CanvasRenderingContext2D, pts: InputPoint[], finished: boolean) {
       if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange);

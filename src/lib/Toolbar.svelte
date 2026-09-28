@@ -751,7 +751,10 @@
           class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
         >
           {#if app.brushType === "smooth"}
-            <label class={rowCls} title="Smooth the perfect-freehand outline">
+            <label
+              class={rowCls}
+              title="Smooth — rounds out wobble in the stroke's path, with no lag (the tip settles as you draw)"
+            >
               <span class={labelCls}>Smooth</span>
               <input
                 type="range"
@@ -766,7 +769,10 @@
             </label>
           {/if}
 
-          <label class={rowCls} title="Smooth the incoming pointer path">
+          <label
+            class={rowCls}
+            title="Stream — the line trails the pen on a string, so small wobbles never reach it; it catches up when you lift"
+          >
             <span class={labelCls}>Stream</span>
             <input
               type="range"
