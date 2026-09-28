@@ -3,7 +3,7 @@
   // row. One strip at the top of the panel for whatever is selected (the Photoshop/Krita
   // convention, and what slop-animator moved to): list rows stay one line, so a row never grows
   // when selected and the row under the Pencil never moves.
-  import { Blend, Pencil, Stamp, Tag } from "@lucide/svelte";
+  import { Blend, Pencil, Stamp, Tag, Type } from "@lucide/svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import type { Layer, LayerManager, LayerNode } from "../layers";
   import { clickOutside } from "./click-outside";
@@ -22,12 +22,15 @@
     layers,
     onSettingsChange,
     onRename,
+    onEditText,
   }: {
     layers: LayerManager;
     /** Called after an edit, so the caller can recomposite / persist. */
     onSettingsChange: () => void;
     /** Start renaming the selected row in the list (the pencil — double-tap still works too). */
     onRename: (node: LayerNode) => void;
+    /** Open the text dialog on the selected text reference. */
+    onEditText: () => void;
   } = $props();
 
   // The layer tree is imperative, so layerVersion is what re-derives all of this. The node's
@@ -117,6 +120,13 @@
       <span class="w-6 text-[11px] text-text-muted">{opacity}</span>
     </span>
 
+    {#if refLayer?.ref?.src.text}
+      <button
+        class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
+        title="Edit the text, font and guide lines"
+        onclick={onEditText}><Type size={13} /></button
+      >
+    {/if}
     {#if refLayer}
       <button
         class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"

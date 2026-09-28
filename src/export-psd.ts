@@ -3,6 +3,7 @@ import { downloadBlob } from "./download";
 import type { LayerNode, LayerManager, Layer, LayerGroup, RefSource } from "./layers";
 import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
+import { buildTextSource, textSpecFromPng } from "./text-ref";
 
 let importIdCounter = 1000;
 
@@ -198,9 +199,18 @@ export function loadPsd(
  *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
 function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) {
   for (const src of sources) {
-    decodeRefSource(src.bytes, src.name, src.id).then(
+    // A text reference's PNG carries its settings: rebuild it as text, once its font has loaded
+    // (the saved bytes stay). Same fonts, same layout, so the raster copy comes out the size it was
+    // saved at and the placement still fits it; a browser that measures differently just scales
+    // the text to the saved box.
+    const spec = textSpecFromPng(src.bytes);
+    const decoding = spec
+      ? buildTextSource(spec, src.id)
+      : decodeRefSource(src.bytes, src.name, src.id);
+    decoding.then(
       (decoded) => {
         src.image = decoded.image;
+        src.text = decoded.text;
         if (!src.width) src.width = decoded.width;
         if (!src.height) src.height = decoded.height;
         onDecoded?.();

@@ -14,6 +14,7 @@
     ChevronDown,
     GripVertical,
     Image,
+    Type,
   } from "@lucide/svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
@@ -27,10 +28,16 @@
   let {
     layers,
     onWidthChange,
+    onAddText,
+    onEditText,
   }: {
     layers: LayerManager;
     /** Called when a resize drag ends, so the width can be saved. */
     onWidthChange: () => void;
+    /** Add a text reference (App owns the dialog and its preview). */
+    onAddText: () => void;
+    /** Edit the selected text reference. */
+    onEditText: () => void;
   } = $props();
 
   // Panel resize. The panel is docked RIGHT, so dragging its left-edge grip LEFT makes it wider —
@@ -300,7 +307,13 @@
       use:thumbnail={layer}
     ></canvas>
     {@render nameCell(layer)}
-    {#if layer.ref}
+    {#if layer.ref?.src.text}
+      <span
+        class="flex shrink-0 text-text-muted"
+        title="Text reference — to letter over; edit it in the layer strip, Bake it to paint on it"
+        ><Type size={13} /></span
+      >
+    {:else if layer.ref}
       <span
         class="flex shrink-0 text-text-muted"
         title="Reference — moves and scales from its original; Bake it to paint on it"
@@ -486,6 +499,13 @@
       <button class={headerBtn} onclick={addGroup} title="Add group">
         <FolderPlus size={16} />
       </button>
+      <button
+        class={headerBtn}
+        onclick={onAddText}
+        title="Add text — ghost type and guide lines to letter over"
+      >
+        <Type size={16} />
+      </button>
       <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
       <button class={headerBtn} onclick={duplicateLayer} title="Duplicate layer or group">
         <Copy size={16} />
@@ -500,7 +520,12 @@
     </div>
   </div>
 
-  <LayerProps {layers} onSettingsChange={() => bumpLayerVersion()} onRename={startEdit} />
+  <LayerProps
+    {layers}
+    onSettingsChange={() => bumpLayerVersion()}
+    onRename={startEdit}
+    {onEditText}
+  />
 
   <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
   {#key `${version}:${dragNonce}`}

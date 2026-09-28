@@ -1,4 +1,5 @@
 import { matrixFromCorners, type Corners } from "./ref-placement";
+import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 
 /** A reference's ORIGINAL image: the file as imported (kept whole for the PSD's embedded Smart
  *  Object) and a decoded copy for drawing (capped to what an iPad canvas allows). */
@@ -12,6 +13,9 @@ export interface RefSource {
   height: number;
   /** Decoded copy, or null while an opened file is still decoding. */
   image: HTMLCanvasElement | null;
+  /** Set on a text reference: `image` is only its raster copy (for the handles and the PSD); the
+   *  layer is drawn from this, sharp at any scale. `bytes` is a PNG carrying `spec` (text-ref.ts). */
+  text?: { spec: TextSpec; layout: TextLayout };
 }
 
 /** A reference layer: drawn from its original at `corners`, so moving and scaling never resample
@@ -220,8 +224,15 @@ export class LayerManager {
     ctx.resetTransform();
     ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     ctx.setTransform(d * m.a, d * m.b, d * m.c, d * m.d, d * m.e, d * m.f);
-    ctx.imageSmoothingQuality = fast ? "low" : "high";
-    ctx.drawImage(img, 0, 0);
+    const text = ref.src.text;
+    if (text) {
+      // `m` maps the raster copy's pixels; the text is drawn in its layout units.
+      ctx.scale(img.width / text.layout.width, img.height / text.layout.height);
+      drawTextLayout(ctx, text.spec, text.layout);
+    } else {
+      ctx.imageSmoothingQuality = fast ? "low" : "high";
+      ctx.drawImage(img, 0, 0);
+    }
     ctx.restore();
   }
 

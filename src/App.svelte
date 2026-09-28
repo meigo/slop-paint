@@ -16,9 +16,13 @@
     type Layer,
     type RefPlacement,
     type RefSource,
+    type StructSnapshot,
   } from "./layers";
   import { cornersFromMatrix, cornersFromRect, matrixFromCorners } from "./ref-placement";
   import { decodeRefSource } from "./ref-image";
+  import { buildTextSource } from "./text-ref";
+  import { DEFAULT_TEXT_SPEC, refitCorners, textLayerName, type TextSpec } from "./text-layout";
+  import TextDialog from "./lib/TextDialog.svelte";
   import { refFocusChange } from "./ref-tool";
   import {
     enclosedFillRegion,
@@ -646,7 +650,7 @@
       if (outlineActive()) cancelOutline();
       app.projectName = nameFromFile(file.name);
       const dpr = window.devicePixelRatio || 1;
-      const { width, height } = loadPsd(buffer, layers, dpr, syncRefHandles);
+      const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
       app.docWidth = width;
@@ -1014,7 +1018,8 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (selection) selection.shiftHeld = e.shiftKey;
     // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
-    if (showNewDocDialog || showResizeDialog || showSettingsDialog || shareFileReady) return;
+    if (showNewDocDialog || showResizeDialog || showSettingsDialog || shareFileReady || textDialog)
+      return;
     const target = e.target as HTMLElement;
     if (isTextEntry(target)) return;
     // A dropdown keeps focus after a pick; its letter keys jump between options, so only the
@@ -1599,7 +1604,7 @@
       const buffer = await loadAutosave();
       if (!buffer || !layers) return true;
       const dpr = window.devicePixelRatio || 1;
-      const { width, height } = loadPsd(buffer, layers, dpr, syncRefHandles);
+      const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
       history.clear(); // restored document: nothing from this session to undo
       app.docWidth = width;
       app.docHeight = height;
@@ -1834,6 +1839,123 @@
     bumpLayerVersion();
     if (added) syncRefHandles();
     flashStatus("Reference added — drag to place it; pick your layer to draw again", 6000);
+  }
+
+  // --- Text references ---
+  // A text layer is a reference drawn from its settings (text-layout.ts): ghost type and guide
+  // lines to letter over. The dialog previews every change on the canvas; OK is one undo step
+  // (adding: the new layer; editing: the placement swap, as a transform is), Cancel puts back what
+  // was there.
+  let textDialog = $state<{ adding: boolean; initial: TextSpec } | null>(null);
+  /** The layer being previewed, what to put back on Cancel (`beforeTree` when it is new). */
+  let textEdit: {
+    layer: Layer;
+    before: RefPlacement | undefined;
+    beforeTree: StructSnapshot | null;
+  } | null = null;
+  /** Drops a preview whose font finished loading after a newer change (or the dialog closed). */
+  let textSeq = 0;
+  /** A new text starts with the last one's look (session only). */
+  let lastTextSpec: TextSpec = { ...DEFAULT_TEXT_SPEC };
+
+  /** Set while the first font loads, so a second tap can't add a second layer. */
+  let textAdding = false;
+
+  /** Add an empty text layer below the active one, centred on the page, and open the dialog. */
+  async function addText() {
+    if (!layers || !selection || textDialog || textAdding) return;
+    if (outlineActive()) cancelOutline();
+    if (selection.hasFloating) selection.commit(); // a float belongs to the layer it came from
+    const spec = { ...lastTextSpec, text: "" };
+    textAdding = true;
+    const src = await buildTextSource(spec).finally(() => (textAdding = false));
+    const { layout } = src.text!;
+    const beforeTree = layers.captureStructure();
+    const layer = layers.addLayerBelow(textLayerName(""));
+    layer.opacity = REFERENCE_OPACITY;
+    const rect = placeExternalImage(layout.width, layout.height, app.docWidth, app.docHeight);
+    layer.ref = { src, corners: cornersFromRect(rect) };
+    layers.renderRef(layer);
+    layers.composite();
+    bumpLayerVersion();
+    textEdit = { layer, before: undefined, beforeTree };
+    textDialog = { adding: true, initial: spec };
+  }
+
+  /** Open the dialog on the active text layer. */
+  function editText() {
+    if (!layers || textDialog) return;
+    const layer = layers.active;
+    const text = layer.ref?.src.text;
+    if (!text) return;
+    if (layers.isLocked(layer)) return flashStatus("Layer is locked");
+    if (!layer.visible) return flashStatus("Layer is hidden");
+    textEdit = { layer, before: layer.ref, beforeTree: null };
+    textDialog = { adding: false, initial: text.spec };
+  }
+
+  /** Re-draw the text layer with `spec`, keeping its placement (refitted to the new box). */
+  async function previewText(spec: TextSpec) {
+    const edit = textEdit;
+    if (!edit) return;
+    const n = ++textSeq;
+    const src = await buildTextSource(spec);
+    if (n !== textSeq || textEdit !== edit || !edit.layer.ref?.src.text) return;
+    const { corners } = edit.layer.ref;
+    const was = edit.layer.ref.src.text.layout;
+    const now = src.text!.layout;
+    edit.layer.ref = {
+      src,
+      corners: refitCorners(corners, was.width, was.height, now.width, now.height, spec.align),
+    };
+    layers.renderRef(edit.layer);
+    layers.composite();
+    bumpLayerVersion();
+  }
+
+  async function confirmText(spec: TextSpec) {
+    const edit = textEdit;
+    if (!edit || !textDialog) return;
+    textDialog = null;
+    await previewText(spec); // the last change may not be showing yet
+    textEdit = null;
+    lastTextSpec = { ...spec, text: "" };
+    const { layer } = edit;
+    if (edit.beforeTree) {
+      // One step that adds the finished layer: undo removes it, redo brings it back as it is now.
+      layer.name = textLayerName(spec.text);
+      const after = layers.captureStructure();
+      layers.restoreStructure(edit.beforeTree);
+      structuralEdit(layers, () => layers.restoreStructure(after));
+    } else if (
+      edit.before &&
+      JSON.stringify(edit.before.src.text?.spec) === JSON.stringify(spec) &&
+      layer.ref !== edit.before
+    ) {
+      // Changed and changed back: nothing to record, and the exact old placement returns.
+      layer.ref = edit.before;
+      layers.renderRef(layer);
+    } else if (layer.ref !== edit.before) {
+      pushRefEdit(layers, layer.id, edit.before, layer.ref);
+    }
+    layers.composite();
+    bumpLayerVersion();
+  }
+
+  function cancelText() {
+    const edit = textEdit;
+    textDialog = null;
+    textEdit = null;
+    textSeq++;
+    if (!edit) return;
+    if (edit.beforeTree) {
+      layers.restoreStructure(edit.beforeTree);
+    } else {
+      edit.layer.ref = edit.before;
+      layers.renderRef(edit.layer);
+    }
+    layers.composite();
+    bumpLayerVersion();
   }
 
   // --- Reference handles ---
@@ -2354,7 +2476,12 @@
 
     {#if layersReady}
       <div class="flex min-h-0" style:grid-area="panel">
-        <LayerPanel {layers} onWidthChange={debouncedSave} />
+        <LayerPanel
+          {layers}
+          onWidthChange={debouncedSave}
+          onAddText={() => void addText()}
+          onEditText={editText}
+        />
       </div>
     {/if}
   </div>
@@ -2392,6 +2519,15 @@
     onCancel={() => {
       showNewDocDialog = false;
     }}
+  />
+
+  <TextDialog
+    open={!!textDialog}
+    adding={textDialog?.adding ?? false}
+    initial={textDialog?.initial ?? DEFAULT_TEXT_SPEC}
+    onChange={(spec) => void previewText(spec)}
+    onConfirm={(spec) => void confirmText(spec)}
+    onCancel={cancelText}
   />
 
   <ResizeDocDialog

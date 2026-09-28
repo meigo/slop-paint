@@ -8,6 +8,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Tailwind CSS v4 for styling (dark only, shared slop palette — see `../SLOP-TIMELINE-UI.md`)
 - `@lucide/svelte` for icons
 - Canvas2D for rendering
+- Text references: bundled SIL fonts from `@fontsource/*` (Comic Neue, Bangers, Patrick Hand), loaded on demand
 - Brush engines: perfect-freehand (Smooth), ink/marker (Ink), swept-nib ribbon (Calligraphy), stamp tips (Pencil, Charcoal, Airbrush)
 - `ag-psd` for PSD export
 - `sortablejs` for drag-and-drop layer tree
@@ -34,7 +35,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`, `ref-tool.ts`
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`, `ref-tool.ts`, `text-layout.ts`, `png-text.ts`
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - A bug seen only on the deployed site: reproduce it against the production build (`npm run build && npx vite preview`), not `npm run dev` — the minified bundle can behave differently (see Undo)
@@ -87,6 +88,10 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `persist/` — `db.ts` (IndexedDB helper), `autosave.ts` (single-slot project autosave), `generation.ts` (supersede guard)
 - `ref-placement.ts` — pure: a reference's placement as 4 page corners (tl, tr, br, bl; always a parallelogram, as only move/scale/rotate/flip are offered), `matrixFromCorners` / `cornersFromMatrix`, PSD `placedLayer` transform conversion, `fitDecodedSize` (decoded copy ≤ 4096 a side and 16M px, for iPad), `smartObjectFor` / `refFromPlaced`
 - `ref-image.ts` — `decodeRefSource`: the file's bytes kept whole + a capped drawing copy
+- `text-layout.ts` — pure: `TextSpec`, the bundled font list, `layoutText` (lines, box, guide rules, in layout units), `drawTextLayout`, `refitCorners`, `normalizeTextSpec`, `textLayerName`
+- `text-ref.ts` — `buildTextSource`: loads the font, lays out, draws the raster copy and its PNG (settings in a `tEXt` chunk); `textSpecFromPng`
+- `png-text.ts` — pure: write/read a PNG `tEXt` chunk
+- `lib/TextDialog.svelte` — add/edit dialog for a text reference (no dim, no outside-tap cancel: the canvas behind is the preview)
 - `paste.ts` — where pasted pixels land (`placeInternalPaste`: copied spot + 8px, kept on the page; `placeExternalImage`: centred, 1 image px = 1 doc px, scaled down to fit)
 
 ### State Management
@@ -168,6 +173,14 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Tool follow (as slop-animator's 2026-09-26 change, where it is Transform): the active layer BECOMING a reference switches to Select (its row has Free transform lit, Flip, Keep proportions) and remembers the tool; becoming a non-reference hands it back, only if still on Select (a tool picked meanwhile stays). Already on Select/Lasso: nothing owed. Eyedropper/Outline are never handed back to (Brush instead). Pure `ref-tool.ts` `refFocusChange`; an App effect on layerVersion with a `lastOnRef` latch, so every way the layer changes (tap, ↑/↓, undo, import, open) is covered. The handles still work under any tool. Accepted, as animator: the remembered tool isn't saved, so after a reload with a reference selected, picking a drawing layer stays on Select
 - Painting, fill, Fill enclosed, Outline, clear, delete, cut and paste-into are refused with a status message; Merge down refuses onto a reference (its re-draw would wipe the merge). Bake (`pushRefEdit(…, ref, undefined)`) makes it a plain layer, one undo step
 - PSD: written as `placedLayer` + `linkedFiles` (ag-psd), with the rendered pixels as the layer image; opening decodes the originals async (until then it can't be transformed). Canvas resize shifts the corners with the pixels
+
+## Text References
+
+- Ghost type and lettering guide lines to trace over, not final type. The layer panel's T button adds one (below the active layer, 60%, `[ignore]text <words>`, centred at 1 unit = 1 doc px); the T in the layer strip edits the selected one. It is a reference (above), so handles, tool follow, Bake, duplicate and the painting refusals all apply
+- `RefSource.text = { spec, layout }`: `renderRef` draws the text from the layout under the placement matrix (sharp at any scale); `src.image` is only a raster copy (2 px per unit, capped by `fitDecodedSize`) for the handles and the PSD
+- Settings: text (lines break only at newlines), font, size, line spacing, align, colour, guide lines (cap height, dashed x-height, baseline per line, blank lines included, in non-photo blue `GUIDE_COLOR`). A new text starts with the last one's look (session only)
+- The dialog previews every change on the canvas. An edit makes a NEW `RefSource` (duplicates share sources) placed by `refitCorners`: same scale/rotation, top kept, anchored left/centre/right by alignment. OK = one step (add: a structural step; edit: `pushRefEdit`; changed-and-back: none); Cancel restores. App shortcuts are off while it is open; Enter is a newline, Ctrl/Cmd+Enter confirms
+- PSD: a Smart Object like any reference, its embedded file a PNG of the text carrying the spec as a `slop-paint-text` `tEXt` chunk — a normal image to Photoshop. Opening rebuilds it as text once the font loads (`decodeOpenedRefs`)
 
 ## Clipboard
 
