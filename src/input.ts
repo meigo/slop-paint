@@ -1,4 +1,4 @@
-import { ropeLength, ropeStep } from "./stroke-smoothing";
+import { PAUSE_MS, STILL_PX, ropeCatchUp, ropeLength, ropeStep } from "./stroke-smoothing";
 
 export interface InputPoint {
   x: number;
@@ -46,6 +46,14 @@ export function setupInput(
     return ropeLength(v);
   }
   let rope: { x: number; y: number } | null = null;
+  // Corners: where the pen last moved more than STILL_PX, and when. Held still for PAUSE_MS, the
+  // rope pulls in (a frame loop — a still pen sends no events), so the line reaches the corner
+  // before the pen sets off in the new direction instead of cutting across it.
+  let penEvent: PointerEvent | null = null;
+  let stillAt = { x: 0, y: 0 };
+  let stillSince = 0;
+  let catchUpFrame = 0;
+  let lastTick = 0;
 
   // Pencil double-tap detection
   let lastPenTapTime = 0;
@@ -94,6 +102,10 @@ export function setupInput(
     drawPointer = e.pointerId;
     const first = getPoint(e);
     rope = { x: e.clientX, y: e.clientY };
+    penEvent = e;
+    stillAt = { ...rope };
+    stillSince = lastTick = e.timeStamp;
+    catchUpFrame = requestAnimationFrame(catchUp);
     currentPoints = [first];
     onStroke(currentPoints, false);
 
@@ -127,34 +139,67 @@ export function setupInput(
     for (const ce of events) {
       // Stream: the brush moves only once the string is taut; while it's slack there is no new
       // point (the pen's pressure then is dropped with it).
-      const pen = { x: ce.clientX, y: ce.clientY };
-      const next = rope ? ropeStep(rope, pen, getRopeLength()) : pen;
-      if (next === rope) continue;
-      rope = next;
-      const pt = getPoint(ce, next.x, next.y);
-
-      // Interpolate if gap between consecutive points is too large (iPad sparse events)
-      if (currentPoints.length > 0) {
-        const prev = currentPoints[currentPoints.length - 1];
-        const dx = pt.x - prev.x;
-        const dy = pt.y - prev.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > INTERPOLATION_THRESHOLD) {
-          const steps = Math.ceil(dist / INTERPOLATION_THRESHOLD);
-          for (let i = 1; i < steps; i++) {
-            const t = i / steps;
-            currentPoints.push({
-              x: prev.x + dx * t,
-              y: prev.y + dy * t,
-              pressure: prev.pressure + (pt.pressure - prev.pressure) * t,
-              timestamp: prev.timestamp + (pt.timestamp - prev.timestamp) * t,
-            });
+      const now = { x: ce.clientX, y: ce.clientY };
+      if (Math.hypot(now.x - stillAt.x, now.y - stillAt.y) > STILL_PX) {
+        // Setting off after a pause: if the frame loop hasn't pulled the rope all the way in
+        // (frames late or not running), finish it now, so the corner is kept regardless. Stamped
+        // with the pause's start, so Smooth sees the pause too.
+        // Aimed at where the pen came to rest (the corner), not its latest position, which is
+        // already up to STILL_PX along the new leg.
+        if (rope && penEvent && ce.timeStamp - stillSince >= PAUSE_MS) {
+          if (rope.x !== stillAt.x || rope.y !== stillAt.y) {
+            rope = { ...stillAt };
+            addPoint({ ...getPoint(penEvent, stillAt.x, stillAt.y), timestamp: stillSince });
           }
         }
+        stillAt = now;
+        stillSince = ce.timeStamp;
       }
-      currentPoints.push(pt);
+      penEvent = ce;
+      const next = rope ? ropeStep(rope, now, getRopeLength()) : now;
+      if (next === rope) continue;
+      rope = next;
+      addPoint(getPoint(ce, next.x, next.y));
     }
     onStroke(currentPoints, false);
+  }
+
+  /** While the pen pauses, glide the rope's end to where it came to rest — once per frame. */
+  function catchUp(now: number) {
+    if (!isDrawing || !rope || !penEvent) return;
+    catchUpFrame = requestAnimationFrame(catchUp);
+    const dt = now - lastTick;
+    lastTick = now;
+    if (now - stillSince < PAUSE_MS) return;
+    // To where the pen came to rest, so its tremble while held doesn't wiggle the corner.
+    const next = ropeCatchUp(rope, stillAt, dt);
+    if (next === rope) return;
+    rope = next;
+    addPoint({ ...getPoint(penEvent, next.x, next.y), timestamp: now });
+    onStroke(currentPoints, false);
+  }
+
+  function addPoint(pt: InputPoint) {
+    // Interpolate if gap between consecutive points is too large (iPad sparse events)
+    if (currentPoints.length > 0) {
+      const prev = currentPoints[currentPoints.length - 1];
+      const dx = pt.x - prev.x;
+      const dy = pt.y - prev.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > INTERPOLATION_THRESHOLD) {
+        const steps = Math.ceil(dist / INTERPOLATION_THRESHOLD);
+        for (let i = 1; i < steps; i++) {
+          const t = i / steps;
+          currentPoints.push({
+            x: prev.x + dx * t,
+            y: prev.y + dy * t,
+            pressure: prev.pressure + (pt.pressure - prev.pressure) * t,
+            timestamp: prev.timestamp + (pt.timestamp - prev.timestamp) * t,
+          });
+        }
+      }
+    }
+    currentPoints.push(pt);
   }
 
   function onPointerUp(e: PointerEvent) {
@@ -163,6 +208,8 @@ export function setupInput(
     isDrawing = false;
     drawPointer = -1;
     rope = null;
+    penEvent = null;
+    cancelAnimationFrame(catchUpFrame);
     // The stroke ends at the pen, not where the rope held the brush: the line catches up, so a
     // short hatch still reaches the lift point.
     // Pen pointerup reports pressure 0; keep the last move's pressure so the stroke doesn't taper

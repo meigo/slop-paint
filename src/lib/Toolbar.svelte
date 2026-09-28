@@ -850,6 +850,17 @@
               />
               Taper stroke ends
             </label>
+            <label
+              class="flex items-center gap-2 text-xs text-text-secondary"
+              title="Keep a corner sharp where you pause the pen; off, Smooth rounds it"
+            >
+              <input
+                type="checkbox"
+                bind:checked={app.brushSettings.sharpCorners}
+                onchange={onSettingsChange}
+              />
+              Sharp corners where you pause
+            </label>
           {/if}
 
           <div class="mt-1 flex flex-col gap-1 border-t border-border pt-2">

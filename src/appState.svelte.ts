@@ -57,6 +57,7 @@ export const app: AppStateShape = $state({
   brushSettings: {
     size: 4,
     taper: false,
+    sharpCorners: false,
     color: "#1a1a1a",
     opacity: 100,
     smoothing: 50,

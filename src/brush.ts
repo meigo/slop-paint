@@ -61,6 +61,8 @@ export interface BrushSettings {
   dwellPool?: number;
   /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
   taper?: boolean;
+  /** Smooth brush: keep a corner sharp where the pen paused, instead of smoothing it round. */
+  sharpCorners?: boolean;
 }
 
 /**
@@ -83,6 +85,7 @@ export function drawStroke(
     sizeRange,
     done,
     settings.taper ?? false,
+    settings.sharpCorners ?? false,
   );
   if (strokePoints.length < 2) return;
 
@@ -125,11 +128,12 @@ export function strokeOutline(
   sizeRange: number,
   done: boolean,
   taper: boolean = false,
+  sharpCorners: boolean = false,
 ): number[][] {
   // We map pressure → size ourselves and tell pf thinning=1 so it uses our mapped pressure directly.
   const { min: minSize, max: maxSize } = widthRange(size, sizeRange);
   let minStrokeWidth = Infinity;
-  const inputPoints = smoothPath(points, smoothRadius).map((p) => {
+  const inputPoints = smoothPath(points, smoothRadius, sharpCorners).map((p) => {
     const desiredSize = minSize + p.pressure * (maxSize - minSize);
     if (desiredSize < minStrokeWidth) minStrokeWidth = desiredSize;
     const mappedPressure = maxSize > 0 ? desiredSize / maxSize : 1;

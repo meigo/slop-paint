@@ -10,6 +10,12 @@
  * length. The brush redraws the whole stroke every frame, so this costs no lag; the window
  * narrows toward the ends, so a stroke still starts and ends exactly where it was drawn (the tip
  * settles as the stroke grows past it).
+ *
+ * Both keep a CORNER where the pen pauses: a pen held nearly still for `PAUSE_MS` pulls the rope
+ * in (`ropeCatchUp`), so the line reaches the corner before setting off again, and the path is
+ * smoothed leg by leg between pauses (`pauseBreaks`) when Sharp corners is on, so the averaging
+ * never spans the corner (off by default: the rounded corner is a look people like).
+ * A turn made without stopping still rounds.
  */
 import type { InputPoint } from "./input";
 
@@ -17,6 +23,13 @@ interface Pt {
   x: number;
   y: number;
 }
+
+/** A pen still (within `STILL_PX` screen px) this long is pausing — at a corner, say (ms). */
+export const PAUSE_MS = 50;
+/** How far a pausing pen may still tremble (screen px). */
+export const STILL_PX = 3;
+/** Once paused, the rope pulls in with this time constant (ms): at the corner within ~0.1 s. */
+export const CATCH_UP_MS = 25;
 
 /** Stream 100% = a string this long (screen px). */
 export const ROPE_MAX_PX = 40;
@@ -41,6 +54,18 @@ export function ropeStep(brush: Pt, pen: Pt, length: number): Pt {
   return { x: brush.x + dx * k, y: brush.y + dy * k };
 }
 
+/** The brush `dtMs` later while the pen pauses at `pen`: an exponential glide there, snapped to
+ *  it when under half a px away. */
+export function ropeCatchUp(brush: Pt, pen: Pt, dtMs: number): Pt {
+  const dx = pen.x - brush.x;
+  const dy = pen.y - brush.y;
+  if (Math.hypot(dx, dy) < 0.5) return dx || dy ? pen : brush;
+  if (!(dtMs > 0)) return brush;
+  const k = 1 - Math.exp(-dtMs / CATCH_UP_MS);
+  const next = { x: brush.x + dx * k, y: brush.y + dy * k };
+  return Math.hypot(pen.x - next.x, pen.y - next.y) < 0.5 ? pen : next;
+}
+
 /** Smooth `smoothing` (0–100) as a path-averaging radius in DOCUMENT px at `zoom` (screen px per
  *  document px), so it means the same distance on screen whatever the zoom. */
 export function pathSmoothRadius(smoothing: number, zoom: number): number {
@@ -49,11 +74,60 @@ export function pathSmoothRadius(smoothing: number, zoom: number): number {
 }
 
 /**
- * `points` with each position (and pressure) replaced by a Gaussian-weighted average of the
- * points within `radius` of it along the path. The window at each point is also limited to its
- * distance from either end, so the ends stay put and nothing is pulled short.
+ * Where the pen paused: the index of the last point of every run of points that stays within
+ * `stillDist` of the run's first point for at least `pauseMs` (timestamps in ms). A still pen
+ * sends few events or none, so a run can be just two points with a long gap between them.
  */
-export function smoothPath(points: InputPoint[], radius: number): InputPoint[] {
+export function pauseBreaks(points: InputPoint[], stillDist: number, pauseMs = PAUSE_MS): number[] {
+  const breaks: number[] = [];
+  const n = points.length;
+  let j = 0;
+  while (j < n - 1) {
+    let k = j;
+    while (
+      k + 1 < n &&
+      Math.hypot(points[k + 1].x - points[j].x, points[k + 1].y - points[j].y) <= stillDist
+    ) {
+      k++;
+    }
+    if (k > j && points[k].timestamp - points[j].timestamp >= pauseMs) {
+      breaks.push(k);
+      j = k + 1;
+    } else {
+      j++;
+    }
+  }
+  return breaks;
+}
+
+/**
+ * `points` with each position (and pressure) replaced by a Gaussian-weighted average of the
+ * points within `radius` of it along the path — with `sharpCorners`, one leg at a time between
+ * the pen's pauses, so a paused corner stays sharp (off, the corner rounds: a look worth keeping). The window at each point is also limited to its distance from either end of
+ * its leg, so the ends — and the corners — stay put and nothing is pulled short. A pause is the pen
+ * within `radius / 8` for `PAUSE_MS`: the same share of the window at any zoom.
+ */
+export function smoothPath(
+  points: InputPoint[],
+  radius: number,
+  sharpCorners = false,
+): InputPoint[] {
+  if (points.length < 3 || !(radius > 0)) return points;
+  const breaks = sharpCorners ? pauseBreaks(points, radius / 8) : [];
+  if (!breaks.length) return smoothLeg(points, radius);
+  const out: InputPoint[] = [];
+  let from = 0;
+  for (const b of [...breaks, points.length - 1]) {
+    if (b <= from) continue;
+    const leg = smoothLeg(points.slice(from, b + 1), radius);
+    // Each leg starts on the previous one's last point: keep it once.
+    out.push(...(out.length ? leg.slice(1) : leg));
+    from = b;
+  }
+  return out;
+}
+
+function smoothLeg(points: InputPoint[], radius: number): InputPoint[] {
   const n = points.length;
   if (n < 3 || !(radius > 0)) return points;
   const s = new Float64Array(n);

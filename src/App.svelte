@@ -282,6 +282,7 @@
     eraserCurveCp1?: { x: number; y: number };
     eraserCurveCp2?: { x: number; y: number };
     taper?: boolean;
+    sharpCorners?: boolean;
     drawBehind?: boolean;
     fillAlphaThreshold?: number;
     fillExpand?: number;
@@ -325,6 +326,7 @@
       eraserCurveCp1: { ...pressureCurves.eraser.cp1 },
       eraserCurveCp2: { ...pressureCurves.eraser.cp2 },
       taper: app.brushSettings.taper,
+      sharpCorners: app.brushSettings.sharpCorners,
       drawBehind: app.brushSettings.drawBehind,
       fillAlphaThreshold: app.fillSettings.alphaThreshold,
       fillExpand: app.fillSettings.expand,
@@ -394,6 +396,8 @@
         pressureCurves.eraser.buildLUT();
       }
       if (typeof data.taper === "boolean") app.brushSettings.taper = data.taper;
+      if (typeof data.sharpCorners === "boolean")
+        app.brushSettings.sharpCorners = data.sharpCorners;
       strokeSlots.brush = readSlot(app);
       strokeSlots.eraser = parseSlot(data.eraser, strokeSlots.eraser);
       if (app.currentTool === "eraser") writeSlot(app, strokeSlots.eraser);

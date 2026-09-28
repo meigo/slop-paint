@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
+  CATCH_UP_MS,
+  PAUSE_MS,
+  STILL_PX,
   ROPE_MAX_PX,
   SMOOTH_MAX_PX,
   pathSmoothRadius,
+  pauseBreaks,
+  ropeCatchUp,
   ropeLength,
   ropeStep,
   smoothPath,
@@ -105,5 +110,77 @@ describe("smoothPath", () => {
     ];
     const out = smoothPath(pts, 10);
     for (let i = 1; i < out.length; i++) expect(out[i].x).toBeGreaterThanOrEqual(out[i - 1].x);
+  });
+});
+
+describe("corners", () => {
+  /** An L: right 300 px, then down 300 px, `pauseMs` still at the corner (300 px/s, 240 Hz). */
+  function lStroke(pauseMs: number) {
+    const pts: { x: number; y: number; pressure: number; timestamp: number }[] = [];
+    let t = 0;
+    for (let i = 0; i <= 240; i++, t += 1000 / 240)
+      pts.push({ x: i * 1.25, y: 0, pressure: 0.5, timestamp: t });
+    for (let k = 0; k < (pauseMs * 240) / 1000; k++, t += 1000 / 240)
+      pts.push({ x: 300 + (k % 2) * 0.5, y: 0, pressure: 0.5, timestamp: t }); // a trembling hold
+    for (let i = 1; i <= 240; i++, t += 1000 / 240)
+      pts.push({ x: 300, y: i * 1.25, pressure: 0.5, timestamp: t });
+    return pts;
+  }
+  /** How close the path comes to the corner (300, 0). */
+  const reach = (pts: { x: number; y: number }[]) =>
+    Math.min(...pts.map((p) => Math.hypot(p.x - 300, p.y)));
+
+  it("ropeCatchUp glides to the pen and snaps when close", () => {
+    const pen = { x: 10, y: 0 };
+    const a = ropeCatchUp({ x: 0, y: 0 }, pen, CATCH_UP_MS);
+    expect(a.x).toBeCloseTo(10 * (1 - Math.exp(-1)), 6);
+    expect(ropeCatchUp({ x: 9.7, y: 0 }, pen, 1)).toBe(pen);
+    const still = { x: 0, y: 0 };
+    expect(ropeCatchUp(still, pen, 0)).toBe(still);
+  });
+
+  it("pauseBreaks finds a hold, and a still gap with no events between", () => {
+    expect(pauseBreaks(lStroke(150), 3).length).toBe(1);
+    expect(pauseBreaks(lStroke(0), 3)).toEqual([]);
+    const gap = [
+      { x: 0, y: 0, pressure: 1, timestamp: 0 },
+      { x: 5, y: 0, pressure: 1, timestamp: 4 },
+      { x: 6, y: 0, pressure: 1, timestamp: 200 }, // a mouse sends nothing while still
+      { x: 6, y: 5, pressure: 1, timestamp: 204 },
+    ];
+    expect(pauseBreaks(gap, 3)).toEqual([2]);
+  });
+
+  it("Smooth keeps a paused corner only with Sharp corners, and rounds an unpaused one", () => {
+    const r = SMOOTH_MAX_PX;
+    expect(reach(smoothPath(lStroke(150), r, true))).toBeLessThan(1);
+    expect(reach(smoothPath(lStroke(0), r, true))).toBeGreaterThan(5);
+    // Off (the default): rounded even where the pen paused — a little tighter than without the
+    // pause, as the points bunched at the corner weigh in, but not pinned to it.
+    const off = reach(smoothPath(lStroke(150), r));
+    expect(off).toBeGreaterThan(reach(smoothPath(lStroke(150), r, true)) + 1);
+    expect(off).toBeLessThan(reach(smoothPath(lStroke(0), r)));
+  });
+
+  it("Stream reaches the corner when the pen pauses, and cuts it when it doesn't", () => {
+    // The rope as input.ts runs it: a step per pen event, catch-up once still for PAUSE_MS.
+    function trail(pts: ReturnType<typeof lStroke>) {
+      let b = { x: pts[0].x, y: pts[0].y };
+      let anchor = b;
+      let since = 0;
+      const out = [b];
+      for (const p of pts) {
+        if (Math.hypot(p.x - anchor.x, p.y - anchor.y) > STILL_PX) {
+          anchor = p;
+          since = p.timestamp;
+        }
+        b = ropeStep(b, p, ropeLength(1));
+        if (p.timestamp - since >= PAUSE_MS) b = ropeCatchUp(b, p, 1000 / 240);
+        out.push(b);
+      }
+      return out;
+    }
+    expect(reach(trail(lStroke(150)))).toBeLessThan(1.5);
+    expect(reach(trail(lStroke(0)))).toBeGreaterThan(10);
   });
 });
