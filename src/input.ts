@@ -136,6 +136,7 @@ export function setupInput(
     // Collect coalesced events (Safari may return empty array — fall back to event itself)
     const coalesced = e.getCoalescedEvents?.();
     const events = coalesced && coalesced.length > 0 ? coalesced : [e];
+    const countBefore = currentPoints.length;
     for (const ce of events) {
       // Stream: the brush moves only once the string is taut; while it's slack there is no new
       // point (the pen's pressure then is dropped with it).
@@ -161,7 +162,11 @@ export function setupInput(
       rope = next;
       addPoint(getPoint(ce, next.x, next.y));
     }
-    onStroke(currentPoints, false);
+    // Only when a point was added. A slack rope adds none, and a repeat call with the first point
+    // alone reads to the stroke handler as a NEW stroke: it re-took its undo snapshot with the
+    // opening dot already drawn, so undo left the dot behind (at Stream ≳ 50, the string long
+    // enough to stay slack past the first frame).
+    if (currentPoints.length !== countBefore) onStroke(currentPoints, false);
   }
 
   /** While the pen pauses, glide the rope's end to where it came to rest — once per frame. */
