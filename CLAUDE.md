@@ -66,7 +66,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ### Canvas Engine (pure TypeScript, no Svelte)
 
-- `input.ts` — pointer event handling with coord transform for zoom; App binds it to the whole canvas AREA (not the page canvas), so any tool's gesture can start off the page — strokes clip at the page edge, and a NEW marquee/lasso is clamped onto the page (`Selection.pageSize`, `clampToPage`) while moving a float is not; filters pen/mouse from touch; pencil double-tap detection; point interpolation for sparse input; `pointercancel` (iPad palm rejection) and `lostpointercapture` end the stroke like `pointerup`; only the pointer that started a stroke can extend or end it (a resting finger can't); the lift point reuses the last move's pressure (pen `pointerup` reports 0)
+- `input.ts` — pointer event handling with coord transform for zoom; App binds it to the whole canvas AREA (not the page canvas), so any tool's gesture can start off the page — strokes clip at the page edge, and a NEW marquee/lasso is clamped onto the page (`Selection.pageSize`, `clampToPage`) while moving a float is not; filters pen/mouse from touch; point interpolation for sparse input; `pointercancel` (iPad palm rejection) and `lostpointercapture` end the stroke like `pointerup`; only the pointer that started a stroke can extend or end it (a resting finger can't); the lift point reuses the last move's pressure (pen `pointerup` reports 0)
 - `stroke-smoothing.ts` — pure: Stream's rope (`ropeStep`, `ropeLength`) and Smooth's end-anchored centred path averaging (`smoothPath`, `pathSmoothRadius`)
 - `brush.ts` — BrushSettings, `widthRange` (size = nominal width; pressure thins it to size ÷ Press and widens it to size × Press, as slop-animator), and the Smooth brush (perfect-freehand). pf's `size` is a RADIUS basis, so it gets `maxSize / 2`; `decimationSmoothing` caps pf's point spacing so thin sections don't leave holes
 - `ink-brush.ts` — Ink/marker: full-stroke redraw, segments batched into runs of similar width; optional dwell swell (from slop-animator)
@@ -78,7 +78,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `undo.ts` — the single `history` instance plus `pushPixelEdit` (a pixel change on one layer) and `structuralEdit` (add/delete/duplicate/merge/group/reorder; takes an optional layer whose pixels change too, as merge down does)
 - `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); `flip`; pure `flipMatrix` / `cornerScaleMatrix` / `sideStretchMatrix` (from slop-animator). Corners keep proportions when `keepProportions` (Shift inverts), side handles stretch one axis (Shift skews); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
-- `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
+- `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, one-finger double-tap eraser toggle, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT. Brush and eraser have their own (`pressureCurves`, `activePressureCurve()`); settings saved before the split give the eraser the brush's curve
 - `tool-settings.ts` — brush/eraser stroke-setting slots (size, opacity, smoothing, streamline, size range, brush type); the active tool's values live in `app`, the other tool's in a slot, swapped in `setTool`
 - `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content); `enclosedFillRegion` / `fillRegionBehind` for Fill enclosed
@@ -122,7 +122,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - One finger: pan canvas
 - Two-finger pinch: zoom + pan + rotate (snaps to 90° within 5° on lift, pivoting on the pinch midpoint)
 - Two-finger tap: undo; three-finger tap: redo
-- Pencil double-tap: toggle between current tool and eraser
+- One-finger double-tap: toggle between current tool and eraser (as slop-animator; `onToggleEraser` in `touch-gestures.ts`). It was a double-tap of the Pencil TIP, which drew both taps as dots (a blob at large sizes) before switching; the Pencil's own barrel double-tap isn't exposed to web apps
 - Point interpolation ensures smooth strokes even with sparse pointer events
 
 ## Desktop Shortcuts

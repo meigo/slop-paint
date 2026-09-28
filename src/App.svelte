@@ -253,7 +253,8 @@
 
   // --- Temporary eraser ---
   let toolBeforeEraser: Tool | null = null;
-  let toolBeforePencilToggle: Tool | null = null;
+  /** The tool the one-finger double-tap came from, to go back to (as slop-animator). */
+  let toolBeforeEraserToggle: Tool | null = null;
   let toolBeforeEyedropper: Tool = "brush";
   let toolBeforeOutline: Tool = "brush";
 
@@ -2269,15 +2270,6 @@
         // and stop short of the lift.
         streamline: () =>
           app.currentTool === "brush" || app.currentTool === "eraser" ? app.streamline / 100 : 0,
-        onPencilDoubleTap: () => {
-          if (app.currentTool === "eraser") {
-            setTool(toolBeforePencilToggle ?? "brush");
-            toolBeforePencilToggle = null;
-          } else {
-            toolBeforePencilToggle = app.currentTool;
-            setTool("eraser");
-          }
-        },
       },
     );
 
@@ -2285,6 +2277,15 @@
     const cleanupTouch = setupTouchGestures(canvasClipEl, viewport, {
       onUndo: undo,
       onRedo: redo,
+      onToggleEraser: () => {
+        if (app.currentTool === "eraser") {
+          setTool(toolBeforeEraserToggle ?? "brush");
+          toolBeforeEraserToggle = null;
+        } else {
+          toolBeforeEraserToggle = app.currentTool;
+          setTool("eraser");
+        }
+      },
       onViewportChange: () => updateZoomDisplay(),
     });
 
