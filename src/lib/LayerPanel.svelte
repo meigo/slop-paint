@@ -24,6 +24,7 @@
   import { clampPanelWidth } from "../panel-layout";
   import { isDoubleTap, type Tap } from "./double-tap";
   import { parseTags, buildName } from "../spine-tags";
+  import { fontLabel } from "../text-layout";
 
   let {
     layers,
@@ -312,7 +313,15 @@
          layer lock read as a duplicate — and fainter than the others when off, being the rarely-on one.
          A reference (image or text) can't be painted until it's baked, so it has no alpha lock: its
          kind's icon takes the column instead, so the lock and eye still line up. -->
-    {#if layer.ref?.src.text}
+    {#if layer.ref?.src.text?.fontMissing}
+      <!-- Amber, as for anything that won't behave as expected: its font isn't on this device. -->
+      <span
+        class="flex size-5 shrink-0 items-center justify-center text-warn"
+        title="Text reference — its font, {fontLabel(
+          layer.ref.src.text.spec,
+        )}, isn't on this device: add it in the text dialog (+)"><Type size={15} /></span
+      >
+    {:else if layer.ref?.src.text}
       <span
         class="flex size-5 shrink-0 items-center justify-center text-text-muted"
         title="Text reference — to letter over; edit it in the layer strip, Bake it to paint on it"

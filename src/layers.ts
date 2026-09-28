@@ -15,7 +15,18 @@ export interface RefSource {
   image: HTMLCanvasElement | null;
   /** Set on a text reference: `image` is only its raster copy (for the handles and the PSD); the
    *  layer is drawn from this, sharp at any scale. `bytes` is a PNG carrying `spec` (text-ref.ts). */
-  text?: { spec: TextSpec; layout: TextLayout };
+  text?: {
+    /** The settings as saved — the font by name, even when this device lacks it. */
+    spec: TextSpec;
+    /** What it's drawn with: `spec`, or `spec` with a stand-in font when its own is missing. */
+    drawSpec: TextSpec;
+    layout: TextLayout;
+    /** `spec.font` isn't on this device (not bundled, in the library or installed). */
+    fontMissing?: boolean;
+    /** Opened without its font and not edited since: drawn from its saved picture (`image`), as
+     *  its layout was measured in a font this device can't draw. */
+    savedOnly?: boolean;
+  };
 }
 
 /** A reference layer: drawn from its original at `corners`, so moving and scaling never resample
@@ -225,10 +236,10 @@ export class LayerManager {
     ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     ctx.setTransform(d * m.a, d * m.b, d * m.c, d * m.d, d * m.e, d * m.f);
     const text = ref.src.text;
-    if (text) {
+    if (text && !text.savedOnly) {
       // `m` maps the raster copy's pixels; the text is drawn in its layout units.
       ctx.scale(img.width / text.layout.width, img.height / text.layout.height);
-      drawTextLayout(ctx, text.spec, text.layout);
+      drawTextLayout(ctx, text.drawSpec, text.layout);
     } else {
       ctx.imageSmoothingQuality = fast ? "low" : "high";
       ctx.drawImage(img, 0, 0);

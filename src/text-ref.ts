@@ -12,11 +12,15 @@ import "@fontsource/patrick-hand/400.css";
 import type { RefSource } from "./layers";
 import { fitDecodedSize, newRefId } from "./ref-placement";
 import { readPngText, withPngText } from "./png-text";
+import { decodeRefSource } from "./ref-image";
+import { fontSource } from "./text-fonts";
 import {
+  DEFAULT_TEXT_SPEC,
+  decodeTextPayload,
   drawTextLayout,
+  encodeTextPayload,
   fontCss,
   layoutText,
-  normalizeTextSpec,
   type FontMetrics,
   type TextSpec,
 } from "./text-layout";
@@ -41,15 +45,21 @@ function fontMetrics(ctx: CanvasRenderingContext2D, size: number): FontMetrics {
   };
 }
 
-/** A reference source for `spec`: its layout, a raster copy, and that copy as a PNG carrying the
- *  spec (the Smart Object's embedded file). Waits for the font, so the layout measures it. */
+/**
+ * A reference source for `spec`: its layout, a raster copy, and that copy as a PNG carrying the
+ * spec (the Smart Object's embedded file). Waits for the font, so the layout measures it. A font
+ * missing on this device is stood in for by the default one — `spec` keeps its name, so a device
+ * that has it draws it again.
+ */
 export async function buildTextSource(spec: TextSpec, id: string = newRefId()): Promise<RefSource> {
-  const css = fontCss(spec);
+  const source = await fontSource(spec);
+  const drawSpec = source === "missing" ? { ...spec, font: DEFAULT_TEXT_SPEC.font } : spec;
+  const css = fontCss(drawSpec);
   // The sample covers the metrics' letters too; a font that fails to load falls back silently.
   await document.fonts.load(css, `${spec.text}Hxg`).catch(() => {});
   const ctx = measureCtx();
   ctx.font = css;
-  const layout = layoutText(spec, (l) => ctx.measureText(l).width, fontMetrics(ctx, spec.size));
+  const layout = layoutText(drawSpec, (l) => ctx.measureText(l).width, fontMetrics(ctx, spec.size));
 
   const size = fitDecodedSize(
     Math.ceil(layout.width * RASTER_SCALE),
@@ -60,29 +70,51 @@ export async function buildTextSource(spec: TextSpec, id: string = newRefId()): 
   image.height = size.h;
   const ictx = image.getContext("2d")!;
   ictx.scale(size.w / layout.width, size.h / layout.height);
-  drawTextLayout(ictx, spec, layout);
+  drawTextLayout(ictx, drawSpec, layout);
 
   const png = dataUrlBytes(image.toDataURL("image/png"));
   return {
     id,
     name: "text.png",
-    bytes: withPngText(png, PNG_KEY, JSON.stringify(spec)),
+    bytes: withPngText(png, PNG_KEY, encodeTextPayload(spec, layout)),
     width: size.w,
     height: size.h,
     image,
-    text: { spec, layout },
+    text: { spec, drawSpec, layout, fontMissing: source === "missing" },
   };
 }
 
-/** The settings embedded in a text reference's PNG, or null for any other image. */
-export function textSpecFromPng(bytes: Uint8Array): TextSpec | null {
+/** The settings (and box) embedded in a text reference's PNG, or null for any other image. */
+export function textPayloadFromPng(bytes: Uint8Array) {
   const json = readPngText(bytes, PNG_KEY);
-  if (json === null) return null;
-  try {
-    return normalizeTextSpec(JSON.parse(json));
-  } catch {
-    return null;
-  }
+  return json === null ? null : decodeTextPayload(json);
+}
+
+/**
+ * An opened text layer: rebuilt from its settings when its font is here, else its SAVED picture
+ * (the PNG as decoded), flagged `fontMissing` / `savedOnly` — it still moves and scales, and an
+ * edit rebuilds it (with a stand-in font). Files from before the box was saved use the raster's
+ * size at the usual scale.
+ */
+export async function openTextSource(
+  src: Pick<RefSource, "id" | "name" | "bytes">,
+  payload: { spec: TextSpec; box: [number, number] | null },
+): Promise<RefSource> {
+  const { spec, box } = payload;
+  if ((await fontSource(spec)) !== "missing") return buildTextSource(spec, src.id);
+  const saved = await decodeRefSource(src.bytes, src.name, src.id);
+  const w = box?.[0] ?? (saved.image?.width ?? 1) / RASTER_SCALE;
+  const h = box?.[1] ?? (saved.image?.height ?? 1) / RASTER_SCALE;
+  return {
+    ...saved,
+    text: {
+      spec,
+      drawSpec: spec,
+      layout: { width: w, height: h, lines: [], guides: [], guideWidth: 0 },
+      fontMissing: true,
+      savedOnly: true,
+    },
+  };
 }
 
 function dataUrlBytes(url: string): Uint8Array {

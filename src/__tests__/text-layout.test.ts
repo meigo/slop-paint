@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_TEXT_SPEC,
   TEXT_SIZE_MAX,
+  decodeTextPayload,
+  encodeTextPayload,
   fontCss,
+  fontKey,
+  fontLabel,
   layoutText,
   normalizeTextSpec,
   refitCorners,
@@ -101,26 +105,87 @@ describe("normalizeTextSpec", () => {
   it("falls back or clamps what it can't use", () => {
     const s = normalizeTextSpec({
       text: "a\r\nb",
-      font: "wingdings",
+      font: 42,
       size: 99999,
       lineHeight: "x",
       align: "justify",
       color: "red",
       guides: 1,
+      weight: 1234,
+      italic: "yes",
     });
     expect(s).toEqual({
       ...DEFAULT_TEXT_SPEC,
       text: "a\nb",
       size: TEXT_SIZE_MAX,
+      weight: 900,
     });
     expect(normalizeTextSpec(null)).toEqual(DEFAULT_TEXT_SPEC);
+  });
+
+  it("keeps a font name it doesn't know — this device may just not have it", () => {
+    const s = normalizeTextSpec({ font: " Komika Axis ", weight: 700, italic: true });
+    expect(s.font).toBe("Komika Axis");
+    expect(s.weight).toBe(700);
+    expect(s.italic).toBe(true);
+    expect(normalizeTextSpec({ font: "" }).font).toBe(DEFAULT_TEXT_SPEC.font);
+    expect(normalizeTextSpec({ font: "x".repeat(201) }).font).toBe(DEFAULT_TEXT_SPEC.font);
+  });
+
+  it("reads files saved before fonts had a weight", () => {
+    const s = normalizeTextSpec({ font: "bangers", text: "hi" });
+    expect(s.weight).toBe(400);
+    expect(s.italic).toBe(false);
   });
 });
 
 describe("fontCss", () => {
+  const face = { weight: 400, italic: false };
   it("names weight, size and family", () => {
-    expect(fontCss({ font: "comic-neue-bold", size: 32 })).toBe('700 32px "Comic Neue"');
-    expect(fontCss({ font: "bangers", size: 10 })).toBe('400 10px "Bangers"');
+    expect(fontCss({ ...face, font: "comic-neue-bold", size: 32 })).toBe('700 32px "Comic Neue"');
+    expect(fontCss({ ...face, font: "bangers", size: 10 })).toBe('400 10px "Bangers"');
+  });
+
+  it("takes a named font's weight and italic, and escapes its name", () => {
+    expect(fontCss({ font: "Komika Axis", weight: 700, italic: true, size: 20 })).toBe(
+      'italic 700 20px "Komika Axis"',
+    );
+    expect(fontCss({ font: 'A "B" \\ C', weight: 400, italic: false, size: 9 })).toBe(
+      '400 9px "A \\"B\\" \\\\ C"',
+    );
+  });
+});
+
+describe("fontLabel / fontKey", () => {
+  it("lists a bundled font by its label, a named one by family and style", () => {
+    expect(fontLabel({ font: "bangers", weight: 700, italic: true })).toBe("Bangers");
+    expect(fontLabel({ font: "Komika Axis", weight: 400, italic: false })).toBe("Komika Axis");
+    expect(fontLabel({ font: "Komika Axis", weight: 700, italic: true })).toBe(
+      "Komika Axis Bold Italic",
+    );
+    expect(fontLabel({ font: "X", weight: 300, italic: false })).toBe("X Light");
+  });
+
+  it("tells faces of one family apart, and a bundled id by itself", () => {
+    const a = fontKey({ font: "Komika Axis", weight: 400, italic: false });
+    const b = fontKey({ font: "Komika Axis", weight: 700, italic: false });
+    expect(a).not.toBe(b);
+    expect(fontKey({ font: "bangers", weight: 700, italic: true })).toBe("bangers");
+  });
+});
+
+describe("text payload", () => {
+  it("round-trips the settings and the box", () => {
+    const spec = { ...DEFAULT_TEXT_SPEC, font: "Komika Axis", weight: 700, text: "Hi" };
+    const out = decodeTextPayload(encodeTextPayload(spec, { width: 120, height: 40 }));
+    expect(out).toEqual({ spec, box: [120, 40] });
+  });
+
+  it("reads a payload saved before the box was", () => {
+    const out = decodeTextPayload(JSON.stringify({ ...DEFAULT_TEXT_SPEC, text: "old" }));
+    expect(out?.box).toBeNull();
+    expect(out?.spec.text).toBe("old");
+    expect(decodeTextPayload("{nope")).toBeNull();
   });
 });
 

@@ -9,6 +9,7 @@
  */
 import { buildName } from "./spine-tags";
 import { matrixFromCorners, type Corners, type Pt } from "./ref-placement";
+import { clampWeight } from "./font-file";
 
 /** The bundled fonts (SIL OFL, from Fontsource). `family` is the CSS family the package declares. */
 export const TEXT_FONTS = [
@@ -17,12 +18,16 @@ export const TEXT_FONTS = [
   { id: "bangers", label: "Bangers", family: "Bangers", weight: 400 },
   { id: "patrick-hand", label: "Patrick Hand", family: "Patrick Hand", weight: 400 },
 ] as const;
-export type TextFontId = (typeof TEXT_FONTS)[number]["id"];
 export type TextAlign = "left" | "center" | "right";
 
 export interface TextSpec {
   text: string;
-  font: TextFontId;
+  /** A bundled font's id, or the FAMILY NAME of any other font — one from the user's library, or
+   *  one installed on the system. Saved by name, as desktop apps do: the file never travels. */
+  font: string;
+  /** CSS weight (100–900) and italic, for a family-name font. A bundled id carries its own. */
+  weight: number;
+  italic: boolean;
   /** Font size in layout units. */
   size: number;
   /** Line pitch as a multiple of `size`. */
@@ -37,6 +42,8 @@ export interface TextSpec {
 export const DEFAULT_TEXT_SPEC: TextSpec = {
   text: "",
   font: "comic-neue-bold",
+  weight: 400,
+  italic: false,
   size: 48,
   lineHeight: 1.3,
   align: "center",
@@ -62,7 +69,11 @@ export function normalizeTextSpec(raw: unknown): TextSpec {
     typeof v === "number" && Number.isFinite(v) ? v : fallback;
   return {
     text: typeof r.text === "string" ? r.text.replace(/\r\n?/g, "\n") : d.text,
-    font: TEXT_FONTS.some((f) => f.id === r.font) ? (r.font as TextFontId) : d.font,
+    // An unknown name is kept: it is a font this device may not have (yet), not an error.
+    font:
+      typeof r.font === "string" && r.font.trim() && r.font.length <= 200 ? r.font.trim() : d.font,
+    weight: clampWeight(num(r.weight, d.weight)),
+    italic: typeof r.italic === "boolean" ? r.italic : d.italic,
     size: clamp(num(r.size, d.size), TEXT_SIZE_MIN, TEXT_SIZE_MAX),
     lineHeight: clamp(num(r.lineHeight, d.lineHeight), LINE_HEIGHT_MIN, LINE_HEIGHT_MAX),
     align: r.align === "left" || r.align === "right" || r.align === "center" ? r.align : d.align,
@@ -71,10 +82,72 @@ export function normalizeTextSpec(raw: unknown): TextSpec {
   };
 }
 
+/** The bundled font `id` names, if it is one. */
+export function bundledFont(id: string) {
+  return TEXT_FONTS.find((f) => f.id === id) ?? null;
+}
+
+/** A family name as a CSS string, quotes and backslashes escaped. */
+export function cssFamily(name: string): string {
+  return `"${name.replace(/["\\]/g, "\\$&")}"`;
+}
+
 /** The CSS font shorthand for a spec, as `ctx.font` and `document.fonts.load` take it. */
-export function fontCss(spec: Pick<TextSpec, "font" | "size">): string {
-  const f = TEXT_FONTS.find((x) => x.id === spec.font) ?? TEXT_FONTS[0];
-  return `${f.weight} ${spec.size}px "${f.family}"`;
+export function fontCss(spec: Pick<TextSpec, "font" | "size" | "weight" | "italic">): string {
+  const b = bundledFont(spec.font);
+  if (b) return `${b.weight} ${spec.size}px ${cssFamily(b.family)}`;
+  return `${spec.italic ? "italic " : ""}${spec.weight} ${spec.size}px ${cssFamily(spec.font)}`;
+}
+
+const WEIGHT_NAMES: Record<number, string> = {
+  100: "Thin",
+  200: "ExtraLight",
+  300: "Light",
+  400: "",
+  500: "Medium",
+  600: "SemiBold",
+  700: "Bold",
+  800: "ExtraBold",
+  900: "Black",
+};
+
+/** How a spec's font is listed: a bundled font's label, else family plus weight and italic. */
+export function fontLabel(spec: Pick<TextSpec, "font" | "weight" | "italic">): string {
+  const b = bundledFont(spec.font);
+  if (b) return b.label;
+  const style = [WEIGHT_NAMES[clampWeight(spec.weight)], spec.italic ? "Italic" : ""]
+    .filter(Boolean)
+    .join(" ");
+  return style ? `${spec.font} ${style}` : spec.font;
+}
+
+/** One key per face: a bundled id, or family + weight + italic. */
+export function fontKey(spec: Pick<TextSpec, "font" | "weight" | "italic">): string {
+  return bundledFont(spec.font)
+    ? spec.font
+    : `${spec.font}|${clampWeight(spec.weight)}|${spec.italic ? 1 : 0}`;
+}
+
+/** What a text layer's PNG carries: its settings, and its box in layout units — so a layer whose
+ *  font is missing can show its saved picture and still be refitted when it's edited. */
+export function encodeTextPayload(spec: TextSpec, layout: { width: number; height: number }) {
+  return JSON.stringify({ ...spec, box: [layout.width, layout.height] });
+}
+
+export function decodeTextPayload(
+  json: string,
+): { spec: TextSpec; box: [number, number] | null } | null {
+  try {
+    const raw = JSON.parse(json) as Record<string, unknown>;
+    const b = raw?.box;
+    const box =
+      Array.isArray(b) && b.length === 2 && b.every((n) => typeof n === "number" && n > 0)
+        ? ([b[0], b[1]] as [number, number])
+        : null;
+    return { spec: normalizeTextSpec(raw), box };
+  } catch {
+    return null;
+  }
 }
 
 /** The font's vertical metrics at the spec's size, in layout units. */

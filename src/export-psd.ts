@@ -3,7 +3,7 @@ import { downloadBlob } from "./download";
 import type { LayerNode, LayerManager, Layer, LayerGroup, RefSource } from "./layers";
 import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
-import { buildTextSource, textSpecFromPng } from "./text-ref";
+import { openTextSource, textPayloadFromPng } from "./text-ref";
 
 let importIdCounter = 1000;
 
@@ -202,10 +202,11 @@ function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) 
     // A text reference's PNG carries its settings: rebuild it as text, once its font has loaded
     // (the saved bytes stay). Same fonts, same layout, so the raster copy comes out the size it was
     // saved at and the placement still fits it; a browser that measures differently just scales
-    // the text to the saved box.
-    const spec = textSpecFromPng(src.bytes);
-    const decoding = spec
-      ? buildTextSource(spec, src.id)
+    // the text to the saved box. A font this device lacks keeps the saved picture instead
+    // (`openTextSource`).
+    const payload = textPayloadFromPng(src.bytes);
+    const decoding = payload
+      ? openTextSource(src, payload)
       : decodeRefSource(src.bytes, src.name, src.id);
     decoding.then(
       (decoded) => {

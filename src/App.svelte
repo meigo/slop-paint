@@ -22,7 +22,14 @@
   import { cornersFromMatrix, cornersFromRect, matrixFromCorners } from "./ref-placement";
   import { decodeRefSource } from "./ref-image";
   import { buildTextSource } from "./text-ref";
-  import { DEFAULT_TEXT_SPEC, refitCorners, textLayerName, type TextSpec } from "./text-layout";
+  import { addFontFile, fontLibraryReady, fontSource, libraryFonts } from "./text-fonts";
+  import {
+    DEFAULT_TEXT_SPEC,
+    fontLabel,
+    refitCorners,
+    textLayerName,
+    type TextSpec,
+  } from "./text-layout";
   import TextDialog from "./lib/TextDialog.svelte";
   import { refFocusChange } from "./ref-tool";
   import {
@@ -1887,6 +1894,61 @@
   } | null = null;
   /** Drops a preview whose font finished loading after a newer change (or the dialog closed). */
   let textSeq = 0;
+  /** The user's font library, for the dialog's list (the library itself isn't reactive). */
+  let fontList = $state<{ font: string; weight: number; italic: boolean }[]>([]);
+  function refreshFontList() {
+    fontList = libraryFonts().map((f) => ({ font: f.family, weight: f.weight, italic: f.italic }));
+  }
+  void fontLibraryReady().then(refreshFontList);
+
+  /** Import a font file into the library; text layers that were waiting for it get it now. */
+  async function addFont(file: File) {
+    try {
+      const f = await addFontFile(file);
+      refreshFontList();
+      const face = { font: f.family, weight: f.weight, italic: f.italic };
+      const woke = await refreshTextFonts();
+      flashStatus(
+        `Added ${fontLabel(face)}` +
+          (woke
+            ? ` — ${woke} text layer${woke > 1 ? "s" : ""} use${woke > 1 ? "" : "s"} it again`
+            : ""),
+      );
+      return face;
+    } catch (e) {
+      flashStatus(e instanceof Error ? e.message : "Couldn't add that font");
+      return null;
+    }
+  }
+
+  /**
+   * Rebuild every text layer whose font was missing and now isn't (it was just added). Their
+   * sources are updated in place — duplicates share one, and undo holds the same object — and
+   * drawn from their settings again. Returns how many sources came back.
+   */
+  async function refreshTextFonts(): Promise<number> {
+    if (!layers) return 0;
+    const waiting = new Set<RefSource>();
+    for (const l of layers.flatLayers()) if (l.ref?.src.text?.fontMissing) waiting.add(l.ref.src);
+    let woke = 0;
+    for (const src of waiting) {
+      const text = src.text!;
+      if ((await fontSource(text.spec)) === "missing") continue;
+      const fresh = await buildTextSource(text.spec, src.id);
+      src.image = fresh.image;
+      src.text = fresh.text;
+      src.bytes = fresh.bytes;
+      src.width = fresh.width;
+      src.height = fresh.height;
+      woke++;
+    }
+    if (!woke) return 0;
+    for (const l of layers.flatLayers()) if (l.ref && waiting.has(l.ref.src)) layers.renderRef(l);
+    layers.composite();
+    bumpLayerVersion();
+    return woke;
+  }
+
   /** A new text starts with the last one's look (session only). */
   let lastTextSpec: TextSpec = { ...DEFAULT_TEXT_SPEC };
 
@@ -2563,6 +2625,9 @@
     onChange={(spec) => void previewText(spec)}
     onConfirm={(spec) => void confirmText(spec)}
     onCancel={cancelText}
+    fonts={fontList}
+    checkFont={fontSource}
+    onAddFont={addFont}
   />
 
   <ResizeDocDialog

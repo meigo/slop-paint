@@ -2,9 +2,13 @@
   // Add / edit a text reference. Every change is previewed on the canvas at once (App re-renders
   // the layer); OK keeps it as one undo step, Cancel puts back what was there.
   import { untrack } from "svelte";
-  import { TextAlignCenter, TextAlignEnd, TextAlignStart } from "@lucide/svelte";
+  import { Plus, TextAlignCenter, TextAlignEnd, TextAlignStart } from "@lucide/svelte";
+  import type { FontSource } from "../text-fonts";
   import {
     DEFAULT_TEXT_SPEC,
+    bundledFont,
+    fontKey,
+    fontLabel,
     LINE_HEIGHT_MAX,
     LINE_HEIGHT_MIN,
     TEXT_FONTS,
@@ -21,6 +25,9 @@
     onChange,
     onConfirm,
     onCancel,
+    fonts,
+    checkFont,
+    onAddFont,
   }: {
     open: boolean;
     /** A new layer (the button reads "Add") or an edit of an existing one ("OK"). */
@@ -29,6 +36,12 @@
     onChange: (spec: TextSpec) => void;
     onConfirm: (spec: TextSpec) => void;
     onCancel: () => void;
+    /** The user's font library (App keeps it current). */
+    fonts: { font: string; weight: number; italic: boolean }[];
+    /** Where the chosen font comes from on this device. */
+    checkFont: (spec: TextSpec) => Promise<FontSource>;
+    /** Import a font file; the face to switch to, or null (App reports why). */
+    onAddFont: (file: File) => Promise<{ font: string; weight: number; italic: boolean } | null>;
   } = $props();
 
   let spec = $state<TextSpec>({ ...DEFAULT_TEXT_SPEC });
@@ -46,6 +59,42 @@
   function update(patch: Partial<TextSpec>) {
     spec = { ...spec, ...patch };
     onChange({ ...spec });
+  }
+
+  type Face = { font: string; weight: number; italic: boolean };
+  const builtIn: Face[] = TEXT_FONTS.map((f) => ({ font: f.id, weight: 400, italic: false }));
+
+  // Where the chosen font comes from here — a missing one is drawn in the default until it's added.
+  let source = $state<FontSource>("bundled");
+  let sourceSeq = 0;
+  $effect(() => {
+    if (!open) return;
+    const face = { font: spec.font, weight: spec.weight, italic: spec.italic };
+    const n = ++sourceSeq;
+    void checkFont({ ...untrack(() => spec), ...face }).then((s) => {
+      if (n === sourceSeq) source = s;
+    });
+  });
+  // The chosen face isn't among the lists (an opened file's installed or missing font): it gets an
+  // entry of its own, so the dropdown can show it.
+  const current = $derived(fontKey(spec));
+  const listed = $derived([...builtIn, ...fonts].some((f) => fontKey(f) === current));
+
+  function pickFont(key: string) {
+    const f = [...builtIn, ...fonts].find((x) => fontKey(x) === key);
+    if (f) update({ font: f.font, weight: f.weight, italic: f.italic });
+  }
+
+  let fontInputEl = $state<HTMLInputElement>();
+  let addingFont = $state(false);
+  async function addFont() {
+    const file = fontInputEl?.files?.[0];
+    if (fontInputEl) fontInputEl.value = "";
+    if (!file) return;
+    addingFont = true;
+    const face = await onAddFont(file);
+    addingFont = false;
+    if (face) update(face);
   }
 
   const clamp = (v: number, lo: number, hi: number) =>
@@ -101,19 +150,65 @@
           if (e.key !== "Escape" && e.key !== "Enter") e.stopPropagation();
         }}></textarea>
 
-      <label class="flex items-center gap-2 text-xs text-text-secondary">
+      <div class="flex items-center gap-2 text-xs text-text-secondary">
         <span class="w-16">Font</span>
         <select
-          class="{field} flex-1"
+          class="{field} min-w-0 flex-1"
           title="Font"
-          value={spec.font}
-          onchange={(e) => update({ font: e.currentTarget.value as TextSpec["font"] })}
+          value={current}
+          onchange={(e) => pickFont(e.currentTarget.value)}
         >
-          {#each TEXT_FONTS as f (f.id)}
-            <option value={f.id}>{f.label}</option>
-          {/each}
+          <optgroup label="Built in">
+            {#each builtIn as f (fontKey(f))}
+              <option value={fontKey(f)}>{fontLabel(f)}</option>
+            {/each}
+          </optgroup>
+          {#if fonts.length}
+            <optgroup label="Your fonts">
+              {#each fonts as f (fontKey(f))}
+                <option value={fontKey(f)}>{fontLabel(f)}</option>
+              {/each}
+            </optgroup>
+          {/if}
+          {#if !listed}
+            <option value={current}
+              >{fontLabel(spec)}{source === "installed"
+                ? " (installed)"
+                : source === "missing"
+                  ? " — not on this device"
+                  : ""}</option
+            >
+          {/if}
         </select>
-      </label>
+        <!-- A button, not an entry in the list: iPad opens a file picker only from a direct tap. -->
+        <button
+          class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-surface-raised text-text-secondary hover:bg-surface-hover aria-disabled:opacity-40"
+          title="Add a font file (TTF, OTF, WOFF or WOFF2) — kept on this device for every document"
+          aria-disabled={addingFont}
+          onclick={(e) => {
+            e.preventDefault();
+            if (!addingFont) fontInputEl?.click();
+          }}><Plus size={14} /></button
+        >
+        <input
+          bind:this={fontInputEl}
+          type="file"
+          class="hidden"
+          accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2,application/x-font-ttf,application/x-font-otf,application/font-woff,application/vnd.ms-opentype"
+          onchange={addFont}
+        />
+      </div>
+      {#if source === "missing" && !bundledFont(spec.font)}
+        <p class="-mt-1 text-[11px] text-warn">
+          {fontLabel(spec)} isn't on this device: the layer shows its saved picture, and changes are drawn
+          in {fontLabel(DEFAULT_TEXT_SPEC)}. Add the font file with + to use it here — the layer
+          keeps asking for it by name.
+        </p>
+      {:else if source === "installed"}
+        <p class="-mt-1 text-[11px] text-text-muted">
+          Installed on this computer — another device needs it installed too, or added with +.
+        </p>
+      {/if}
 
       <div class="flex items-center gap-2 text-xs text-text-secondary">
         <label class="flex items-center gap-2" title="Font size, in document pixels">
