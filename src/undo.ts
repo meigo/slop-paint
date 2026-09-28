@@ -3,7 +3,7 @@
  * delete, duplicate, merge, group, reorder) go on the same stack, so undo walks back through what
  * you actually did rather than through the active layer's own history.
  */
-import { History, pixelCommand } from "./history";
+import { History, changedTiles, cropPixels } from "./history";
 import type { Layer, LayerManager, RefPlacement } from "./layers";
 
 export const history = new History();
@@ -17,23 +17,26 @@ export function setOnHistoryApplied(fn: () => void) {
   hooks.onHistoryApplied = fn;
 }
 
-/** Record a pixel change already made to `layer`, given its pixels from before the change. */
+/** Record a pixel change already made to `layer`, given its pixels from before the change. Only
+ *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
+ *  not the whole layer twice over. */
 export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData) {
-  const after = layers.snapshotOf(layer);
-  history.push(
-    pixelCommand(
-      () => {
-        layers.restoreTo(layer, before);
-        hooks.onHistoryApplied();
-      },
-      () => {
-        layers.restoreTo(layer, after);
-        hooks.onHistoryApplied();
-      },
-      before,
-      after,
-    ),
-  );
+  const full = layers.snapshotOf(layer);
+  const w = full.width;
+  const sameSize = before.width === w && before.height === full.height;
+  const tiles = sameSize
+    ? changedTiles(before.data, full.data, w, full.height).map((r) => ({
+        r,
+        was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
+        now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
+      }))
+    : [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
+  const put = (side: "was" | "now") => {
+    for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
+    hooks.onHistoryApplied();
+  };
+  const bytes = tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0);
+  history.push({ undo: () => put("was"), redo: () => put("now"), bytes });
 }
 
 /**

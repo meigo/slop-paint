@@ -7,17 +7,65 @@ export interface Command {
   bytes?: number;
 }
 
-/** Default pixel-undo budget: ~15 full-frame 1920×1080 strokes (2 ImageDatas each). */
+/** Default pixel-undo budget. Pixel steps keep only the tiles they changed (`changedTiles`):
+ *  whole layers were 66 MB a step on a 1920×1080 doc at dpr 2, so only ~4 steps fit. */
 export const DEFAULT_HISTORY_BYTES = 256 * 1024 * 1024;
 
-/** An undoable pixel write, sized so the byte budget can evict old ones. */
-export function pixelCommand(
-  undo: () => void,
-  redo: () => void,
-  before: ImageData,
-  after: ImageData,
-): Command {
-  return { undo, redo, bytes: before.data.byteLength + after.data.byteLength };
+export interface PixelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Undo keeps pixels in square tiles this many canvas px a side. */
+export const UNDO_TILE = 64;
+
+/** The `tile`-px tiles (clipped at the edges) where two same-size RGBA buffers (`width` ×
+ *  `height`) differ, in row order; empty when they are identical. Compares whole pixels 32 bits at
+ *  a time — this runs on every stroke's full-layer snapshots. Tiles, not one bounding box: a thin
+ *  stroke across the page has a bounding box as big as the page. */
+export function changedTiles(
+  a: Uint8ClampedArray,
+  b: Uint8ClampedArray,
+  width: number,
+  height: number,
+  tile = UNDO_TILE,
+): PixelRect[] {
+  const n = width * height;
+  const A = new Uint32Array(a.buffer, a.byteOffset, n);
+  const B = new Uint32Array(b.buffer, b.byteOffset, n);
+  const out: PixelRect[] = [];
+  for (let ty = 0; ty < height; ty += tile) {
+    const th = Math.min(tile, height - ty);
+    for (let tx = 0; tx < width; tx += tile) {
+      const tw = Math.min(tile, width - tx);
+      scan: for (let y = ty; y < ty + th; y++) {
+        const row = y * width;
+        for (let x = row + tx, end = row + tx + tw; x < end; x++) {
+          if (A[x] !== B[x]) {
+            out.push({ x: tx, y: ty, w: tw, h: th });
+            break scan;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** `r`'s pixels out of a `width`-wide RGBA buffer, as a tightly packed buffer. */
+export function cropPixels(
+  data: Uint8ClampedArray,
+  width: number,
+  r: PixelRect,
+): Uint8ClampedArray<ArrayBuffer> {
+  const out = new Uint8ClampedArray(r.w * r.h * 4);
+  for (let y = 0; y < r.h; y++) {
+    const from = ((r.y + y) * width + r.x) * 4;
+    out.set(data.subarray(from, from + r.w * 4), y * r.w * 4);
+  }
+  return out;
 }
 
 export class History {

@@ -515,9 +515,10 @@ export class LayerManager {
     return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
   }
 
-  /** Put pixels back on one layer. putImageData ignores the ctx transform. */
-  restoreTo(layer: Layer, data: ImageData) {
-    layer.ctx.putImageData(data, 0, 0);
+  /** Put pixels back on one layer, at (`x`, `y`) in canvas pixels for a partial snapshot.
+   *  putImageData ignores the ctx transform. */
+  restoreTo(layer: Layer, data: ImageData, x = 0, y = 0) {
+    layer.ctx.putImageData(data, x, y);
   }
 
   /**
