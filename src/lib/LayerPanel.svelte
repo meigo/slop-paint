@@ -307,37 +307,40 @@
       use:thumbnail={layer}
     ></canvas>
     {@render nameCell(layer)}
+    <!-- Same columns, glyphs and colours as slop-animator's layer list. Alpha lock ("lock
+         transparency") is the checkerboard, the usual transparency glyph — a second padlock beside the
+         layer lock read as a duplicate — and fainter than the others when off, being the rarely-on one.
+         A reference (image or text) can't be painted until it's baked, so it has no alpha lock: its
+         kind's icon takes the column instead, so the lock and eye still line up. -->
     {#if layer.ref?.src.text}
       <span
-        class="flex shrink-0 text-text-muted"
+        class="flex size-5 shrink-0 items-center justify-center text-text-muted"
         title="Text reference — to letter over; edit it in the layer strip, Bake it to paint on it"
-        ><Type size={13} /></span
+        ><Type size={15} /></span
       >
     {:else if layer.ref}
       <span
-        class="flex shrink-0 text-text-muted"
+        class="flex size-5 shrink-0 items-center justify-center text-text-muted"
         title="Reference — moves and scales from its original; Bake it to paint on it"
-        ><Image size={13} /></span
+        ><Image size={15} /></span
       >
+    {:else}
+      <button
+        class="{rowBtn} {layer.alphaLock ? 'text-accent' : 'text-text-muted/50 hover:text-text'}"
+        aria-pressed={layer.alphaLock}
+        title={layer.alphaLock
+          ? "Alpha lock on — paint lands only on existing pixels; click to turn off"
+          : "Alpha lock off — click to paint only over existing pixels"}
+        onclick={(e) => {
+          e.stopPropagation();
+          layer.alphaLock = !layer.alphaLock;
+          pushNodeFieldEdit(layers, layer.id, "alphaLock", !layer.alphaLock, layer.alphaLock);
+          bumpLayerVersion();
+        }}
+      >
+        <Grid2x2 size={15} />
+      </button>
     {/if}
-    <!-- Same columns, glyphs and colours as slop-animator's layer list. Alpha lock ("lock
-         transparency") is the checkerboard, the usual transparency glyph — a second padlock beside the
-         layer lock read as a duplicate — and fainter than the others when off, being the rarely-on one. -->
-    <button
-      class="{rowBtn} {layer.alphaLock ? 'text-accent' : 'text-text-muted/50 hover:text-text'}"
-      aria-pressed={layer.alphaLock}
-      title={layer.alphaLock
-        ? "Alpha lock on — paint lands only on existing pixels; click to turn off"
-        : "Alpha lock off — click to paint only over existing pixels"}
-      onclick={(e) => {
-        e.stopPropagation();
-        layer.alphaLock = !layer.alphaLock;
-        pushNodeFieldEdit(layers, layer.id, "alphaLock", !layer.alphaLock, layer.alphaLock);
-        bumpLayerVersion();
-      }}
-    >
-      <Grid2x2 size={15} />
-    </button>
     <!-- Amber when the layer can't be drawn on, whether by its own lock or a locked group's; the
          icon is the layer's OWN lock, which a group lock leaves as it was (as slop-animator). -->
     <button
