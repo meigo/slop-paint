@@ -9,6 +9,7 @@
  * Transform is a 6-parameter affine matrix applied around the rect's local coordinates.
  * Press Enter to commit, Escape to cancel.
  */
+import { gridUntouched } from "./mesh-size";
 
 export interface SelectionRect {
   x: number;
@@ -705,7 +706,20 @@ export class Selection {
   }
 
   endDrag() {
+    const warped = this.state === "warping" && this.dragging !== null;
     this.dragging = null;
+    // A bent grid changes what the mesh density control offers (see `warpUntouched`).
+    if (warped) this.onStateChange?.();
+  }
+
+  /** While warping: no grid point has moved from where the warp (or its last density change)
+   *  put them — so fewer points would lose nothing. */
+  get warpUntouched(): boolean {
+    if (this.state !== "warping" || !this.rect) return false;
+    return gridUntouched(
+      this.warpGrid,
+      sampleGrid(this.rect, this.matrix, this.warpRows, this.warpCols),
+    );
   }
 
   commit() {

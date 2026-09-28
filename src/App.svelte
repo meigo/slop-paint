@@ -47,6 +47,7 @@
   import { isTextEntry } from "./lib/text-entry";
   import { nameFromFile, sanitizeFilename } from "./filename";
   import { Selection, type SelectionRect } from "./selection";
+  import { MESH_MIN, meshStepBlock } from "./mesh-size";
   import {
     placeExternalImage,
     placeInternalPaste,
@@ -1652,6 +1653,26 @@
     void app.selectionVersion;
     return !!selection && (selection.warpRows !== 2 || selection.warpCols !== 2);
   });
+  // Mesh density for row 2's stepper (the grid is always square). A warp drag's release bumps
+  // selectionVersion, so `meshUntouched` follows the first bend.
+  const meshSize = $derived.by(() => {
+    void app.selectionVersion;
+    return selection?.warpRows ?? MESH_MIN;
+  });
+  const meshUntouched = $derived.by(() => {
+    void app.selectionVersion;
+    return !!selection?.warpUntouched;
+  });
+
+  /** Row 2's − / +: a mesh one point finer or coarser a side (coarser only while unbent). */
+  function stepMesh(dir: 1 | -1) {
+    if (!selection || selectionState !== "warping" || !warpIsMesh) return;
+    const why = meshStepBlock(selection.warpRows, dir, selection.warpUntouched);
+    if (why) return flashStatus(`Mesh — ${why}`);
+    const n = selection.warpRows + dir;
+    selection.densifyWarp(n, n);
+    scheduleComposite();
+  }
   const refActive = $derived.by(() => {
     void app.layerVersion;
     void app.selectionVersion;
@@ -2402,6 +2423,9 @@
           {deselect}
           selectionMode={selectionState}
           {warpIsMesh}
+          {meshSize}
+          {meshUntouched}
+          {stepMesh}
           {liftBlock}
           {refActive}
           transform={enterFreeTransform}

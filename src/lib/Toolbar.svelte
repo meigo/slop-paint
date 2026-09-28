@@ -16,6 +16,8 @@
     Move,
     SquareDashed,
     Grid3x3,
+    Minus,
+    Plus,
     FlipHorizontal2,
     FlipVertical2,
     Link2,
@@ -37,6 +39,7 @@
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
   import { MAX_THICKNESS } from "../outline";
   import { PRESS_MAX, PRESS_MIN } from "../brush";
+  import { meshStepBlock } from "../mesh-size";
   import { sliderFill } from "./slider-fill";
 
   let {
@@ -56,6 +59,9 @@
     deselect,
     selectionMode,
     warpIsMesh,
+    meshSize,
+    meshUntouched,
+    stepMesh,
     liftBlock,
     refActive,
     transform,
@@ -102,6 +108,12 @@
     selectionMode: "idle" | "selected" | "transforming" | "warping";
     /** Warping on a denser grid than Distort's 2×2. */
     warpIsMesh: boolean;
+    /** The mesh's points a side while warping (the grid is square). */
+    meshSize: number;
+    /** No mesh point has been dragged yet — so it can also get coarser. */
+    meshUntouched: boolean;
+    /** One point a side finer (1) or coarser (-1). */
+    stepMesh: (dir: 1 | -1) => void;
     /** Why transform/flip/cut/delete can't act on the active layer ("the layer is locked"), or "". */
     liftBlock: string;
     /** The active layer is a reference: it transforms whole (no marquee needed) and can't warp. */
@@ -287,6 +299,13 @@
   let flipWhy = $derived(liftWhy || (selectionMode === "warping" ? "not while warping" : ""));
   let distortOn = $derived(selectionMode === "warping" && !warpIsMesh);
   let meshOn = $derived(selectionMode === "warping" && warpIsMesh);
+  // The density stepper stays in the row (dimmed when there's no mesh), so nothing moves.
+  let meshFinerWhy = $derived(
+    meshOn ? meshStepBlock(meshSize, 1, meshUntouched) : "start a mesh warp first (M)",
+  );
+  let meshCoarserWhy = $derived(
+    meshOn ? meshStepBlock(meshSize, -1, meshUntouched) : "start a mesh warp first (M)",
+  );
   const iconBtn =
     "flex size-7 shrink-0 items-center justify-center rounded-md border transition-colors";
   const iconIdle = "border-border bg-surface text-text-secondary hover:bg-surface-hover";
@@ -1126,6 +1145,33 @@
           if (!warpWhy) mesh();
         }}><Grid3x3 size={16} /></button
       >
+      <!-- Mesh density: − n×n +. Finer carries the bends over; coarser only while nothing is bent. -->
+      <div class="flex h-7 shrink-0 items-center rounded-md border border-border bg-surface">
+        <button
+          class="flex h-full w-6 items-center justify-center rounded-l-md text-text-secondary hover:bg-surface-hover {dimmable}"
+          aria-disabled={!!meshCoarserWhy}
+          title={meshCoarserWhy ? `Fewer mesh points — ${meshCoarserWhy}` : "Fewer mesh points"}
+          onclick={() => {
+            if (!meshCoarserWhy) stepMesh(-1);
+          }}><Minus size={12} /></button
+        >
+        <span
+          class="w-8 text-center text-[11px] tabular-nums {meshOn
+            ? 'text-text-secondary'
+            : 'text-text-muted opacity-40'}"
+          title="Mesh points a side">{meshOn ? `${meshSize}×${meshSize}` : "3×3"}</span
+        >
+        <button
+          class="flex h-full w-6 items-center justify-center rounded-r-md text-text-secondary hover:bg-surface-hover {dimmable}"
+          aria-disabled={!!meshFinerWhy}
+          title={meshFinerWhy
+            ? `More mesh points — ${meshFinerWhy}`
+            : "More mesh points — bends carry over, a little softer where no new point lands on them"}
+          onclick={() => {
+            if (!meshFinerWhy) stepMesh(1);
+          }}><Plus size={12} /></button
+        >
+      </div>
     </div>
     <div class="h-6 w-px bg-border"></div>
     <div class="flex items-center gap-1">
