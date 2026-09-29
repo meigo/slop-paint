@@ -20,11 +20,17 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - Pressure curves — the brush and the eraser each have their own, edited as a bezier curve
 - **Press** on the brush bar: size is the medium width, light pressure thins the stroke and full
   pressure widens it, by up to that many times (as in slop-animator)
-- Brush and eraser keep their own size, opacity, smoothing, streamline, Press and brush type
+- **Stream** steadies the line like a lazy brush: it trails the pen on a string, so small wobbles
+  never reach it, and the same on any device and at any zoom. Pause at a corner and the line turns
+  there; lift and it finishes in a smooth curve to the pen
+- **Smooth** (Smooth brush) rounds out wobble in the stroke's path with no lag; **Sharp corners
+  where you pause** is an option, off by default for the rounded look
+- Brush and eraser keep their own size, opacity, smoothing, stream, Press and brush type
 - **Draw behind** — paint goes under what is already on the layer (flats under line art), a toggle
   on the brush toolbar
 - Size presets, opacity, colour swatch with a palette and picker; set-once options (stream, and
-  smoothing, taper, pool or nib for the brush that uses them, pressure curve) sit behind the gear
+  smoothing, sharp corners, taper, pool or nib for the brush that uses them, pressure curve) sit
+  behind the gear
 
 **Fill**
 
@@ -44,7 +50,10 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - Rectangle and lasso selection; brush, eraser, fill and Outline stay inside it
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
-  **Mesh warp** (3×3), flip, keep proportions — with nothing selected they take the whole layer
+  **Mesh warp** (3×3 up to 8×8; finer keeps your bends), flip, keep proportions — with nothing
+  selected they take the whole layer
+- A transform belongs to the layer it came from: picking another layer applies it there first, and
+  says so
 - Copy, cut, paste and delete — including copying a transformed or warped selection as shown.
   Copies also go to the system clipboard as PNG; an image pasted from another app becomes a reference
 - Every selection action is on the Select/Lasso toolbar row; with another tool active, an amber
@@ -62,6 +71,19 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   warp it
 - Saved in the PSD as a **Smart Object** (the original embedded), so it stays a reference when
   reopened here or in Photoshop
+
+**Text**
+
+- **Ghost text to letter over:** the T in the layer panel adds a text layer — faint, tagged
+  `[ignore]` for Spine, moved, scaled and rotated like a reference and redrawn sharp at any size.
+  Pick a font, size, line spacing, alignment and colour; **guide lines** rule the cap height,
+  x-height and baseline under each line (blank lines too), for lettering by hand
+- Four comic fonts built in (Comic Neue, Comic Neue Bold, Bangers, Patrick Hand), plus **your own
+  font files** (TTF, OTF, WOFF, WOFF2) — added with + in the text dialog, kept on the device, and
+  removed in **Edit ▸ Settings…**
+- A text layer saves its font by name, as desktop apps do (the font file never goes in the PSD).
+  Opening it where the font isn't installed keeps the saved picture and marks the layer until the
+  font is added; **Bake** turns it into plain pixels
 
 **Layers**
 
@@ -81,8 +103,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **View**
 
 - **iPad:** the Pencil draws, fingers navigate — one finger pans; two fingers pan, zoom and rotate
-  (snapping to 90° on lift); two-finger tap undoes, three-finger tap redoes; double-tap the Pencil
-  to toggle the eraser
+  (snapping to 90° on lift); two-finger tap undoes, three-finger tap redoes; double-tap with one
+  finger to toggle the eraser
 - **Trackpad:** two-finger swipe pans, pinch zooms. **Mouse:** wheel pans, Ctrl/Cmd+wheel zooms
 - The status bar explains whatever control you touch — on iPad that is the only tooltip
 
@@ -90,11 +112,15 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - A **project name** (set in New, or in the Document menu) names the saved and exported files
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
-  groups and reference Smart Objects, and open PSDs from Photoshop, GIMP and others
+  groups, reference Smart Objects and text layers, and open PSDs from Photoshop, GIMP and others
+- **Chrome and Edge on desktop:** Save writes back to the project's file (asking where only the
+  first time), **Save as…** picks a new one, and a file you open saves back to itself. Elsewhere
+  Save downloads the PSD — in Safari, Settings ▸ General ▸ File download location ▸ "Ask for each
+  download" gives a name and folder dialog
 - Export a flattened **PNG** or a **PSD** for Spine (groups become PSD folders, layer order is draw
   order); exports use document pixels, not the screen's
-- **Autosave** to the browser (IndexedDB) a few seconds after each change and when the tab is hidden,
-  restored on the next visit
+- **Autosave** to the browser (IndexedDB) a few seconds after each change — waiting while you draw —
+  and when the tab is hidden, restored on the next visit
 - On iPad/iPhone, **File ▸ Save to Files…** shares the PSD through the share sheet
 - On iPad, Share → Add to Home Screen runs it full-screen as an app
 - **Known issue — Chrome on iPad:** after the on-screen keyboard closes (typing text, renaming a
@@ -119,6 +145,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 | 0 / 1                      | Fit the view / 100% zoom                            |
 | R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise   |
 | Ctrl+S / Ctrl+O / Ctrl+N   | Save / open project (PSD) / new document            |
+| Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)               |
 | ↑ / ↓                      | Select the layer above / below                      |
 
 Cmd works in place of Ctrl on a Mac.
