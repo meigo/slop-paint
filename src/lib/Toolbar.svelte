@@ -41,6 +41,7 @@
   import { PRESS_MAX, PRESS_MIN } from "../brush";
   import { meshStepBlock } from "../mesh-size";
   import { sliderFill } from "./slider-fill";
+  import { selectOnFocus } from "./select-on-focus";
 
   let {
     setTool,
@@ -578,6 +579,7 @@
           <input
             type="text"
             value={app.projectName}
+            use:selectOnFocus
             onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
             class="h-7 min-w-0 flex-1 rounded border border-border bg-surface-raised px-2 text-sm text-text"
           />
@@ -661,6 +663,7 @@
           inputmode="decimal"
           bind:value={sizeInputValue}
           autofocus
+          use:selectOnFocus
           onblur={commitSize}
           onkeydown={(e: KeyboardEvent) => {
             if (e.key === "Enter") {

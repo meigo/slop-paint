@@ -25,6 +25,7 @@
   import { isDoubleTap, type Tap } from "./double-tap";
   import { parseTags, buildName } from "../spine-tags";
   import { fontLabel } from "../text-layout";
+  import { selectOnFocus } from "./select-on-focus";
 
   let {
     layers,
@@ -247,6 +248,7 @@
       class="layer-rename-input"
       value={draft}
       autofocus
+      use:selectOnFocus
       oninput={(e) => (draft = e.currentTarget.value)}
       onblur={() => commitEdit(node)}
       onclick={(e) => e.stopPropagation()}
