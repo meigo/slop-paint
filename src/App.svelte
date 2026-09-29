@@ -671,12 +671,29 @@
     const file = fileInputEl?.files?.[0];
     if (!file || !layers) return;
     const reader = new FileReader();
+    // A file that can't be read or parsed said nothing at all before: say what went wrong.
+    const failed = (e: unknown) => {
+      console.error(`opening "${file.name}" failed`, e);
+      flashStatus(
+        `Couldn't open ${file.name}${e instanceof Error && e.message ? ` — ${e.message}` : ""}`,
+        10000,
+      );
+    };
+    reader.onerror = () => failed(reader.error);
     reader.onload = () => {
       const buffer = reader.result as ArrayBuffer;
+      let size: { width: number; height: number };
+      // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged or
+      // non-PSD file fails here with the open document unchanged.
+      try {
+        size = loadPsd(buffer, layers, window.devicePixelRatio || 1, bumpLayerVersion);
+      } catch (e) {
+        failed(e);
+        return;
+      }
       if (outlineActive()) cancelOutline();
       app.projectName = nameFromFile(file.name);
-      const dpr = window.devicePixelRatio || 1;
-      const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
+      const { width, height } = size;
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
       app.docWidth = width;
@@ -2692,9 +2709,11 @@
     bind:this={imageInputEl}
     onchange={handleImageFile}
   />
+  <!-- The PSD MIME types as well as the extension: iPad Safari greys out files whose type the
+       `accept` list doesn't name. -->
   <input
     type="file"
-    accept=".psd"
+    accept=".psd,image/vnd.adobe.photoshop,image/x-photoshop,application/x-photoshop,application/photoshop,application/psd,image/psd"
     class="hidden"
     bind:this={fileInputEl}
     onchange={handleFileLoad}
