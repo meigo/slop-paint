@@ -1342,14 +1342,6 @@
     untrack(() => debouncedSave());
   });
 
-  // A lift paints the active layer's own content on the selection overlay, so it has to fade with
-  // the layer's (and its groups') opacity, or it jumps to full strength until it is committed.
-  $effect(() => {
-    void app.layerVersion;
-    if (!layersReady || !selection) return;
-    selection.contentAlpha = layers.contentAlpha(layers.activeId);
-  });
-
   // A backgrounded tab can be killed at any moment (routinely on iPad), so don't wait out the
   // debounce. The write is async, so this shrinks the window rather than closing it.
   $effect(() => {
@@ -2511,9 +2503,21 @@
       if (refTransform) scheduleRefRender();
       else scheduleComposite();
     };
+    // A lifted selection is drawn by the compositor, inside its layer — in its place in the stack,
+    // with its opacity and blend mode (the overlay only holds the handles). A reference's handles
+    // (`handlesOnly`) float nothing: the reference redraws itself.
+    // Keyed on `floatLayer`, which every lift/paste sets and Apply/Cancel clear BEFORE they redraw:
+    // at Apply the float is already drawn into its layer while `hasFloating` is still true, so
+    // falling back to the active layer here drew it twice (a one-frame darkening on every Apply).
+    layers.floatPreview = () =>
+      floatLayer && selection.hasFloating && !selection.handlesOnly
+        ? { layerId: floatLayer.id, render: (c) => selection.renderFloatingTo(c) }
+        : null;
 
     selection.onStateChange = () => {
       bumpSelectionVersion();
+      // Starting a transform or paste changes what the compositor draws (the float is part of it).
+      scheduleComposite();
       if (outlineActive()) scheduleOutlinePreview(); // a marquee made or cleared re-clips it
     };
 

@@ -67,6 +67,13 @@ export interface LayerGroup {
 
 export type LayerNode = Layer | LayerGroup;
 
+/** A lifted selection, as the screen draws it into its layer (`LayerManager.floatPreview`). */
+export interface FloatPreview {
+  layerId: number;
+  /** Draw the float onto `ctx`, whose transform maps document units to the layer's pixels. */
+  render: (ctx: CanvasRenderingContext2D) => void;
+}
+
 /** A structural undo point: the tree's shape, with layers held by reference. */
 export interface StructSnapshot {
   tree: LayerNode[];
@@ -125,6 +132,13 @@ export class LayerManager {
 
   displayCtx: CanvasRenderingContext2D;
   onChange: () => void;
+  /** While a selection is lifted: which layer it belongs to and how to draw it (App wires it to
+   *  the Selection). The screen composites that layer WITH the float, so the moving pixels sit in
+   *  the layer's place in the stack with its opacity and blend mode. Screen only: exports draw a
+   *  float into its layer first (`withFloatApplied`). */
+  floatPreview: (() => FloatPreview | null) | null = null;
+  /** The float's layer, combined with the float each frame (reused, resized as needed). */
+  private floatScratch: HTMLCanvasElement | null = null;
 
   constructor(
     _displayCanvas: HTMLCanvasElement,
@@ -205,23 +219,6 @@ export class LayerManager {
       return null;
     }
     return search(this.tree);
-  }
-
-  /** 0..1, a layer's opacity times its enclosing groups' — the alpha `composite()` draws it with.
-   *  Ignores visibility. */
-  contentAlpha(id: number): number {
-    function search(nodes: LayerNode[], alpha: number): number | null {
-      for (const node of nodes) {
-        const a = alpha * (node.opacity / 100);
-        if (node.id === id) return a;
-        if (node.type === "group") {
-          const found = search(node.children, a);
-          if (found !== null) return found;
-        }
-      }
-      return null;
-    }
-    return search(this.tree, 1) ?? 1;
   }
 
   /** Redraw a reference layer from its original at its placement (a no-op until it has decoded).
@@ -504,8 +501,25 @@ export class LayerManager {
     const docPxH = this.docHeight * dpr;
     ctx.resetTransform();
     ctx.clearRect(0, 0, docPxW, docPxH);
-    this.drawTree(ctx, docPxW, docPxH);
+    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /** `layer` with the float drawn onto it, on the reused scratch canvas. */
+  private withFloat(layer: Layer, float: FloatPreview): HTMLCanvasElement {
+    let s = this.floatScratch;
+    if (!s) s = this.floatScratch = document.createElement("canvas");
+    if (s.width !== layer.canvas.width || s.height !== layer.canvas.height) {
+      s.width = layer.canvas.width;
+      s.height = layer.canvas.height;
+    }
+    const c = s.getContext("2d")!;
+    c.resetTransform();
+    c.clearRect(0, 0, s.width, s.height);
+    c.drawImage(layer.canvas, 0, 0);
+    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); // the float draws in document units
+    float.render(c);
+    return s;
   }
 
   /**
@@ -516,7 +530,7 @@ export class LayerManager {
    * its members blend straight into what's below). The export paths used to loop the layers alone
    * and missed group visibility and opacity — a hidden group still showed in the PNG.
    */
-  drawTree(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  drawTree(ctx: CanvasRenderingContext2D, w: number, h: number, float: FloatPreview | null = null) {
     ctx.save();
     ctx.resetTransform();
     const drawNodes = (nodes: LayerNode[], parentAlpha: number) => {
@@ -527,7 +541,8 @@ export class LayerManager {
           if (node.canvas.width === 0 || node.canvas.height === 0) continue;
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
-          ctx.drawImage(node.canvas, 0, 0, w, h);
+          const source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
+          ctx.drawImage(source, 0, 0, w, h);
         } else {
           drawNodes(node.children, alpha);
         }

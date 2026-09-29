@@ -211,12 +211,6 @@ export class Selection {
   /** Shift held: side handles skew instead of stretching, corners invert keepProportions. */
   shiftHeld = false;
 
-  /** 0..1, the edited layer's opacity times its groups' — what the compositor applies to it. The
-   *  lifted pixels ARE that layer's content, so they fade with it; without this a lift on a faded
-   *  layer jumped to full strength for the length of the gesture and settled back on commit.
-   *  Chrome (ants, handles, grid) is UI, not content, and stays at full strength. */
-  contentAlpha = 1;
-
   /** Page units → overlay-canvas pixels. The overlay covers the whole canvas area, not just the
    *  page, so handles past the page edge stay visible (a page-sized import put them all there);
    *  this carries the view's pan/zoom/rotation and the pixel ratio. Read every frame: finger
@@ -906,12 +900,8 @@ export class Selection {
     // 'warping' state: tessellated render + grid lines + handles + outer perimeter.
     if (this.state === "warping" && this.warpGrid.length === this.warpRows) {
       const grid = this.warpGrid;
-      if (this.floatingPixels) {
-        ctx.save();
-        ctx.globalAlpha = this.contentAlpha; // content, unlike the grid and ants below
-        drawWarpedMesh(ctx, this.floatingPixels, this.rect, grid, this.warpRows, this.warpCols);
-        ctx.restore();
-      }
+      // The warped pixels themselves are drawn by the compositor, inside their layer (see
+      // `LayerManager.floatPreview`); the overlay is UI only.
       // Internal grid lines (between adjacent control points).
       ctx.save();
       ctx.strokeStyle = "rgba(0,0,0,0.3)";
@@ -952,15 +942,9 @@ export class Selection {
     const sides = this.transformedSides(c);
     const rotHandle = this.rotateHandlePos(c);
 
-    // Draw floating pixels under the matrix.
-    if (this.floatingPixels && !this.handlesOnly) {
-      const m = this.matrix;
-      ctx.save();
-      ctx.globalAlpha = this.contentAlpha; // content, unlike the box and handles below
-      ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f); // on top of the view, not instead of it
-      ctx.drawImage(this.floatingPixels, this.rect.x, this.rect.y, this.rect.w, this.rect.h);
-      ctx.restore();
-    }
+    // The floating pixels themselves are drawn by the compositor, inside their layer — in its place
+    // in the stack, with its opacity and blend mode (see `LayerManager.floatPreview`). The overlay
+    // used to draw them here, above every layer and always as Normal, until Apply.
 
     // Bounding-box marching ants (transformed quad).
     ctx.beginPath();
