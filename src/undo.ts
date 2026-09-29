@@ -87,8 +87,9 @@ export function pushNameEdit(layers: LayerManager, id: number, before: string, a
   history.push({ undo: () => apply(before), redo: () => apply(after) });
 }
 
-/** Fields of a layer/group that undo one value at a time (not pixels, not the tree's shape). */
-export type NodeField = "visible" | "opacity" | "locked" | "alphaLock";
+/** Fields of a layer/group that undo one value at a time (not pixels, not the tree's shape).
+ *  `blend` is a layer's blend mode (a Photoshop name; undefined = normal). */
+export type NodeField = "visible" | "opacity" | "locked" | "alphaLock" | "blend";
 
 /**
  * Record a single-field change (visibility, opacity, lock, alpha lock). Resolved by id at apply
@@ -101,14 +102,14 @@ export function pushNodeFieldEdit(
   layers: LayerManager,
   id: number,
   field: NodeField,
-  before: boolean | number,
-  after: boolean | number,
+  before: boolean | number | string | undefined,
+  after: boolean | number | string | undefined,
 ) {
   if (before === after) return;
-  const apply = (value: boolean | number) => {
+  const apply = (value: boolean | number | string | undefined) => {
     const node = layers.findNode(id);
-    // `alphaLock` only exists on layers; `locked` on layers and groups.
-    if (node) (node as unknown as Record<NodeField, boolean | number>)[field] = value;
+    // `alphaLock` and `blend` only exist on layers; `locked` on layers and groups.
+    if (node) (node as unknown as Record<NodeField, typeof value>)[field] = value;
     hooks.onHistoryApplied();
   };
   history.push({ undo: () => apply(before), redo: () => apply(after) });

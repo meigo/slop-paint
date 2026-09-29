@@ -88,6 +88,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Layers**
 
 - Layers and nested groups, drag-and-drop reordering, double-tap (or double-click) a name to rename
+- **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
+  other modes are kept too)
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
   locking a group locks everything in it
 - Duplicate a layer or a whole group, merge down; a resizable panel with thumbnails and a properties strip for the selected

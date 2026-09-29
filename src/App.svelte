@@ -580,12 +580,8 @@
     const tmp = document.createElement("canvas");
     tmp.width = w;
     tmp.height = h;
-    const ctx = tmp.getContext("2d")!;
-    for (const layer of layers.flatLayers()) {
-      if (!layer.visible) continue;
-      ctx.globalAlpha = layer.opacity / 100;
-      ctx.drawImage(layer.canvas, 0, 0, w, h);
-    }
+    // The screen's own compositing (group visibility and opacity, blend modes), at document size.
+    layers.drawTree(tmp.getContext("2d")!, w, h);
     const link = document.createElement("a");
     link.download = `${sanitizeFilename(app.projectName)}.png`;
     link.href = tmp.toDataURL("image/png");

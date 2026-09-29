@@ -4,6 +4,7 @@ import type { LayerNode, LayerManager, Layer, LayerGroup, RefSource } from "./la
 import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
 import { openTextSource, textPayloadFromPng } from "./text-ref";
+import { layerBlendFromPsd } from "./blend";
 
 let importIdCounter = 1000;
 
@@ -47,6 +48,7 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
         canvas: cvs,
         opacity: node.opacity / 100,
         hidden: !node.visible,
+        blendMode: (node.blend ?? "normal") as PsdLayer["blendMode"],
         left: 0,
         top: 0,
       };
@@ -62,13 +64,8 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
   const composite = document.createElement("canvas");
   composite.width = w;
   composite.height = h;
-  const compCtx = composite.getContext("2d")!;
-  for (const layer of manager.flatLayers()) {
-    if (!layer.visible) continue;
-    compCtx.globalAlpha = layer.opacity / 100;
-    compCtx.drawImage(layer.canvas, 0, 0, w, h);
-  }
-  compCtx.globalAlpha = 1;
+  // The flattened preview other apps show: the screen's own compositing, at document size.
+  manager.drawTree(composite.getContext("2d")!, w, h);
 
   const children = buildChildren(manager.tree);
   const psd: Psd = {
@@ -162,6 +159,7 @@ export function loadPsd(
         opacity: Math.round((psdLayer.opacity ?? 1) * 100),
         locked: false,
         alphaLock: false,
+        blend: layerBlendFromPsd(psdLayer.blendMode),
       };
       const ref = refFromPlaced(psdLayer.placedLayer, psd.linkedFiles);
       if (ref) {

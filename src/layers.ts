@@ -1,5 +1,6 @@
 import { matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
+import { canvasOp } from "./blend";
 
 /** A reference's ORIGINAL image: the file as imported (kept whole for the PSD's embedded Smart
  *  Object) and a decoded copy for drawing (capped to what an iPad canvas allows). */
@@ -46,6 +47,8 @@ export interface Layer {
   opacity: number;
   locked: boolean;
   alphaLock: boolean;
+  /** Blend mode by its Photoshop name ("multiply", "linear dodge"…; see blend.ts); absent = normal. */
+  blend?: string;
   /** Set on a reference layer (a Smart Object in the PSD); absent on every ordinary layer. */
   ref?: RefPlacement;
 }
@@ -438,6 +441,7 @@ export class LayerManager {
     dup.visible = src.visible;
     dup.locked = src.locked;
     dup.alphaLock = src.alphaLock;
+    dup.blend = src.blend;
     // A copy of a reference is a reference too: same original, its own placement.
     if (src.ref) {
       dup.ref = { src: src.ref.src, corners: src.ref.corners.map((p) => ({ ...p })) as Corners };
@@ -464,6 +468,8 @@ export class LayerManager {
     below.ctx.save();
     below.ctx.resetTransform();
     below.ctx.globalAlpha = src.opacity / 100;
+    // In its blend mode, so the merge looks as the two layers did (a multiply layer multiplies in).
+    below.ctx.globalCompositeOperation = canvasOp(src.blend);
     below.ctx.drawImage(src.canvas, 0, 0);
     below.ctx.restore();
 
@@ -496,29 +502,39 @@ export class LayerManager {
     const ctx = this.displayCtx;
     const docPxW = this.docWidth * dpr;
     const docPxH = this.docHeight * dpr;
-
     ctx.resetTransform();
     ctx.clearRect(0, 0, docPxW, docPxH);
+    this.drawTree(ctx, docPxW, docPxH);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
 
-    // Walk the tree respecting group visibility/opacity
-    function drawNodes(nodes: LayerNode[], parentAlpha: number) {
+  /**
+   * Draw the whole document onto `ctx` at `w` × `h` pixels — the ONE way layers are combined: the
+   * screen (at the canvas's own size), the PNG export and a PSD's flattened preview (at document
+   * size) all use it. Hidden layers and groups are skipped, a group's opacity multiplies its
+   * members', and each layer draws in its blend mode; a group has none of its own ("pass through":
+   * its members blend straight into what's below). The export paths used to loop the layers alone
+   * and missed group visibility and opacity — a hidden group still showed in the PNG.
+   */
+  drawTree(ctx: CanvasRenderingContext2D, w: number, h: number) {
+    ctx.save();
+    ctx.resetTransform();
+    const drawNodes = (nodes: LayerNode[], parentAlpha: number) => {
       for (const node of nodes) {
         if (!node.visible) continue;
         const alpha = parentAlpha * (node.opacity / 100);
         if (node.type === "layer") {
           if (node.canvas.width === 0 || node.canvas.height === 0) continue;
           ctx.globalAlpha = alpha;
-          ctx.resetTransform();
-          ctx.drawImage(node.canvas, 0, 0);
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.globalCompositeOperation = canvasOp(node.blend);
+          ctx.drawImage(node.canvas, 0, 0, w, h);
         } else {
           drawNodes(node.children, alpha);
         }
       }
-    }
+    };
     drawNodes(this.tree, 1);
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   /** Pixels of one layer (not just the active one), for undo. */

@@ -9,6 +9,7 @@
   import { clickOutside } from "./click-outside";
   import { pushNameEdit, pushNodeFieldEdit, pushRefEdit } from "../undo";
   import { sliderFill } from "./slider-fill";
+  import { BLEND_MODES, blendLabel, canDraw } from "../blend";
   import {
     parseTags,
     toggleTag,
@@ -45,6 +46,24 @@
     void app.layerVersion;
     return target?.opacity ?? 100;
   });
+  // A layer's blend mode (groups have none: their members blend through). The same `layerVersion`
+  // read as `opacity`, or an undo wouldn't show here.
+  const blend = $derived.by(() => {
+    void app.layerVersion;
+    return target?.type === "layer" ? (target.blend ?? "normal") : null;
+  });
+
+  function setBlend(mode: string) {
+    if (target?.type !== "layer") return;
+    const before = target.blend;
+    const after = mode === "normal" ? undefined : mode;
+    if (before === after) return;
+    target.blend = after;
+    pushNodeFieldEdit(layers, target.id, "blend", before, after);
+    layers.composite();
+    onSettingsChange();
+  }
+
   const tags = $derived.by(() => {
     void app.layerVersion;
     return target ? parseTags(target.name).tags : [];
@@ -109,14 +128,19 @@
      status bar reads the titles). Fixed height whatever is selected, so the list below never shifts.
      `pr-[6px]` puts the pencil's right edge on the rows' eye column. -->
 <div
-  class="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface pr-[6px] pl-2.5 text-text-secondary"
+  class="@container flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface pr-[6px] pl-2.5 text-text-secondary"
 >
   {#if target}
-    <span class="flex shrink-0 items-center gap-1" title="Opacity of the selected {target.type}">
+    <!-- In the narrowest panel the slider gives way (down to 32px) and the number hides, so the blend
+         menu and the rename pencil still fit. -->
+    <span
+      class="flex min-w-0 shrink items-center gap-1"
+      title="Opacity of the selected {target.type}"
+    >
       <Blend size={13} class="shrink-0" />
       <input
         type="range"
-        class="w-20"
+        class="w-20 min-w-8 shrink"
         title="Opacity of the selected {target.type}"
         min="0"
         max="100"
@@ -127,8 +151,29 @@
         onpointerup={commitOpacity}
         onblur={commitOpacity}
       />
-      <span class="w-6 text-[11px] text-text-muted">{shownOpacity}</span>
+      <span class="hidden w-6 shrink-0 text-[11px] text-text-muted @min-[212px]:inline"
+        >{shownOpacity}</span
+      >
     </span>
+
+    {#if blend !== null}
+      <!-- Layers only. A PSD's own mode that the menu doesn't offer is listed too, by its name. -->
+      <select
+        class="h-6 w-[72px] shrink-0 cursor-pointer rounded border border-border bg-surface-raised px-1 text-[11px] text-text-secondary"
+        title={canDraw(blend)
+          ? `Blend mode — how the layer combines with the layers below (${blendLabel(blend)})`
+          : `Blend mode ${blendLabel(blend)}, from the PSD — kept for Photoshop, drawn here as Normal`}
+        value={blend}
+        onchange={(e) => setBlend(e.currentTarget.value)}
+      >
+        {#each BLEND_MODES as b (b.psd)}
+          <option value={b.psd}>{b.label}</option>
+        {/each}
+        {#if !BLEND_MODES.some((b) => b.psd === blend)}
+          <option value={blend}>{blendLabel(blend)}</option>
+        {/if}
+      </select>
+    {/if}
 
     {#if refLayer?.ref?.src.text}
       <button
