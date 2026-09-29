@@ -1572,6 +1572,32 @@
     });
   });
 
+  // The PAGE must never scroll — `app.css` pins `#app` so it cannot be dragged. iOS can still shift it
+  // to reveal a focused text field above the on-screen keyboard (the text dialog, a layer rename, the
+  // dialogs' number fields), and does not always shift it back: the app ends up pushed up with blank
+  // space below. Snap it back when focus leaves a field, when the visual viewport resizes (the
+  // keyboard opening or closing), and on the page's own `scroll` — Chrome for iPad scrolls it a moment
+  // AFTER the first two have fired. A no-op wherever the page is already at 0 (always on desktop);
+  // element scrollers (the layer list) don't fire `scroll` on window, so they're never touched.
+  // Ported from slop-animator (its CLAUDE.md gotcha #15): this undoes the real page scroll, but NOT
+  // Chrome for iPad's leftover shift after the keyboard, which lives in Chrome's native view out of
+  // the page's reach — there Safari, or the Home Screen app, is the way out.
+  $effect(() => {
+    const resetPageScroll = () => {
+      if (window.scrollY !== 0 || (document.scrollingElement?.scrollTop ?? 0) !== 0)
+        window.scrollTo(0, 0);
+    };
+    const onFocusOut = () => requestAnimationFrame(resetPageScroll);
+    document.addEventListener("focusout", onFocusOut);
+    window.visualViewport?.addEventListener("resize", resetPageScroll);
+    window.addEventListener("scroll", resetPageScroll, { passive: true });
+    return () => {
+      document.removeEventListener("focusout", onFocusOut);
+      window.visualViewport?.removeEventListener("resize", resetPageScroll);
+      window.removeEventListener("scroll", resetPageScroll);
+    };
+  });
+
   // iPad shows no tooltips, so a control's `title` goes to the status bar: on hover (desktop) and
   // on press (touch), read from the nearest ancestor that has one.
   // A `pointerover` resolving to the SAME element as the last write is ignored: pointer capture
