@@ -70,20 +70,30 @@
 
   // A drag is ONE undo step: opened on the first `input`, closed on `change` (fired at release)
   // or when focus leaves. Without this every pixel of slider travel would be its own step.
-  let opacityStart: number | null = null;
+  // The node is kept with it, so the step lands on the node the drag started on.
+  let opacityStart: { id: number; value: number } | null = null;
+  // While dragging, only the canvas and this readout follow the slider: `setOpacity` recomposites,
+  // and the value shows from here. Bumping `layerVersion` per step rebuilt the whole layer list
+  // (thumbnails included) and re-ran every layer effect — ~15 ms a step on a Mac, far more on iPad,
+  // against 0.3 ms for the recomposite. The one bump comes at release, with the undo step.
+  let dragOpacity = $state<number | null>(null);
+  const shownOpacity = $derived(dragOpacity ?? opacity);
 
   function onOpacityInput(value: number) {
     if (!target) return;
-    if (opacityStart === null) opacityStart = target.opacity;
+    if (opacityStart === null) opacityStart = { id: target.id, value: target.opacity };
+    dragOpacity = value;
     layers.setOpacity(target.id, value);
-    onSettingsChange();
   }
 
   function commitOpacity() {
-    if (opacityStart === null || !target) return;
-    const before = opacityStart;
+    dragOpacity = null;
+    if (opacityStart === null) return;
+    const { id, value: before } = opacityStart;
     opacityStart = null;
-    pushNodeFieldEdit(layers, target.id, "opacity", before, target.opacity);
+    const node = layers.findNode(id);
+    if (node) pushNodeFieldEdit(layers, id, "opacity", before, node.opacity);
+    onSettingsChange();
   }
 
   function toggleNodeTag(tag: SpineTag) {
@@ -110,14 +120,14 @@
         title="Opacity of the selected {target.type}"
         min="0"
         max="100"
-        style={sliderFill(opacity, 0, 100)}
-        value={opacity}
+        style={sliderFill(shownOpacity, 0, 100)}
+        value={shownOpacity}
         oninput={(e) => onOpacityInput(Number(e.currentTarget.value))}
         onchange={commitOpacity}
         onpointerup={commitOpacity}
         onblur={commitOpacity}
       />
-      <span class="w-6 text-[11px] text-text-muted">{opacity}</span>
+      <span class="w-6 text-[11px] text-text-muted">{shownOpacity}</span>
     </span>
 
     {#if refLayer?.ref?.src.text}
