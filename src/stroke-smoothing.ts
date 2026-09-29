@@ -140,12 +140,31 @@ export function pauseBreaks(points: InputPoint[], stillDist: number, pauseMs = P
  * its leg, so the ends — and the corners — stay put and nothing is pulled short. A pause is the pen
  * within `radius / 8` for `PAUSE_MS`: the same share of the window at any zoom.
  */
+/** `points` with each run of identical positions cut to its first and last point: a resting pen
+ *  adds a point per event (for Ink's Pool), and averaging or pause-scanning those runs was
+ *  quadratic in their length. The first and last keep the run's position and time span. */
+export function collapseRuns(points: InputPoint[]): InputPoint[] {
+  const same = (a: InputPoint, b: InputPoint) => a.x === b.x && a.y === b.y;
+  const out: InputPoint[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const inner =
+      i > 0 &&
+      i < points.length - 1 &&
+      same(points[i], points[i - 1]) &&
+      same(points[i], points[i + 1]);
+    if (!inner) out.push(points[i]);
+  }
+  return out;
+}
+
 export function smoothPath(
   points: InputPoint[],
   radius: number,
   sharpCorners = false,
 ): InputPoint[] {
   if (points.length < 3 || !(radius > 0)) return points;
+  points = collapseRuns(points);
+  if (points.length < 3) return points;
   const breaks = sharpCorners ? pauseBreaks(points, radius / 8) : [];
   if (!breaks.length) return smoothLeg(points, radius);
   const out: InputPoint[] = [];

@@ -78,7 +78,9 @@ export function setupInput(
 
   /** Bring the lagging line up to the pen along the pen's own path, stamped `timestamp`. */
   function catchUpAlongTrail(timestamp: number) {
-    if (!rope || !penEvent) return;
+    // Stream 0 (and every tool but brush/eraser) has nothing to catch up: the line IS the pen. Kept
+    // explicit so a held handle can't be nudged to a trail point (as slop-animator found).
+    if (!rope || !penEvent || getRopeLength() === 0) return;
     const path = catchUpPath(trail, rope, 2 * getRopeLength() + 2 * STILL_PX);
     for (const p of path) {
       addPoint({ ...getPoint(penEvent, p.x, p.y), pressure: p.pressure, timestamp });
@@ -163,8 +165,18 @@ export function setupInput(
         trailPush({ ...now, pressure: pressureOf(ce) });
       }
       penEvent = ce;
-      const next = rope ? ropeStep(rope, now, getRopeLength()) : now;
-      if (next === rope) continue;
+      const length = getRopeLength();
+      const next = rope ? ropeStep(rope, now, length) : now;
+      if (next === rope) {
+        // A resting pen still keeps time: Ink's Pool reads the points' timestamps to swell where
+        // the nib lingers, and pressure can change in place. So while the line sits at the pen —
+        // Stream 0, or caught up to where it came to rest — its events add points there (as they
+        // did before the rope, and as slop-animator does). Smooth collapses the runs this makes.
+        if (rope && (length === 0 || (rope.x === stillAt.x && rope.y === stillAt.y))) {
+          addPoint(getPoint(ce, rope.x, rope.y));
+        }
+        continue;
+      }
       rope = next;
       addPoint(getPoint(ce, next.x, next.y));
     }

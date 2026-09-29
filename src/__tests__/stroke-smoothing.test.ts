@@ -7,6 +7,7 @@ import {
   pathSmoothRadius,
   pauseBreaks,
   catchUpPath,
+  collapseRuns,
   ropeLength,
   ropeStep,
   smoothPath,
@@ -242,5 +243,33 @@ describe("corners", () => {
     const offLine = (p: { x: number; y: number }) =>
       Math.abs((p.x - sx) * dy - (p.y - sy) * dx) / len;
     expect(Math.max(...path.map(offLine))).toBeGreaterThan(1.5);
+  });
+});
+
+describe("collapseRuns", () => {
+  const pt = (x: number, y: number, timestamp: number) => ({ x, y, pressure: 0.5, timestamp });
+
+  it("keeps only the first and last of a run of identical positions", () => {
+    const pts = [pt(0, 0, 0), pt(5, 0, 1), pt(5, 0, 2), pt(5, 0, 3), pt(5, 0, 4), pt(9, 0, 5)];
+    expect(collapseRuns(pts).map((p) => p.timestamp)).toEqual([0, 1, 4, 5]);
+  });
+
+  it("leaves a path without runs as it is, ends included", () => {
+    const pts = [pt(0, 0, 0), pt(1, 0, 1), pt(1, 0, 2)];
+    expect(collapseRuns(pts)).toEqual(pts);
+  });
+
+  it("keeps a held Smooth stroke cheap: a long rest doesn't grow the work", () => {
+    const pts = [
+      ...Array.from({ length: 100 }, (_, i) => pt(i * 2, 0, i)),
+      ...Array.from({ length: 20000 }, (_, i) => pt(198, 0, 100 + i)), // the pen resting
+      ...Array.from({ length: 100 }, (_, i) => pt(198, i * 2, 20100 + i)),
+    ];
+    const t0 = performance.now();
+    const out = smoothPath(pts, SMOOTH_MAX_PX, true);
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(out.length).toBeLessThan(250);
+    // the rest is still a pause: Sharp corners keeps the corner
+    expect(Math.min(...out.map((p) => Math.hypot(p.x - 198, p.y)))).toBeLessThan(1);
   });
 });
