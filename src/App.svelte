@@ -75,7 +75,7 @@
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
   import { history, pushPixelEdit, pushRefEdit, setOnHistoryApplied, structuralEdit } from "./undo";
-  import { canShareFile, saveToFilesAvailable, shareFile } from "./share";
+  import { canShareFile, isStandalone, saveToFilesAvailable, shareFile } from "./share";
   import {
     fileAccessAvailable,
     isAbort,
@@ -572,10 +572,25 @@
 
   function saveImage() {
     if (!layers) return;
-    withFloatApplied(() => composeImage());
+    const tmp = withFloatApplied(() => composeImage());
+    const name = `${sanitizeFilename(app.projectName)}.png`;
+    if (saveToFilesAvailable()) {
+      // iPad: to the share sheet (Save to Files), as the PSD export — a download lands in
+      // Downloads in the browser, and does nothing at all in the Home Screen app.
+      tmp.toBlob((b) => {
+        if (b) void sendToFiles(new File([b], name, { type: "image/png" }));
+        else flashStatus("Couldn't export the PNG", 10000);
+      }, "image/png");
+      return;
+    }
+    const link = document.createElement("a");
+    link.download = name;
+    link.href = tmp.toDataURL("image/png");
+    link.click();
   }
 
-  function composeImage() {
+  /** The document flattened at document size, as the screen composites it. */
+  function composeImage(): HTMLCanvasElement {
     const w = app.docWidth;
     const h = app.docHeight;
     const tmp = document.createElement("canvas");
@@ -583,16 +598,19 @@
     tmp.height = h;
     // The screen's own compositing (group visibility and opacity, blend modes), at document size.
     layers.drawTree(tmp.getContext("2d")!, w, h);
-    const link = document.createElement("a");
-    link.download = `${sanitizeFilename(app.projectName)}.png`;
-    link.href = tmp.toDataURL("image/png");
-    link.click();
+    return tmp;
   }
 
   function doExportPsd() {
     if (!layers) return;
     // "-export": the trimmed Spine PSD must not overwrite the project saved under the same name.
-    withFloatApplied(() => exportPsd(layers, `${sanitizeFilename(app.projectName)}-export.psd`));
+    const name = `${sanitizeFilename(app.projectName)}-export.psd`;
+    if (saveToFilesAvailable()) {
+      const buffer = withFloatApplied(() => psdBuffer(layers, true));
+      void sendToFiles(new File([buffer], name, { type: "application/octet-stream" }));
+      return;
+    }
+    withFloatApplied(() => exportPsd(layers, name));
   }
 
   // --- Save / Save as ---
@@ -604,6 +622,8 @@
 
   function doSavePsd() {
     if (!layers) return;
+    // The Home Screen app can't download at all: Save goes to the share sheet there.
+    if (saveToFilesAvailable() && isStandalone()) return void doSaveToFiles();
     if (!fileAccessAvailable()) {
       withFloatApplied(() => savePsd(layers, `${sanitizeFilename(app.projectName)}.psd`));
       return;
@@ -662,8 +682,14 @@
     const file = new File([withFloatApplied(() => psdBuffer(layers, false))], name, {
       type: "application/octet-stream",
     });
+    await sendToFiles(file);
+  }
+
+  /** Hand a finished file to the share sheet (iPad/iPhone: Save to Files). Used by Save to Files
+   *  and, there, by both exports and the Home Screen app's Save. */
+  async function sendToFiles(file: File) {
     if (!canShareFile(file)) {
-      // This browser won't share a PSD: fall back to a download.
+      // This browser won't share the file type: fall back to a download.
       downloadBlob(file, file.name);
       flashStatus(`Downloaded ${file.name}`);
       return;

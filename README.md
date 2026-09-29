@@ -126,7 +126,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   order); exports use document pixels, not the screen's
 - **Autosave** to the browser (IndexedDB) a few seconds after each change — waiting while you draw —
   and when the tab is hidden, restored on the next visit
-- On iPad/iPhone, **File ▸ Save to Files…** shares the PSD through the share sheet
+- On iPad/iPhone, **File ▸ Save to Files…** and both exports go through the share sheet (pick
+  Save to Files there); in the Home Screen app, Save does too
 - On iPad, Share → Add to Home Screen runs it full-screen as an app
 - **Known issue — Chrome on iPad:** after the on-screen keyboard closes (typing text, renaming a
   layer), Chrome can leave the app shifted up with a blank band below, until you open a new tab. It's

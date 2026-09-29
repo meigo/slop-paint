@@ -50,3 +50,12 @@ export async function shareFile(file: File): Promise<{ outcome: ShareOutcome; er
     return { outcome: classifyShareError(error), error };
   }
 }
+
+/** Running as a Home Screen app (standalone), where iOS can't download a file at all — a download
+ *  link does nothing, so every file has to go through the share sheet. */
+export function isStandalone(): boolean {
+  return (
+    (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches) ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+}

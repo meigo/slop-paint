@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { shareFile } from "../share";
+  import { isStandalone, shareFile } from "../share";
   import { downloadBlob } from "../download";
   import { flashStatus } from "../appState.svelte.js";
 
@@ -11,6 +11,9 @@
     file: File | null;
     onClose: () => void;
   } = $props();
+
+  // The Home Screen app can't download (the link does nothing), so it isn't offered there.
+  const canDownload = !isStandalone();
 
   const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -76,12 +79,14 @@
         disabled={sharing}
         onclick={share}>Save to Files…</button
       >
-      <button
-        class="rounded border border-border py-1 hover:bg-surface-hover disabled:opacity-40"
-        disabled={sharing}
-        title="Download to the browser's Downloads, as before"
-        onclick={download}>Download instead</button
-      >
+      {#if canDownload}
+        <button
+          class="rounded border border-border py-1 hover:bg-surface-hover disabled:opacity-40"
+          disabled={sharing}
+          title="Download to the browser's Downloads, as before"
+          onclick={download}>Download instead</button
+        >
+      {/if}
       <button
         class="rounded border border-border py-1 hover:bg-surface-hover disabled:opacity-40"
         disabled={sharing}
