@@ -129,6 +129,9 @@
 
   // --- Selection state ---
   let preSelectionSnapshot: ImageData | null = null;
+  /** The layer a float was lifted from (or pasted onto): Apply draws back onto IT and Cancel
+   *  restores IT, whichever layer is active by then (see the effect that applies it on a switch). */
+  let floatLayer: Layer | null = null;
   let selectionMode: "create" | "drag" | null = null;
 
   // --- Drawing state ---
@@ -487,6 +490,7 @@
     if (layers.isLocked(layer)) return;
     const dpr = window.devicePixelRatio || 1;
     preSelectionSnapshot = layers.getSnapshot();
+    floatLayer = layers.active;
     const lifted = selection.liftPixels(layer.ctx, dpr);
     if (!lifted) return;
     selection.beginTransform(lifted);
@@ -510,6 +514,7 @@
       if (layers.isLocked(layer)) return;
       const dpr = window.devicePixelRatio || 1;
       preSelectionSnapshot = layers.getSnapshot();
+      floatLayer = layers.active;
       const lifted = selection.liftPixels(layer.ctx, dpr);
       if (!lifted) return;
       selection.beginTransform(lifted);
@@ -540,7 +545,7 @@
    *  lost the lifted pixels if the tab closed before Enter. */
   function withFloatApplied<T>(fn: () => T): T {
     if (!selection?.hasFloating || !layers) return fn();
-    const layer = layers.active;
+    const layer = floatLayer ?? layers.active;
     const snap = layers.snapshotOf(layer);
     selection.renderFloatingTo(layer.ctx);
     try {
@@ -817,6 +822,7 @@
         } else if (selection.state === "selected" && handle === "move") {
           // First drag inside a fresh selection: lift pixels and enter transform mode.
           preSelectionSnapshot = layers.getSnapshot();
+          floatLayer = layers.active;
           const lifted = selection.liftPixels(layer.ctx, dpr);
           if (lifted) {
             selection.beginTransform(lifted);
@@ -1531,6 +1537,23 @@
     untrack(syncRefHandles);
   });
 
+  // A float belongs to the layer it came from, as the Outline preview below does: selecting another
+  // layer applies it THERE first — as switching tools does — instead of Apply later dropping it on
+  // whichever layer is active by then (moving pixels between layers is Cut and Paste). Leaving a
+  // float without Apply or Cancel applies it, because Apply can be undone and Cancel can't; only an
+  // explicit Esc / ✗ / undo discards it, or its layer being deleted (nowhere left to apply it).
+  $effect(() => {
+    void app.layerVersion;
+    untrack(() => {
+      if (!selection?.hasFloating || !floatLayer || layers.activeId === floatLayer.id) return;
+      if (!layers.findLayer(floatLayer.id)) return selection.cancel();
+      // Said out loud, so the switch doesn't apply it silently (undo takes it back).
+      const name = floatLayer.name;
+      selection.commit();
+      flashStatus(`Applied the transform to ${name} — undo to take it back`);
+    });
+  });
+
   // The preview belongs to the layer it started on: selecting another layer (which add, duplicate
   // and merge also do) or locking this one cancels it rather than leaving it baked in.
   $effect(() => {
@@ -1812,6 +1835,7 @@
     setTool("select"); // commits any floating selection first
     if (selection.active) selection.cancel();
     preSelectionSnapshot = layers.getSnapshot(); // commit pushes it; cancel restores it (no-op)
+    floatLayer = layers.active;
     selection.pasteFloat(pixels, rect);
     return true;
   }
@@ -2244,9 +2268,10 @@
 
     // Selection callbacks
     selection.onCommit = () => {
-      const layer = layers.active;
+      const layer = floatLayer ?? layers.active;
       const before = preSelectionSnapshot;
       preSelectionSnapshot = null;
+      floatLayer = null;
       selection.renderFloatingTo(layer.ctx);
       // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
       // landed made the next undo appear to do nothing).
@@ -2258,8 +2283,10 @@
     };
 
     selection.onCancel = () => {
+      const layer = floatLayer ?? layers.active;
+      floatLayer = null;
       if (preSelectionSnapshot) {
-        layers.restoreSnapshot(preSelectionSnapshot);
+        layers.restoreTo(layer, preSelectionSnapshot);
         preSelectionSnapshot = null;
         layers.composite();
         bumpLayerVersion();
