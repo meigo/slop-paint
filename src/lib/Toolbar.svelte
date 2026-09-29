@@ -167,7 +167,6 @@
     else app.brushSettings.opacity = value;
     onSettingsChange();
   }
-  let fillThresholdDisplay = $derived(String(app.fillSettings.alphaThreshold ?? 0));
   let fillExpandDisplay = $derived((app.fillSettings.expand ?? 0) + "px");
 
   let activeTool = $derived(app.currentTool);
@@ -895,18 +894,21 @@
 
   <!-- Fill options -->
   {#if showFill}
-    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
-      Gap close
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="Close breaks in the lines up to about twice this many pixels, so the fill doesn't leak through (the bucket and Fill enclosed)"
+    >
+      Bridge
       <input
         type="range"
         min="0"
-        max="200"
-        style={sliderFill(app.fillSettings.alphaThreshold ?? 0, 0, 200)}
-        bind:value={app.fillSettings.alphaThreshold}
+        max={MAX_GAP}
+        style={sliderFill(app.fillEnclosedGap, 0, MAX_GAP)}
+        bind:value={app.fillEnclosedGap}
         oninput={onSettingsChange}
         class="w-16"
       />
-      <span class="min-w-7 text-[11px] text-text-muted">{fillThresholdDisplay}</span>
+      <span class="min-w-4 text-[11px] text-text-muted">{app.fillEnclosedGap}</span>
     </label>
     <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Expand
@@ -922,22 +924,6 @@
       <span class="min-w-7 text-[11px] text-text-muted">{fillExpandDisplay}</span>
     </label>
     <div class="h-6 w-px bg-border"></div>
-    <label
-      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
-      title="Fill enclosed: close breaks in the outline up to about twice this many pixels"
-    >
-      Bridge
-      <input
-        type="range"
-        min="0"
-        max={MAX_GAP}
-        style={sliderFill(app.fillEnclosedGap, 0, MAX_GAP)}
-        bind:value={app.fillEnclosedGap}
-        oninput={onSettingsChange}
-        class="w-16"
-      />
-      <span class="min-w-4 text-[11px] text-text-muted">{app.fillEnclosedGap}</span>
-    </label>
     <button
       class="h-7 rounded-md border border-border bg-surface-raised px-2 text-xs whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover"
       onclick={fillEnclosed}

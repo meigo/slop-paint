@@ -35,10 +35,10 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Fill**
 
 - The bucket has its own colour and opacity, so line colour and flat colour stay separate
-- Paint bucket with gap closing (semi-transparent edges count as walls) and expand (grows the fill
-  under the outline so no seam shows)
+- Paint bucket with **Bridge** (small breaks in the lines count as closed, so the fill doesn't leak
+  out) and expand (grows the fill under the outline so no seam shows)
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
-  **Bridge** closes small breaks in the outline
+  it uses the same Bridge
 
 **Outline**
 

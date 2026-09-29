@@ -25,7 +25,8 @@ interface AppStateShape {
   keepProportions: boolean;
   /** Settings: show the Spine tag UI (layer strip chips/menu, "for Spine" export wording). */
   spineTools: boolean;
-  /** Fill enclosed: bridge outline breaks of about 2×this px (0..MAX_GAP). */
+  /** Bridge, for the bucket AND Fill enclosed: close line breaks of about 2×this px (0..MAX_GAP).
+   *  Saved under its old name, from when only Fill enclosed had it. */
   fillEnclosedGap: number;
   /** Bumped by the undo stack so canUndo/canRedo can drive the UI (a class getter is not reactive). */
   historyVersion: number;
@@ -70,7 +71,6 @@ export const app: AppStateShape = $state({
   },
   fillSettings: {
     tolerance: 32,
-    alphaThreshold: 0,
     expand: 0,
   },
   zoomText: "100%",

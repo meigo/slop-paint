@@ -35,7 +35,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`, `ref-tool.ts`, `text-layout.ts`, `png-text.ts`, `mesh-size.ts`, `stroke-smoothing.ts`, `font-file.ts`
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (fillMask, hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`, `ref-tool.ts`, `text-layout.ts`, `png-text.ts`, `mesh-size.ts`, `stroke-smoothing.ts`, `font-file.ts`
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - A bug seen only on the deployed site: reproduce it against the production build (`npm run build && npx vite preview`), not `npm run dev` — the minified bundle can behave differently (see Undo)
@@ -83,7 +83,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `touch-gestures.ts` — iPad/touch gesture handling: one-finger pan, one-finger double-tap eraser toggle, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT. Brush and eraser have their own (`pressureCurves`, `activePressureCurve()`); settings saved before the split give the eraser the brush's curve
 - `tool-settings.ts` — brush/eraser stroke-setting slots (size, opacity, smoothing, streamline, size range, brush type); the active tool's values live in `app`, the other tool's in a slot, swapped in `setTool`
-- `fill.ts` — scanline flood fill with alpha threshold (gap closing) and expand (dilation behind existing content); `enclosedFillRegion` / `fillRegionBehind` for Fill enclosed
+- `fill.ts` — bucket flood fill: `fillMask` (pure: the region, with Bridge) and expand (dilation behind existing content); `enclosedFillRegion` / `fillRegionBehind` for Fill enclosed
 - `fill-holes.ts` — Fill enclosed engine (from slop-animator): floods the outside from the border, so a leaking outline fills nothing; `gap` (clamped to `MAX_GAP` = 8, device px) bridges breaks via dilate → flood → erode
 - `outline.ts` — Outline tool engine (from slop-animator): signed distance field seeded sub-pixel from the alpha, a band of `thickness` inside the edge whose position (Wobble) and width (Variation) come from two seeded noise planes; `bleedColor` keeps the colour under an outward wobble; `alphaBounds` for the working region
 - `mask-ops.ts` — circular dilate/erode on binary masks (shared by expand and Fill enclosed)
@@ -237,9 +237,10 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 ## Fill Tool
 
-- Alpha threshold ("gap close"): treats semi-transparent pixels as walls to prevent leaking through antialiased stroke edges
+- Bridge (`app.fillEnclosedGap`, 0–8, saved under its old name) is ONE setting for the bucket and Fill enclosed: a break in the lines of about 2× that many device px counts as closed. The bucket (`fillMask`): walls (pixels outside the tap's colour tolerance) are thickened by the gap, the flood runs in what's left, then grows back `gap` 8-connected steps over fillable pixels only (`growWithin`: a round dilation left sharp inside corners unfilled; a diagonal step between two wall pixels is refused, or it slipped through a 1px diagonal line). It pokes about `gap` px out through a bridged break, so the break reads as plugged. A pocket too narrow to survive the thickening (the tap lands inside the thickened walls) fills without bridging. Cost on a 3840×2160 layer with thin lines: ~30 ms at 0, ~85 ms at 8
+- Replaced 2026-09-29: "Gap close" was an alpha threshold (pixels at least that opaque are walls). The colour tolerance (32) already stops a fill from an empty spot at alpha > 32, so above 32 it did nothing; at any value above 0 it refused a tap ON a coloured area, so recolouring a shape silently did nothing. Its saved `fillAlphaThreshold` is now ignored
 - Expand: dilates fill by N pixels, drawn behind existing content to eliminate seams between fill and outlines
-- Fill enclosed (button in the fill options): fills every area the active layer's outlines enclose, behind the lines, in one undo step; Bridge (0–8, saved) closes outline breaks of about 2× that many device px. Refused on locked / alpha-locked layers. Cost grows with Bridge (≈0.3 s at 0, ≈1.6 s at 8 on a 1920×1080 doc at dpr 2, blocking)
+- Fill enclosed (button in the fill options): fills every area the active layer's outlines enclose, behind the lines, in one undo step; Bridge (above) closes outline breaks of about 2× that many device px. Refused on locked / alpha-locked layers. Cost grows with Bridge (≈0.3 s at 0, ≈1.6 s at 8 on a 1920×1080 doc at dpr 2, blocking)
 - Inside a selection or on an alpha-locked layer, the fill runs on a temp copy and is composited back (`copy` / `source-atop`); a fill that changes no pixels pushes no undo step
 
 ## New Document
@@ -279,4 +280,4 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Settings Persistence
 
 - UI settings saved to localStorage (debounced)
-- Includes: tool, brush type, size, opacity, smoothing, color, size range, both pressure curves, draw-behind, taper, sharp corners, fill settings, eraser settings, keep proportions, Fill enclosed bridge, nib angle/flatness, ink dwell, layer panel width, Spine tools
+- Includes: tool, brush type, size, opacity, smoothing, color, size range, both pressure curves, draw-behind, taper, sharp corners, fill settings, eraser settings, keep proportions, Bridge (bucket and Fill enclosed), nib angle/flatness, ink dwell, layer panel width, Spine tools

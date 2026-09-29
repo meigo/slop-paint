@@ -310,7 +310,6 @@
     taper?: boolean;
     sharpCorners?: boolean;
     drawBehind?: boolean;
-    fillAlphaThreshold?: number;
     fillExpand?: number;
     keepProportions?: boolean;
     spineTools?: boolean;
@@ -354,7 +353,6 @@
       taper: app.brushSettings.taper,
       sharpCorners: app.brushSettings.sharpCorners,
       drawBehind: app.brushSettings.drawBehind,
-      fillAlphaThreshold: app.fillSettings.alphaThreshold,
       fillExpand: app.fillSettings.expand,
       keepProportions: app.keepProportions,
       spineTools: app.spineTools,
@@ -396,8 +394,6 @@
       if (data.sizeRange != null) app.sizeRange = clampPress(data.sizeRange);
       if (data.streamline != null) app.streamline = data.streamline;
       if (data.drawBehind != null) app.brushSettings.drawBehind = data.drawBehind;
-      if (data.fillAlphaThreshold != null)
-        app.fillSettings.alphaThreshold = data.fillAlphaThreshold;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (typeof data.spineTools === "boolean") app.spineTools = data.spineTools;
@@ -1000,6 +996,7 @@
           tmpCtx.drawImage(layer.canvas, 0, 0);
           floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, {
             ...app.fillSettings,
+            gap: app.fillEnclosedGap,
             // Expand paints BEHIND existing content, which alpha lock would refuse entirely;
             // without it the fill recolours the region and source-atop keeps it to existing pixels.
             expand: layer.alphaLock ? 0 : app.fillSettings.expand,
@@ -1018,7 +1015,10 @@
             layer.ctx.restore();
           }
         } else {
-          floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, app.fillSettings);
+          floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, {
+            ...app.fillSettings,
+            gap: app.fillEnclosedGap,
+          });
         }
         // Nothing landed (already this colour, or clipped away): no empty undo step
         if (sameImageData(before, layers.getSnapshot())) return;
