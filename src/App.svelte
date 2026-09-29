@@ -2439,8 +2439,12 @@
   }
 
   async function pasteFromMenu() {
+    // Why the system clipboard couldn't be read (Chrome: its Clipboard permission blocked or the
+    // prompt dismissed) — said out loud, as "Nothing to paste" hid an image the user HAD copied.
+    let readError = "";
     try {
-      const items = (await navigator.clipboard?.read?.()) ?? [];
+      if (!navigator.clipboard?.read) throw new Error("not supported here");
+      const items = await navigator.clipboard.read();
       for (const item of items) {
         const type = item.types.find((ty) => ty.startsWith("image/"));
         if (type) {
@@ -2448,10 +2452,17 @@
           return;
         }
       }
-    } catch {
-      /* permission denied or unsupported: fall back to the internal copy */
+    } catch (e) {
+      readError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
-    if (!pasteInternal()) flashStatus("Nothing to paste — copy a selection or an image first");
+    const pasted = pasteInternal();
+    if (readError) {
+      const what = pasted ? "Pasted the last copy made here" : "Nothing pasted";
+      flashStatus(
+        `${what} — can't read the clipboard (${readError}). Allow Clipboard for this site, or use Cmd/Ctrl+V`,
+        10000,
+      );
+    } else if (!pasted) flashStatus("Nothing to paste — copy a selection or an image first");
   }
 
   function init(): () => void {
