@@ -1,17 +1,28 @@
 <script lang="ts">
   // App preferences (saved with the other settings, not in the document). A home for more to come.
+  import { Plus, Trash2 } from "@lucide/svelte";
   import { app } from "../appState.svelte.js";
+  import { FONT_FILE_ACCEPT } from "../text-fonts";
 
   let {
     open = false,
     onChange,
     onClose,
+    fonts,
+    onAddFont,
+    onRemoveFont,
   }: {
     open: boolean;
     /** Called after a setting changes, so the caller can persist it. */
     onChange: () => void;
     onClose: () => void;
+    /** The fonts added on this device (the text dialog's +), as listed there. */
+    fonts: { key: string; label: string }[];
+    onAddFont: (file: File) => void;
+    onRemoveFont: (key: string) => void;
   } = $props();
+
+  let fontInputEl = $state<HTMLInputElement>();
 
   function onWindowKey(e: KeyboardEvent) {
     if (!open) return;
@@ -57,6 +68,49 @@
           hides them: tags already on layers stay, and are still exported.
         </span>
       </label>
+
+      <!-- The font library is per device, like the other settings here, not part of a document. -->
+      <div class="flex flex-col gap-1.5 text-xs text-text-secondary">
+        <span class="text-text">Fonts on this device</span>
+        {#if fonts.length}
+          <ul class="flex max-h-40 flex-col overflow-y-auto">
+            {#each fonts as f (f.key)}
+              <li class="flex items-center gap-2 py-0.5">
+                <span class="min-w-0 flex-1 truncate" title={f.label}>{f.label}</span>
+                <button
+                  class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text"
+                  title="Remove {f.label} from this device — text layers using it keep their look"
+                  onclick={() => onRemoveFont(f.key)}><Trash2 size={13} /></button
+                >
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <span class="text-text-muted">None yet — add one here or with + in the text dialog.</span>
+        {/if}
+        <div>
+          <button
+            class="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-text-secondary hover:bg-surface-hover"
+            title="Add a font file (TTF, OTF, WOFF or WOFF2) — kept on this device for every document"
+            onclick={() => fontInputEl?.click()}><Plus size={13} /> Add font…</button
+          >
+          <input
+            bind:this={fontInputEl}
+            type="file"
+            class="hidden"
+            accept={FONT_FILE_ACCEPT}
+            onchange={() => {
+              const file = fontInputEl?.files?.[0];
+              if (fontInputEl) fontInputEl.value = "";
+              if (file) onAddFont(file);
+            }}
+          />
+        </div>
+        <span class="text-[11px] text-text-muted">
+          A text layer whose font is removed keeps its look, and shows the font as missing until
+          it's added again.
+        </span>
+      </div>
 
       <div class="flex justify-end pt-1">
         <button

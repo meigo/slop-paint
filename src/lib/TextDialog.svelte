@@ -3,7 +3,7 @@
   // the layer); OK keeps it as one undo step, Cancel puts back what was there.
   import { untrack } from "svelte";
   import { Plus, TextAlignCenter, TextAlignEnd, TextAlignStart } from "@lucide/svelte";
-  import type { FontSource } from "../text-fonts";
+  import { FONT_FILE_ACCEPT, type FontSource } from "../text-fonts";
   import {
     DEFAULT_TEXT_SPEC,
     bundledFont,
@@ -194,7 +194,7 @@
           bind:this={fontInputEl}
           type="file"
           class="hidden"
-          accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2,application/x-font-ttf,application/x-font-otf,application/font-woff,application/vnd.ms-opentype"
+          accept={FONT_FILE_ACCEPT}
           onchange={addFont}
         />
       </div>

@@ -30,11 +30,19 @@ export interface LibraryFont {
 
 export type FontSource = "bundled" | "library" | "installed" | "missing";
 
+/** A file input's `accept` for font files. The MIME types as well as the extensions: iPad's Files
+ *  picker greys out files whose type isn't listed. */
+export const FONT_FILE_ACCEPT =
+  ".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2,application/x-font-ttf,application/x-font-otf,application/font-woff,application/vnd.ms-opentype";
+
 const KEY = "fonts";
 let library: LibraryFont[] = [];
 let ready: Promise<void> | null = null;
+/** Each library face as registered with the page, so removing (or replacing) it can take it back
+ *  out — otherwise it keeps drawing until a reload. */
+const faces = new Map<string, FontFace>();
 
-const faceKey = (f: Pick<LibraryFont, "family" | "weight" | "italic">) =>
+export const faceKey = (f: Pick<LibraryFont, "family" | "weight" | "italic">) =>
   fontKey({ font: f.family, weight: f.weight, italic: f.italic });
 
 async function register(f: LibraryFont) {
@@ -43,7 +51,11 @@ async function register(f: LibraryFont) {
     style: f.italic ? "italic" : "normal",
   });
   await face.load(); // rejects on a file the browser can't use
+  const key = faceKey(f);
+  const old = faces.get(key);
+  if (old) document.fonts.delete(old);
   document.fonts.add(face);
+  faces.set(key, face);
 }
 
 /** The library, loaded from storage and registered with the page — once; every font lookup waits
@@ -115,6 +127,17 @@ export async function addFontFile(file: File): Promise<LibraryFont> {
   library = [...library.filter((f) => faceKey(f) !== key), entry];
   await idbDo(KV_STORE, "readwrite", (s) => s.put(library, KEY));
   return entry;
+}
+
+/** Take a face out of the library and off the page. Text layers using it are the caller's to
+ *  update (App keeps their current look). */
+export async function removeLibraryFont(key: string): Promise<void> {
+  await fontLibraryReady();
+  const face = faces.get(key);
+  if (face) document.fonts.delete(face);
+  faces.delete(key);
+  library = library.filter((f) => faceKey(f) !== key);
+  await idbDo(KV_STORE, "readwrite", (s) => s.put(library, KEY));
 }
 
 /** Whether `family` (at a weight/style) is installed and visible to the page: text in it measures

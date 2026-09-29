@@ -22,9 +22,16 @@
   import { cornersFromMatrix, cornersFromRect, matrixFromCorners } from "./ref-placement";
   import { decodeRefSource } from "./ref-image";
   import { buildTextSource } from "./text-ref";
-  import { addFontFile, fontLibraryReady, fontSource, libraryFonts } from "./text-fonts";
+  import {
+    addFontFile,
+    fontLibraryReady,
+    fontSource,
+    libraryFonts,
+    removeLibraryFont,
+  } from "./text-fonts";
   import {
     DEFAULT_TEXT_SPEC,
+    fontKey,
     fontLabel,
     refitCorners,
     textLayerName,
@@ -1946,6 +1953,44 @@
   }
 
   /**
+   * Take a font out of this device's library. Text layers using it keep their look: they switch to
+   * their current picture (`savedOnly` — their raster copy) and are marked missing, as an opened
+   * file without the font is; adding it again brings them back (`refreshTextFonts`). A layer whose
+   * font is also installed on the system just goes on drawing from there.
+   */
+  async function removeFont(key: string) {
+    const face = fontList.find((f) => fontKey(f) === key);
+    if (!face) return;
+    try {
+      await removeLibraryFont(key);
+    } catch (e) {
+      flashStatus(e instanceof Error ? e.message : "Couldn't remove that font");
+      return;
+    }
+    refreshFontList();
+    let kept = 0;
+    if (layers) {
+      const seen = new Set<RefSource>();
+      for (const l of layers.flatLayers()) {
+        const src = l.ref?.src;
+        const text = src?.text;
+        if (!src || !text || text.savedOnly || seen.has(src)) continue;
+        seen.add(src);
+        if ((await fontSource(text.spec)) !== "missing") continue;
+        src.text = { ...text, fontMissing: true, savedOnly: true };
+        kept++;
+      }
+      if (kept) bumpLayerVersion();
+    }
+    flashStatus(
+      `Removed ${fontLabel(face)} from this device` +
+        (kept
+          ? ` — ${kept} text layer${kept > 1 ? "s" : ""} keep${kept > 1 ? "" : "s"} its look until it's added again`
+          : ""),
+    );
+  }
+
+  /**
    * Rebuild every text layer whose font was missing and now isn't (it was just added). Their
    * sources are updated in place — duplicates share one, and undo holds the same object — and
    * drawn from their settings again. Returns how many sources came back.
@@ -2632,6 +2677,9 @@
   <SettingsDialog
     open={showSettingsDialog}
     onChange={debouncedSave}
+    fonts={fontList.map((f) => ({ key: fontKey(f), label: fontLabel(f) }))}
+    onAddFont={(file) => void addFont(file)}
+    onRemoveFont={(key) => void removeFont(key)}
     onClose={() => {
       showSettingsDialog = false;
     }}
