@@ -52,6 +52,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
   **Mesh warp** (3×3 up to 8×8; finer keeps your bends), flip, keep proportions — with nothing
   selected they take the whole layer
+- A selection you're moving or transforming shows as it will land: in its layer's place, with the
+  layer's opacity and blend mode
 - A transform belongs to the layer it came from: picking another layer applies it there first, and
   says so
 - Copy, cut, paste and delete — including copying a transformed or warped selection as shown.
