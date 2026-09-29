@@ -89,7 +89,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Layers**
 
-- Layers and nested groups, drag-and-drop reordering, double-tap (or double-click) a name to rename
+- Layers and nested groups: **New group** (or Ctrl+G) puts the selected layer or group into one;
+  drag-and-drop reordering, double-tap (or double-click) a name to rename
 - **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
   other modes are kept too)
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
@@ -150,6 +151,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 | R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise   |
 | Ctrl+S / Ctrl+O / Ctrl+N   | Save / open project (PSD) / new document            |
 | Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)               |
+| Ctrl+G                     | Put the selected layer or group into a new group    |
 | ↑ / ↓                      | Select the layer above / below                      |
 
 Cmd works in place of Ctrl on a Mac.

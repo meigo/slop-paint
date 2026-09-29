@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { adjacentRow, lockedInTree, type LayerNode } from "../layers";
+import { adjacentRow, lockedInTree, wrapInGroup, type LayerGroup, type LayerNode } from "../layers";
 
 // Plain nodes: lockedInTree only reads the tree's shape and lock flags, never the canvases.
 const layer = (id: number, locked = false) =>
@@ -54,5 +54,35 @@ describe("adjacentRow", () => {
   it("stays put at either end", () => {
     expect(adjacentRow(tree(false), 10, "up")).toBe(null);
     expect(adjacentRow(tree(false), 1, "down")).toBe(null);
+  });
+});
+
+describe("wrapInGroup", () => {
+  const newGroup = () => group(99, []) as LayerGroup;
+  const ids = (nodes: LayerNode[]): unknown[] =>
+    nodes.map((n) => (n.type === "group" ? [n.id, ids(n.children)] : n.id));
+
+  it("puts a top-level layer into the group, in its place", () => {
+    const tree = [layer(1), layer(2), layer(3)];
+    expect(wrapInGroup(tree, 2, newGroup())).toBe(true);
+    expect(ids(tree)).toEqual([1, [99, [2]], 3]);
+  });
+
+  it("wraps a layer inside a group without leaving that group", () => {
+    const tree = [layer(1), group(10, [layer(3), layer(4)])];
+    expect(wrapInGroup(tree, 4, newGroup())).toBe(true);
+    expect(ids(tree)).toEqual([1, [10, [3, [99, [4]]]]]);
+  });
+
+  it("wraps a whole group, nesting it", () => {
+    const tree = [group(10, [layer(3)]), layer(1)];
+    expect(wrapInGroup(tree, 10, newGroup())).toBe(true);
+    expect(ids(tree)).toEqual([[99, [[10, [3]]]], 1]);
+  });
+
+  it("leaves the tree alone for an id that isn't in it", () => {
+    const tree = [layer(1)];
+    expect(wrapInGroup(tree, 42, newGroup())).toBe(false);
+    expect(ids(tree)).toEqual([1]);
   });
 });

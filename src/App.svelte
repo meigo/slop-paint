@@ -1169,6 +1169,14 @@
       showNewDocDialog = true;
       return;
     }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g" && !e.shiftKey) {
+      // Group the active layer or group (Photoshop's Group Layers; the panel's New group button).
+      e.preventDefault();
+      if (!layers) return;
+      structuralEdit(layers, () => layers.groupActive());
+      bumpLayerVersion();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === "z") {
       e.preventDefault();
       if (e.shiftKey) redo();

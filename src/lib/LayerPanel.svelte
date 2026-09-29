@@ -86,7 +86,7 @@
   }
 
   function addGroup() {
-    structuralEdit(layers, () => layers.addGroup());
+    structuralEdit(layers, () => layers.groupActive());
     bumpLayerVersion();
   }
 
@@ -510,7 +510,11 @@
       <button class={headerBtn} onclick={addLayer} title="Add layer">
         <Plus size={16} />
       </button>
-      <button class={headerBtn} onclick={addGroup} title="Add group">
+      <button
+        class={headerBtn}
+        onclick={addGroup}
+        title="Group the selected layer or group (Ctrl+G)"
+      >
         <FolderPlus size={16} />
       </button>
       <button

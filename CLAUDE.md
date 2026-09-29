@@ -138,6 +138,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Ctrl+Z / Ctrl+Shift+Z — undo/redo
 - Ctrl+C / Ctrl+X / Ctrl+V — copy / cut / paste selection; Delete or Backspace — clear selection
 - Ctrl+S / Ctrl+O — save/open project (PSD)
+- Ctrl+G — put the selected layer or group into a new group
 - ↑ / ↓ — select the layer or group row above/below (`adjacentRow`; skips a collapsed group's members; ignored while a slider/dropdown has focus or a selection is lifted)
 - Space+drag or middle mouse — pan
 - Trackpad: two-finger swipe pans, pinch zooms; mouse wheel pans, Ctrl/Cmd+wheel zooms (as in slop-animator)
@@ -146,6 +147,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - Lock: prevent editing. Groups lock too, and lock every member without changing the members' own locks; check with `layers.isLocked(node)` (`lockedInTree`), never `.locked`. A layer locked only by its group shows an amber lock with its own icon. Locks are not saved in the PSD (nor autosave)
 - Alpha lock: paint only on existing pixels
+- New group (the panel's folder button, Ctrl+G) puts the ACTIVE layer or group into a new group in its place, as slop-animator's New group and Photoshop's Group Layers (`groupActive` / pure `wrapInGroup`); the active node stays active, so drawing carries on on the same layer. One undo step. Before 2026-09-29 it added an EMPTY group above the selection, to be filled by dragging. A selected group gets nested; there is no multi-select, so it groups one row at a time
 - Duplicate layer, or a whole group (`duplicateGroup`: every member copied with fresh ids, placed above the original)
 - Merge down (onto layer below)
 - Per-layer opacity, visibility

@@ -81,6 +81,21 @@ export interface StructSnapshot {
 }
 
 /** Copy the arrays and group nodes; keep Layer objects (and their canvases) shared. */
+/** Put node `id` into `group` (emptied first), in the node's place in its parent — as Photoshop's
+ *  Group Layers. False when `id` isn't in the tree. */
+export function wrapInGroup(tree: LayerNode[], id: number, group: LayerGroup): boolean {
+  for (let i = 0; i < tree.length; i++) {
+    const node = tree[i];
+    if (node.id === id) {
+      group.children = [node];
+      tree[i] = group;
+      return true;
+    }
+    if (node.type === "group" && wrapInGroup(node.children, id, group)) return true;
+  }
+  return false;
+}
+
 /** Whether node `id` refuses edits: its own lock, or any enclosing group's. */
 export function lockedInTree(tree: LayerNode[], id: number): boolean {
   const walk = (nodes: LayerNode[], inherited: boolean): boolean | null => {
@@ -353,8 +368,17 @@ export class LayerManager {
     return layer;
   }
 
-  addGroup(name?: string): LayerGroup {
-    const group: LayerGroup = {
+  /** Put the active layer or group into a new group in its place (slop-animator's New group). The
+   *  active node stays active, so a layer being drawn on still is. Null when nothing is active. */
+  groupActive(): LayerGroup | null {
+    const group = this.newGroup();
+    if (!wrapInGroup(this.tree, this.activeId, group)) return null;
+    this.onChange();
+    return group;
+  }
+
+  private newGroup(name?: string): LayerGroup {
+    return {
       type: "group",
       id: nextId++,
       name: name ?? `Group ${this.flatAll().filter((n) => n.type === "group").length + 1}`,
@@ -364,9 +388,6 @@ export class LayerManager {
       collapsed: false,
       locked: false,
     };
-    this.insertAtSelection(group);
-    this.onChange();
-    return group;
   }
 
   removeNode(id: number) {
