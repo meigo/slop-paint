@@ -1332,7 +1332,7 @@
     if (!autosaveReady) return;
     autosaveDirty = true;
     clearTimeout(autosaveTimer);
-    autosaveTimer = setTimeout(flushAutosave, 3000);
+    autosaveTimer = setTimeout(autosaveWhenQuiet, 3000);
   });
 
   // The tab shows which project is open.
@@ -1742,6 +1742,54 @@
   let autosaveReady = false;
   let autosaveDirty = false;
   let autosaveTimer: ReturnType<typeof setTimeout>;
+
+  // Encoding the PSD blocks the page — 0.5–0.9 s on a Mac for a 1920×1080 document at dpr 2 with five
+  // layers, several times that on iPad — and pen events that arrive meanwhile are lost: the stroke
+  // jumped a straight chord across the gap. The 3 s timer counts from a stroke's END, so the next
+  // stroke was usually under way when it fired, about two seconds in. So the save waits while any
+  // pointer is pressed and until AUTOSAVE_QUIET_MS after the last one lifts. (The hide-flush below
+  // still saves at once: nobody is drawing on a hidden tab.)
+  const AUTOSAVE_QUIET_MS = 1500;
+  /** A pressed pointer that has sent nothing for this long is taken as lifted: an `up` that was
+   *  somehow missed must not hold the autosave off for good. (A moving pen reports constantly.) */
+  const POINTER_STALE_MS = 5000;
+  const pointersDown = new Map<number, number>(); // id → when it last reported
+  let lastPointerUp = 0;
+  $effect(() => {
+    const seen = (e: PointerEvent) => {
+      if (e.type === "pointerdown" || pointersDown.has(e.pointerId)) {
+        pointersDown.set(e.pointerId, performance.now());
+      }
+    };
+    const up = (e: PointerEvent) => {
+      pointersDown.delete(e.pointerId);
+      lastPointerUp = performance.now();
+    };
+    window.addEventListener("pointerdown", seen, true);
+    window.addEventListener("pointermove", seen, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("pointerdown", seen, true);
+      window.removeEventListener("pointermove", seen, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  });
+
+  /** The timed autosave: now if nobody is drawing, else as soon as they've stopped for a moment. */
+  function autosaveWhenQuiet() {
+    const now = performance.now();
+    for (const [id, at] of pointersDown) if (now - at > POINTER_STALE_MS) pointersDown.delete(id);
+    const wait =
+      pointersDown.size > 0 ? AUTOSAVE_QUIET_MS : lastPointerUp + AUTOSAVE_QUIET_MS - now;
+    if (wait > 0) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(autosaveWhenQuiet, wait);
+      return;
+    }
+    flushAutosave();
+  }
 
   function flushAutosave() {
     if (!autosaveReady || !autosaveDirty || !layers) return;

@@ -253,6 +253,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## Autosave
 
 - The project is autosaved to IndexedDB (db `slop-paint`, store `kv`, key `autosave`) as a PSD buffer, 3s after the last change and immediately when the tab is hidden (`pagehide` / `visibilitychange`), and restored on startup
+- Encoding blocks the page (0.5–0.9 s on a Mac for 1920×1080 at dpr 2 with five layers, several times that on iPad), and pen events arriving meanwhile are lost — the stroke drew a straight chord across the gap, about two seconds into the NEXT stroke, since the 3 s counts from a stroke's end. So the timed save (`autosaveWhenQuiet`) waits while any pointer is pressed and until `AUTOSAVE_QUIET_MS` (1.5 s) after the last lifts; pressed pointers are tracked by id with their last report, and one silent for `POINTER_STALE_MS` (5 s) counts as lifted, so a missed `pointerup` can't block saving for good. The hide-flush still saves at once
 - `persist/db.ts` guarantees the open promise settles (a version upgrade blocked by another tab fires no event) and closes the connection on both paths; `persist/generation.ts` drops in-flight saves superseded by a newer save or New
 - Autosave stays OFF for the session if the startup restore failed, so a blank document can't overwrite the stored copy; failures are reported with a sticky `flashStatus(msg, 0)`
 - New clears the slot. About 0.5 MB for a 1920×1080 doc with 3 layers
