@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { PASTE_OFFSET, placeExternalImage, placeInternalPaste, referenceLayerName } from "../paste";
+import {
+  imageUrlFromClipboard,
+  PASTE_OFFSET,
+  placeExternalImage,
+  placeInternalPaste,
+  referenceLayerName,
+} from "../paste";
 import { parseTags } from "../spine-tags";
 
 describe("placeExternalImage", () => {
@@ -54,5 +60,27 @@ describe("referenceLayerName", () => {
   it("falls back to plain 'ref' for a paste or an empty name", () => {
     expect(referenceLayerName()).toBe("[ignore]ref");
     expect(referenceLayerName("  ")).toBe("[ignore]ref");
+  });
+});
+
+describe("imageUrlFromClipboard", () => {
+  it("takes an <img> src from the HTML", () => {
+    const html =
+      '<meta charset="utf-8"><img src="https://cdn.example.com/a/0_7.jpeg?x=1&amp;y=2" alt="">';
+    expect(imageUrlFromClipboard(html, "", "")).toBe("https://cdn.example.com/a/0_7.jpeg?x=1&y=2");
+  });
+
+  it("takes an image URL from the uri-list or plain text", () => {
+    const url = "https://cdn.midjourney.com/21e2255e/0_7.jpeg";
+    expect(imageUrlFromClipboard("", `# comment\r\n${url}`, "")).toBe(url);
+    expect(imageUrlFromClipboard("", "", ` ${url} `)).toBe(url);
+  });
+
+  it("ignores links that aren't images, and non-http addresses", () => {
+    expect(imageUrlFromClipboard("", "https://example.com/page", "")).toBeNull();
+    expect(imageUrlFromClipboard("", "", "hello https://x.com/a.png")).toBeNull();
+    expect(imageUrlFromClipboard('<img src="data:image/png;base64,AAA">', "", "")).toBeNull();
+    expect(imageUrlFromClipboard("", "", "file:///tmp/a.png")).toBeNull();
+    expect(imageUrlFromClipboard("", "", "")).toBeNull();
   });
 });

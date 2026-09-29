@@ -36,3 +36,28 @@ export function referenceLayerName(fileName?: string): string {
   const base = (fileName ?? "").replace(/\.[^.]+$/, "").trim();
   return buildName(base ? `ref ${base}` : "ref", ["ignore"]);
 }
+
+const IMAGE_PATH = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
+
+/**
+ * The address of the image a clipboard carries when it doesn't carry the image itself — as when
+ * Chrome on iPad copies an image from Midjourney (why is unconfirmed — perhaps a WebP), which it won't
+ * hand over as an image. Taken from an `<img>` in the HTML, else a URL in the uri-list or plain
+ * text whose path ends in an image extension (so copying a page's link fetches nothing). `null`
+ * when there is none, or it isn't http(s).
+ */
+export function imageUrlFromClipboard(html: string, uriList: string, plain: string): string | null {
+  const src = /<img\b[^>]*?\ssrc\s*=\s*(["'])(.*?)\1/i.exec(html)?.[2]?.replace(/&amp;/g, "&");
+  if (src && /^https?:\/\//i.test(src)) return src;
+  const uri = uriList.split(/\r?\n/).find((l) => l.trim() && !l.startsWith("#"));
+  for (const candidate of [uri, plain]) {
+    const text = candidate?.trim();
+    if (!text || !/^https?:\/\/\S+$/i.test(text)) continue;
+    try {
+      if (IMAGE_PATH.test(new URL(text).pathname)) return text;
+    } catch {
+      /* not a URL */
+    }
+  }
+  return null;
+}

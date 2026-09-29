@@ -64,6 +64,7 @@
   import { Selection, type SelectionRect } from "./selection";
   import { MESH_MIN, meshStepBlock } from "./mesh-size";
   import {
+    imageUrlFromClipboard,
     placeExternalImage,
     placeInternalPaste,
     referenceLayerName,
@@ -2410,11 +2411,71 @@
       .find((i) => i.kind === "file" && i.type.startsWith("image/"))
       ?.getAsFile();
     e.preventDefault();
-    if (file) void pasteImageBlob(file).catch(() => pasteInternal());
-    else pasteInternal();
+    if (file) return void pasteImageBlob(file).catch(() => pasteInternal());
+    // Only an image's address (as Midjourney's on iPad, see clipboardImage): fetch it.
+    const d = e.clipboardData;
+    const url = d
+      ? imageUrlFromClipboard(
+          d.getData("text/html"),
+          d.getData("text/uri-list"),
+          d.getData("text/plain"),
+        )
+      : null;
+    if (!url) return void pasteInternal();
+    void fetchImage(url).then(async (blob) => {
+      if (blob) return pasteImageBlob(blob);
+      if (!pasteInternal())
+        flashStatus(
+          `Couldn't fetch the copied image from ${new URL(url).host} — save it and use File ▸ Import image…`,
+          10000,
+        );
+    });
   }
 
   /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
+  /**
+   * The image on the system clipboard, if any. Browsers expose only the image types they can
+   * convert, and a copy can carry only the image's ADDRESS (the guess for Midjourney's images in
+   * Chrome on iPad, which gave no image), so an http(s) address is fetched instead — it needs the server to
+   * allow cross-origin reads (Midjourney's does). `null` when there is neither.
+   */
+  async function clipboardImage(items: ClipboardItems): Promise<Blob | null> {
+    for (const item of items) {
+      const type = item.types.find((t) => t.startsWith("image/"));
+      if (type) return item.getType(type);
+    }
+    for (const item of items) {
+      const read = async (type: string) =>
+        item.types.includes(type) ? (await item.getType(type)).text() : "";
+      const url = imageUrlFromClipboard(
+        await read("text/html"),
+        await read("text/uri-list"),
+        await read("text/plain"),
+      );
+      const blob = url ? await fetchImage(url) : null;
+      if (blob) return blob;
+    }
+    return null;
+  }
+
+  /** Fetch an image from another site (it must allow cross-origin reads); `null` if it can't be
+   *  read or isn't an image. */
+  async function fetchImage(url: string): Promise<Blob | null> {
+    try {
+      const res = await fetch(url, { mode: "cors", credentials: "omit" });
+      const blob = res.ok ? await res.blob() : null;
+      return blob?.type.startsWith("image/") ? blob : null;
+    } catch {
+      return null; // blocked cross-origin, or offline
+    }
+  }
+
+  /** What the clipboard holds, for a message when it holds no image: "text/plain, text/uri-list". */
+  function clipboardTypes(items: ClipboardItems): string {
+    const types = [...new Set(items.flatMap((i) => [...i.types]))];
+    return types.length ? types.join(", ") : "nothing";
+  }
+
   /** File ▸ Import image from clipboard: only an image on the SYSTEM clipboard, always as a
    *  reference (Edit ▸ Paste also falls back to the internal copy, so it is not obviously this).
    *  `clipboard.read()` is called before any await, so Safari still counts it as the tap's. */
@@ -2429,29 +2490,25 @@
       const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       return flashStatus(`Can't read the clipboard (${why}) — try File ▸ Import image…`, 0);
     }
-    for (const item of items) {
-      const type = item.types.find((t) => t.startsWith("image/"));
-      if (!type) continue;
-      await importReferenceFile(await item.getType(type));
-      return;
-    }
-    flashStatus("No image on the clipboard — copy one first");
+    const blob = await clipboardImage(items);
+    if (blob) return importReferenceFile(blob);
+    flashStatus(
+      `No image the browser can read on the clipboard (it holds: ${clipboardTypes(items)}) — save the image and use File ▸ Import image…`,
+      10000,
+    );
   }
 
   async function pasteFromMenu() {
     // Why the system clipboard couldn't be read (Chrome: its Clipboard permission blocked or the
     // prompt dismissed) — said out loud, as "Nothing to paste" hid an image the user HAD copied.
     let readError = "";
+    let holds = "";
     try {
       if (!navigator.clipboard?.read) throw new Error("not supported here");
       const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const type = item.types.find((ty) => ty.startsWith("image/"));
-        if (type) {
-          await pasteImageBlob(await item.getType(type));
-          return;
-        }
-      }
+      holds = clipboardTypes(items);
+      const blob = await clipboardImage(items);
+      if (blob) return pasteImageBlob(blob);
     } catch (e) {
       readError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
@@ -2462,7 +2519,11 @@
         `${what} — can't read the clipboard (${readError}). Allow Clipboard for this site, or use Cmd/Ctrl+V`,
         10000,
       );
-    } else if (!pasted) flashStatus("Nothing to paste — copy a selection or an image first");
+    } else if (!pasted)
+      flashStatus(
+        `Nothing to paste — no image the browser can read on the clipboard (it holds: ${holds})`,
+        10000,
+      );
   }
 
   function init(): () => void {
