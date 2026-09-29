@@ -75,6 +75,13 @@
   import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
   import { history, pushPixelEdit, pushRefEdit, setOnHistoryApplied, structuralEdit } from "./undo";
   import { canShareFile, saveToFilesAvailable, shareFile } from "./share";
+  import {
+    fileAccessAvailable,
+    isAbort,
+    pickOpenFile,
+    pickSaveFile,
+    writeFile,
+  } from "./file-access";
   import { downloadBlob } from "./download";
   import ShareReadyDialog from "./lib/ShareReadyDialog.svelte";
   import { untrack } from "svelte";
@@ -591,9 +598,60 @@
     withFloatApplied(() => exportPsd(layers, `${sanitizeFilename(app.projectName)}-export.psd`));
   }
 
+  // --- Save / Save as ---
+  // Where the browser lets a page write to a file the user picks (Chrome and Edge on desktop), the
+  // document keeps the file it was saved to or opened from: Save writes back to it, Save as picks
+  // another. Elsewhere (Safari, iPad) Save downloads a copy, as it always did. The link is for the
+  // session only — after a reload the first Save asks again.
+  let docFile: FileSystemFileHandle | null = null;
+
   function doSavePsd() {
     if (!layers) return;
-    withFloatApplied(() => savePsd(layers, `${sanitizeFilename(app.projectName)}.psd`));
+    if (!fileAccessAvailable()) {
+      withFloatApplied(() => savePsd(layers, `${sanitizeFilename(app.projectName)}.psd`));
+      return;
+    }
+    if (docFile) void writeDocTo(docFile);
+    else void doSaveAs();
+  }
+
+  /** Ask for a file and save there; the document belongs to that file from now on, and takes its
+   *  name. Without file access (Safari, iPad) it's a plain Save, a download. */
+  async function doSaveAs() {
+    if (!layers) return;
+    if (!fileAccessAvailable()) return doSavePsd();
+    let handle: FileSystemFileHandle | null;
+    try {
+      handle = await pickSaveFile(`${sanitizeFilename(app.projectName)}.psd`);
+    } catch (e) {
+      flashStatus(`Couldn't save — ${e instanceof Error ? e.message : String(e)}`, 10000);
+      return;
+    }
+    if (!handle || !(await writeDocTo(handle))) return;
+    docFile = handle;
+    app.projectName = nameFromFile(handle.name);
+  }
+
+  /** Write the project over `handle`; whether it was written (a dismissed prompt says nothing). */
+  async function writeDocTo(handle: FileSystemFileHandle): Promise<boolean> {
+    if (!layers) return false;
+    try {
+      await writeFile(
+        handle,
+        withFloatApplied(() => psdBuffer(layers, false)),
+      );
+      flashStatus(`Saved ${handle.name}`);
+      return true;
+    } catch (e) {
+      if (!isAbort(e)) {
+        console.error(`saving "${handle.name}" failed`, e);
+        flashStatus(
+          `Couldn't save ${handle.name} — ${e instanceof Error ? e.message : String(e)}`,
+          10000,
+        );
+      }
+      return false;
+    }
   }
 
   // --- Save to Files (iPad/iPhone) ---
@@ -630,6 +688,7 @@
   function newDocument(width: number, height: number, name: string) {
     if (!layers) return;
     app.projectName = name.trim() || "untitled";
+    docFile = null; // a new document has no file until it's saved
     if (outlineActive()) cancelOutline();
     void clearAutosave().catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
@@ -663,13 +722,31 @@
     showResizeDialog = false;
   }
 
-  function doOpenPsd() {
-    fileInputEl?.click();
+  /** Open a project: through the file dialog where the page can keep the file (then Save writes
+   *  back to it), else the plain file input. */
+  async function doOpenPsd() {
+    if (!fileAccessAvailable()) {
+      fileInputEl?.click();
+      return;
+    }
+    try {
+      const handle = await pickOpenFile();
+      if (handle) openProjectFile(await handle.getFile(), handle);
+    } catch (e) {
+      flashStatus(`Couldn't open — ${e instanceof Error ? e.message : String(e)}`, 10000);
+    }
   }
 
   function handleFileLoad() {
     const file = fileInputEl?.files?.[0];
-    if (!file || !layers) return;
+    fileInputEl.value = "";
+    if (file) openProjectFile(file, null);
+  }
+
+  /** Load a PSD as the document. `handle` is the file it came from (Chrome/Edge), which Save then
+   *  writes back to; null for the file input, whose files can't be written. */
+  function openProjectFile(file: File, handle: FileSystemFileHandle | null) {
+    if (!layers) return;
     const reader = new FileReader();
     // A file that can't be read or parsed said nothing at all before: say what went wrong.
     const failed = (e: unknown) => {
@@ -693,6 +770,7 @@
       }
       if (outlineActive()) cancelOutline();
       app.projectName = nameFromFile(file.name);
+      docFile = handle;
       const { width, height } = size;
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
@@ -706,7 +784,6 @@
       fitDocumentInView();
     };
     reader.readAsArrayBuffer(file);
-    fileInputEl.value = "";
   }
 
   function resetView() {
@@ -1075,6 +1152,11 @@
     // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
     if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
 
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      void doSaveAs();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
       doSavePsd();
@@ -1082,7 +1164,7 @@
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "o") {
       e.preventDefault();
-      doOpenPsd();
+      void doOpenPsd();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "n") {
@@ -2631,7 +2713,8 @@
           exportPsd={doExportPsd}
           savePsd={doSavePsd}
           saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
-          openPsd={doOpenPsd}
+          saveAs={fileAccessAvailable() ? () => void doSaveAs() : null}
+          openPsd={() => void doOpenPsd()}
           importReference={() => imageInputEl?.click()}
           importReferenceFromClipboard={() => void importReferenceFromClipboard()}
           newDoc={() => {

@@ -78,6 +78,7 @@
     saveImage,
     exportPsd,
     savePsd,
+    saveAs,
     saveToFiles,
     openPsd,
     importReference,
@@ -134,6 +135,8 @@
     savePsd: () => void;
     /** iPad/iPhone only: null elsewhere, and then the menu item is hidden. */
     saveToFiles: (() => void) | null;
+    /** Save to a file the user picks (Chrome/Edge desktop); null where the browser can't. */
+    saveAs: (() => void) | null;
     openPsd: () => void;
     /** Pick an image file to add as a reference layer. */
     importReference: () => void;
@@ -388,12 +391,25 @@
         <button
           class={menuItem}
           role="menuitem"
-          title="Save the project as a PSD — references stay Smart Objects"
+          title={saveAs
+            ? "Save the project to its PSD file — the first time, pick where (references stay Smart Objects)"
+            : "Save the project as a PSD download — references stay Smart Objects"}
           onclick={() => {
             savePsd();
             close();
           }}>Save <span class={kbd}>Ctrl+S</span></button
         >
+        {#if saveAs}
+          <button
+            class={menuItem}
+            role="menuitem"
+            title="Save the project to a new PSD file — it's the document's file from then on"
+            onclick={() => {
+              saveAs();
+              close();
+            }}>Save as… <span class={kbd}>Ctrl+Shift+S</span></button
+          >
+        {/if}
         {#if saveToFiles}
           <button
             class={menuItem}
