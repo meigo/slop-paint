@@ -178,6 +178,10 @@
   let smoothPendingPoints: InputPoint[] | null = null;
   // Raw points of the brush/eraser stroke in progress, null between strokes.
   let openStrokePoints: InputPoint[] | null = null;
+  /** The layer a brush/eraser stroke started on. The stroke stays on it to the end: the active
+   *  layer can change under an open stroke (↑/↓, a finger on the layer panel), and re-reading it
+   *  drew the first layer's pre-stroke copy over the new one, with the wrong undo `before`. */
+  let strokeLayer: Layer | null = null;
   let dropStrokeUntilUp = false;
 
   function saveLayerToCanvas(layer: {
@@ -286,6 +290,7 @@
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
+    markSaved(); // resampling can drop a faint layer's last pixels: a new baseline, not a blanking
     debouncedSave();
     flashStatus(
       hi
@@ -484,6 +489,9 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
+    // Not under an open stroke: its pre-stroke copy still holds the step, so the release would put
+    // the undone pixels back and lose the step for good (a two-finger tap while the Pencil draws).
+    if (openStrokePoints) return;
     // A live Outline preview looks like an edit already made, and undo is the artist taking it
     // back. Cancel it and stop there, or the undo would also take back the edit before it.
     if (outlineActive()) {
@@ -499,6 +507,7 @@
 
   function redo() {
     if (!layers) return;
+    if (openStrokePoints) return;
     if (outlineActive()) {
       cancelOutline();
       return;
@@ -602,12 +611,27 @@
     bumpLayerVersion();
   }
 
-  /** Run `fn` (a save or export) with a lifted float drawn into its layer, as Apply would draw it,
-   *  then put the layer back. A lift leaves a hole in the layer until it is applied, and a save
+  /** Run `fn` (a save, an export, the blank-layers probe) on the document as it stands without
+   *  pending edits: a lifted float drawn into its layer, as Apply would draw it, and a live Outline
+   *  preview taken back out; then put the layer back. A lift leaves a hole in the layer until it is applied, and a save
    *  stored that hole: an autosave during a transform — every reference import starts as one —
    *  lost the lifted pixels if the tab closed before Enter. */
-  function withFloatApplied<T>(fn: () => T): T {
-    if (!selection?.hasFloating || !layers) return fn();
+  function withPendingResolved<T>(fn: () => T): T {
+    if (!layers) return fn();
+    // A live Outline preview is written INTO its layer but isn't an edit until Apply: a save taken
+    // meanwhile stored the hollowed layer, and Cancel (no layerVersion bump) never replaced it. So
+    // saves see the layer as it was before the preview.
+    if (outlineLayer && outlineBefore) {
+      const layer = outlineLayer;
+      const preview = layers.snapshotOf(layer);
+      layer.ctx.putImageData(outlineBefore, 0, 0);
+      try {
+        return fn(); // (no float can be live: Outline and a float are on different tools)
+      } finally {
+        layer.ctx.putImageData(preview, 0, 0);
+      }
+    }
+    if (!selection?.hasFloating) return fn();
     const layer = floatLayer ?? layers.active;
     const snap = layers.snapshotOf(layer);
     selection.renderFloatingTo(layer.ctx);
@@ -620,7 +644,7 @@
 
   function saveImage() {
     if (!layers) return;
-    const tmp = withFloatApplied(() => composeImage());
+    const tmp = withPendingResolved(() => composeImage());
     const name = `${sanitizeFilename(app.projectName)}.png`;
     if (saveToFilesAvailable()) {
       // iPad: to the share sheet (Save to Files), as the PSD export — a download lands in
@@ -654,11 +678,11 @@
     // "-export": the trimmed Spine PSD must not overwrite the project saved under the same name.
     const name = `${sanitizeFilename(app.projectName)}-export.psd`;
     if (saveToFilesAvailable()) {
-      const buffer = withFloatApplied(() => psdBuffer(layers, true));
+      const buffer = withPendingResolved(() => psdBuffer(layers, true));
       void sendToFiles(new File([buffer], name, { type: "application/octet-stream" }));
       return;
     }
-    withFloatApplied(() => exportPsd(layers, name));
+    withPendingResolved(() => exportPsd(layers, name));
   }
 
   // --- Save / Save as ---
@@ -673,7 +697,7 @@
     // The Home Screen app can't download at all: Save goes to the share sheet there.
     if (saveToFilesAvailable() && isStandalone()) return void doSaveToFiles();
     if (!fileAccessAvailable()) {
-      withFloatApplied(() => savePsd(layers, `${sanitizeFilename(app.projectName)}.psd`));
+      withPendingResolved(() => savePsd(layers, `${sanitizeFilename(app.projectName)}.psd`));
       return;
     }
     if (docFile) void writeDocTo(docFile);
@@ -703,7 +727,7 @@
     try {
       await writeFile(
         handle,
-        withFloatApplied(() => psdBuffer(layers, false)),
+        withPendingResolved(() => psdBuffer(layers, false)),
       );
       flashStatus(`Saved ${handle.name}`);
       return true;
@@ -727,7 +751,7 @@
   async function doSaveToFiles() {
     if (!layers) return;
     const name = `${sanitizeFilename(app.projectName)}.psd`;
-    const file = new File([withFloatApplied(() => psdBuffer(layers, false))], name, {
+    const file = new File([withPendingResolved(() => psdBuffer(layers, false))], name, {
       type: "application/octet-stream",
     });
     await sendToFiles(file);
@@ -761,7 +785,11 @@
     app.projectName = name.trim() || "untitled";
     docFile = null; // a new document has no file until it's saved
     if (outlineActive()) cancelOutline();
-    void clearAutosave().catch((e) => console.error("clearing autosave failed", e));
+    // Autosave paused over blank layers: the latest is the copy the pause protects — set it aside
+    // before New drops it; the new document then autosaves as usual.
+    void setAsideIfPaused()
+      .then(() => clearAutosave())
+      .catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
     app.docHeight = height;
     layers.tree.length = 0;
@@ -775,6 +803,7 @@
     history.clear(); // a new document starts with nothing to undo
     layers.composite();
     bumpLayerVersion();
+    markSaved();
     fitDocumentInView();
     showNewDocDialog = false;
   }
@@ -782,6 +811,9 @@
   function resizeDocument(width: number, height: number, anchorX: number, anchorY: number) {
     if (!layers) return;
     if (outlineActive()) cancelOutline();
+    // A float and its Cancel snapshot are in the old canvas's coordinates: Apply landed off by the
+    // anchor shift, Cancel wrote the old snapshot back at 0,0. Apply it first, as Sharp layers does.
+    if (selection?.hasFloating) resolveFloat(true);
     app.docWidth = width;
     app.docHeight = height;
     layers.setDocumentSize(width, height, anchorX, anchorY);
@@ -789,6 +821,7 @@
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
+    markSaved(); // a crop that empties layers is deliberate, not a blanking (the guard's baseline)
     fitDocumentInView();
     showResizeDialog = false;
   }
@@ -840,6 +873,7 @@
         return;
       }
       if (outlineActive()) cancelOutline();
+      void setAsideIfPaused().catch((e) => console.error("setting the autosave aside failed", e));
       app.projectName = nameFromFile(file.name);
       docFile = handle;
       const { width, height } = size;
@@ -852,6 +886,7 @@
       resizeCanvas();
       layers.composite();
       bumpLayerVersion();
+      markSaved();
       fitDocumentInView();
     };
     reader.readAsArrayBuffer(file);
@@ -969,14 +1004,21 @@
       return;
     }
 
-    const layer = layers.active;
+    // A stroke under way keeps its layer (checked for lock/reference when it started).
+    const continuing = strokeLayer !== null && (points.length > 1 || done);
+    const layer = continuing ? strokeLayer! : layers.active;
     const dpr = docDpr();
 
-    if (layers.isLocked(layer) && app.currentTool !== "select" && app.currentTool !== "lasso")
+    if (
+      !continuing &&
+      layers.isLocked(layer) &&
+      app.currentTool !== "select" &&
+      app.currentTool !== "lasso"
+    )
       return;
     // A reference is drawn from its original, so paint on it would be wiped by its next move:
     // brush, eraser and fill are refused until it is baked.
-    if (layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
+    if (!continuing && layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
       if (points.length === 1 && !done) flashStatus(refHandlesBlock(layer) || REF_PAINT_REFUSED);
       return;
     }
@@ -1083,6 +1125,7 @@
 
     // Brush stroke
     openStrokePoints = done ? null : rawPoints;
+    if (done) strokeLayer = null;
     const kind = app.brushType;
     // smooth / ink / calligraphy redraw the whole stroke each frame from a pre-stroke copy; the
     // stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
@@ -1104,6 +1147,7 @@
     }
 
     if (points.length <= 1 && !done) {
+      strokeLayer = layer;
       preStrokeSnapshot = layers.getSnapshot();
       if (fullRedraw) {
         saveLayerToCanvas(layer);
@@ -1135,12 +1179,11 @@
           const latest = smoothPendingPoints;
           smoothPendingPoints = null;
           if (!latest || !layers) return;
-          const active = layers.active;
-          restoreLayerFromCanvas(active);
-          active.ctx.save();
-          selection?.applyClip(active.ctx);
-          drawFullStroke(active.ctx, latest, false);
-          active.ctx.restore();
+          restoreLayerFromCanvas(layer);
+          layer.ctx.save();
+          selection?.applyClip(layer.ctx);
+          drawFullStroke(layer.ctx, latest, false);
+          layer.ctx.restore();
           layers.composite();
         });
       }
@@ -1877,13 +1920,16 @@
   }
 
   function flushAutosave() {
-    if (!autosaveReady || autosaveHalted || !autosaveDirty || !layers) return;
+    if (!autosaveReady || !autosaveDirty || !layers) return;
+    // Paused over blank layers (the dialog closed without a choice): say so again at each save it
+    // skips — a later status message had wiped the first notice, and work went unsaved silently.
+    if (autosaveHalted) return flashStatus(AUTOSAVE_PAUSED, 0);
     const inked = inkedLayerIds();
     if (blankedSince(inked)) return haltForBlankLayers();
     autosaveDirty = false;
     let buffer: ArrayBuffer;
     try {
-      buffer = withFloatApplied(() => psdBuffer(layers, false));
+      buffer = withPendingResolved(() => psdBuffer(layers, false));
     } catch (e) {
       autosaveDirty = true;
       console.error("autosave encode failed", e);
@@ -1959,12 +2005,20 @@
   let inkedAtSave = new Set<number>(); // layers with pixels at the last save (or restore)
   let historyAtSave = 0; // app.historyVersion then: how many undo steps have happened since
   let autosaveHalted = false;
+  const AUTOSAVE_PAUSED =
+    "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back, or keep the blank layers there.";
   let restoreDialog = $state<{ blanked: boolean; entries: AutosaveEntry[] } | null>(null);
   let probeCanvas: HTMLCanvasElement | null = null;
 
   /** Ids of the layers that have any pixels. Each is drawn into a small probe (high-quality
    *  downscaling averages, so a thin line still leaves some alpha) rather than read whole. */
   function inkedLayerIds(): Set<number> {
+    // A lifted float leaves a hole (a whole-layer transform, an empty layer) until Apply, and no
+    // undo step exists yet: probe the document as it will be, or the guard took it for a blanking.
+    return withPendingResolved(probeInked);
+  }
+
+  function probeInked(): Set<number> {
     const out = new Set<number>();
     if (!layers) return out;
     const W = 256;
@@ -2003,10 +2057,7 @@
   function haltForBlankLayers() {
     autosaveHalted = true;
     clearTimeout(autosaveTimer);
-    flashStatus(
-      "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back.",
-      0,
-    );
+    flashStatus(AUTOSAVE_PAUSED, 0);
     void openRestoreDialog(true);
   }
 
@@ -2021,6 +2072,16 @@
       }
       layers?.composite();
     };
+  }
+
+  /** A new document replaces one whose autosave is paused over blank layers: set the protected
+   *  latest copy aside (it stays in File ▸ Restore autosave…) and let autosave run again. On a
+   *  failure it stays paused, as resuming could overwrite that copy. */
+  async function setAsideIfPaused() {
+    if (!autosaveHalted) return;
+    await keepLatestAutosave();
+    autosaveHalted = false;
+    if (app.statusMessage === AUTOSAVE_PAUSED) flashStatus("");
   }
 
   /** Back from the background: were the layers blanked while away? */
@@ -2268,8 +2329,11 @@
       flashStatus("This layer is a reference — pick a drawing layer to paste onto");
       return false;
     }
-    setTool("select"); // commits any floating selection first
-    if (selection.active) selection.cancel();
+    // Leaving a float applies it (undoable; Cancel isn't). setTool only does that when the tool
+    // CHANGES, so on Select the float was cancelled below and a transform was lost.
+    if (selection.hasFloating) selection.commit();
+    setTool("select");
+    if (selection.active) selection.cancel(); // a plain marquee
     preSelectionSnapshot = layers.getSnapshot(); // commit pushes it; cancel restores it (no-op)
     floatLayer = layers.active;
     selection.pasteFloat(pixels, rect);
