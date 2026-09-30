@@ -32,6 +32,7 @@
     onWidthChange,
     onAddText,
     onEditText,
+    settlePending,
   }: {
     layers: LayerManager;
     /** Called when a resize drag ends, so the width can be saved. */
@@ -40,6 +41,9 @@
     onAddText: () => void;
     /** Edit the selected text reference. */
     onEditText: () => void;
+    /** Before an action that copies or merges a layer's pixels: apply a lifted float and cancel an
+     *  Outline preview, or the copy took the float's hole / the unapplied preview. */
+    settlePending: () => void;
   } = $props();
 
   // Panel resize. The panel is docked RIGHT, so dragging its left-edge grip LEFT makes it wider —
@@ -97,6 +101,7 @@
   }
 
   function duplicateLayer() {
+    settlePending();
     // The selected row decides: a group duplicates with everything in it.
     const node = layers.findNode(layers.activeId);
     structuralEdit(layers, () =>
@@ -116,6 +121,11 @@
       flashStatus("The layer below is a reference — Bake it first to merge onto it");
       return;
     }
+    // Merge writes into the layer below and removes this one: both must be editable.
+    const src = layers.findNode(layers.activeId);
+    if (target && layers.isLocked(target)) return flashStatus("The layer below is locked");
+    if (src && layers.isLocked(src)) return flashStatus("Layer is locked");
+    settlePending();
     // Merge also writes pixels onto the layer below, so that layer's pixels join the undo step.
     structuralEdit(
       layers,

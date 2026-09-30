@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { adjacentRow, lockedInTree, wrapInGroup, type LayerGroup, type LayerNode } from "../layers";
+import {
+  adjacentRow,
+  hiddenInTree,
+  lockedInTree,
+  wrapInGroup,
+  type LayerGroup,
+  type LayerNode,
+} from "../layers";
 
 // Plain nodes: lockedInTree only reads the tree's shape and lock flags, never the canvases.
 const layer = (id: number, locked = false) =>
@@ -84,5 +91,28 @@ describe("wrapInGroup", () => {
     const tree = [layer(1)];
     expect(wrapInGroup(tree, 42, newGroup())).toBe(false);
     expect(ids(tree)).toEqual([1]);
+  });
+});
+
+describe("hiddenInTree", () => {
+  const node = (id: number, visible: boolean, children?: LayerNode[]) =>
+    (children
+      ? { type: "group", id, visible, children }
+      : { type: "layer", id, visible }) as unknown as LayerNode;
+  const tree = [
+    node(1, true),
+    node(2, false),
+    node(10, false, [node(3, true)]),
+    node(20, true, [node(4, true)]),
+  ];
+
+  it("is the layer's own visibility outside a hidden group", () => {
+    expect(hiddenInTree(tree, 1)).toBe(false);
+    expect(hiddenInTree(tree, 2)).toBe(true);
+    expect(hiddenInTree(tree, 4)).toBe(false);
+  });
+
+  it("hides every member of a hidden group", () => {
+    expect(hiddenInTree(tree, 3)).toBe(true);
   });
 });

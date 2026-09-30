@@ -112,6 +112,22 @@ export function lockedInTree(tree: LayerNode[], id: number): boolean {
   return walk(tree, false) ?? false;
 }
 
+/** Whether node `id` is out of sight: hidden itself, or inside a hidden group. */
+export function hiddenInTree(tree: LayerNode[], id: number): boolean {
+  const walk = (nodes: LayerNode[], inherited: boolean): boolean | null => {
+    for (const n of nodes) {
+      const hidden = inherited || !n.visible;
+      if (n.id === id) return hidden;
+      if (n.type === "group") {
+        const found = walk(n.children, hidden);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  };
+  return walk(tree, false) ?? false;
+}
+
 /** The row above or below `id` as the layer panel lists them — top first, a group before its
  *  members, a collapsed group's members skipped — or null at either end (↑/↓, as slop-animator). */
 export function adjacentRow(tree: LayerNode[], id: number, dir: "up" | "down"): number | null {
@@ -221,6 +237,17 @@ export class LayerManager {
     return lockedInTree(this.tree, node.id);
   }
 
+  /** Whether `node` is out of sight: hidden, or inside a hidden group. */
+  isHidden(node: LayerNode): boolean {
+    return hiddenInTree(this.tree, node.id);
+  }
+
+  /** A GROUP row is selected. `active` then falls back to the bottom layer, which no pixel action
+   *  must take for the target (a stroke landed on Background). */
+  get activeIsGroup(): boolean {
+    return this.findNode(this.activeId)?.type === "group";
+  }
+
   /** Find the parent array and index of a node by id */
   findParent(id: number): { parent: LayerNode[]; index: number } | null {
     function search(nodes: LayerNode[]): { parent: LayerNode[]; index: number } | null {
@@ -267,11 +294,6 @@ export class LayerManager {
     return this.dpr;
   }
 
-  /** Update display pixel ratio */
-  setDpr(dpr: number) {
-    this.dpr = dpr;
-  }
-
   /** Keep the layers at `dpr` pixels per document unit from now on, resampling what's there (a
    *  reference is re-drawn from its original instead, so it loses nothing). */
   setPixelRatio(dpr: number) {
@@ -305,8 +327,8 @@ export class LayerManager {
     this.docWidth = docW;
     this.docHeight = docH;
     const dpr = this.dpr;
-    const pxW = docW * dpr;
-    const pxH = docH * dpr;
+    const pxW = Math.round(docW * dpr);
+    const pxH = Math.round(docH * dpr);
     // Offset to place old content at anchor position
     const offsetX = Math.round((docW - oldW) * anchorX * dpr);
     const offsetY = Math.round((docH - oldH) * anchorY * dpr);
@@ -337,8 +359,8 @@ export class LayerManager {
 
   createLayer(name?: string): Layer {
     const canvas = document.createElement("canvas");
-    const pxW = this.docWidth * this.dpr;
-    const pxH = this.docHeight * this.dpr;
+    const pxW = Math.round(this.docWidth * this.dpr);
+    const pxH = Math.round(this.docHeight * this.dpr);
     canvas.width = pxW;
     canvas.height = pxH;
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
@@ -546,8 +568,8 @@ export class LayerManager {
   composite() {
     const dpr = this.dpr;
     const ctx = this.displayCtx;
-    const docPxW = this.docWidth * dpr;
-    const docPxH = this.docHeight * dpr;
+    const docPxW = Math.round(this.docWidth * dpr);
+    const docPxH = Math.round(this.docHeight * dpr);
     ctx.resetTransform();
     ctx.clearRect(0, 0, docPxW, docPxH);
     this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null);

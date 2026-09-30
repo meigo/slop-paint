@@ -235,7 +235,7 @@
       hideBrushCursor(); // a drag moves the reference: handleCursorMove shows the handle cursors
       return;
     }
-    if (layers.isLocked(layer) || !layer.visible || layer.ref) {
+    if (paintBlock(layer) || layer.ref) {
       hideBrushCursor();
       canvasClipEl.style.cursor = "not-allowed";
       return;
@@ -270,12 +270,34 @@
     }
   }
 
+  // --- Where pixels may land ---
+  const GROUP_SELECTED = "A group is selected — pick a layer to draw on";
+
+  /** Why a pixel edit can't land on `layer` (the active one), or "": a group row selected (the
+   *  active layer then falls back to the bottom one — strokes landed on Background), a lock, or
+   *  the layer out of sight (a hidden layer or group: edits you can't see, with undo steps). */
+  function paintBlock(layer: Layer): string {
+    if (!layers) return "";
+    if (layers.activeIsGroup) return GROUP_SELECTED;
+    if (layers.isLocked(layer)) return "Layer is locked";
+    if (layers.isHidden(layer)) return "Layer is hidden";
+    return "";
+  }
+
   // --- Layer resolution ---
   /** Pixels per document unit the layers (and the display canvas) are kept at: the screen's
    *  density with Sharp layers on, else 1. Saves and exports are document pixels either way, so
    *  the extra is only on screen — and 4× the memory at 2×. The selection overlay stays at the
    *  screen's density regardless (crisp handles). */
   function docDpr(): number {
+    // The ratio the layers ARE at: it changes only with setPixelRatio (startup, the toggle), never
+    // with the window's density — browser zoom or another monitor changed the ratio under 2×
+    // canvases, and fills, lifts and new layers landed at the wrong scale.
+    return layers ? layers.pixelRatio : wantedDpr();
+  }
+
+  /** The ratio Sharp layers asks for on this screen. */
+  function wantedDpr(): number {
     return app.hiResLayers ? window.devicePixelRatio || 1 : 1;
   }
 
@@ -285,7 +307,7 @@
     if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
     if (outlineActive()) cancelOutline();
     app.hiResLayers = hi;
-    layers.setPixelRatio(docDpr());
+    layers.setPixelRatio(wantedDpr());
     history.clear(); // snapshots are the old resolution
     resizeCanvas();
     layers.composite();
@@ -531,9 +553,10 @@
     if (!selection || !layers) return false;
     if (selection.active) return true;
     const layer = layers.active;
+    if (layers.activeIsGroup) return (flashStatus(GROUP_SELECTED), false);
     if (layer.ref) return false;
     if (layers.isLocked(layer)) return (flashStatus("Layer is locked"), false);
-    if (!layer.visible) return (flashStatus("Layer is hidden"), false);
+    if (layers.isHidden(layer)) return (flashStatus("Layer is hidden"), false);
     const { width, height } = layer.canvas;
     const b = alphaBounds(layer.ctx.getImageData(0, 0, width, height).data, width, height);
     if (!b) return (flashStatus("The layer is empty — nothing to transform"), false);
@@ -601,6 +624,8 @@
 
   function clearLayer() {
     if (!layers) return;
+    const why = paintBlock(layers.active);
+    if (why) return flashStatus(why);
     if (layers.active.ref) return flashStatus(REF_PAINT_REFUSED);
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
@@ -937,15 +962,14 @@
     const docW = app.docWidth;
     const docH = app.docHeight;
     // Display canvas = document size (CSS transform handles zoom/pan)
-    canvasEl.width = docW * dpr;
-    canvasEl.height = docH * dpr;
+    canvasEl.width = Math.round(docW * dpr);
+    canvasEl.height = Math.round(docH * dpr);
     canvasEl.style.width = docW + "px";
     canvasEl.style.height = docH + "px";
     if (selection) selection.pageSize = { w: docW, h: docH }; // new selections stay on the page
     // Size the transform container to the document
     canvasContainerEl.style.width = docW + "px";
     canvasContainerEl.style.height = docH + "px";
-    layers.setDpr(dpr);
     layers.composite();
   }
 
@@ -1009,13 +1033,13 @@
     const layer = continuing ? strokeLayer! : layers.active;
     const dpr = docDpr();
 
-    if (
-      !continuing &&
-      layers.isLocked(layer) &&
-      app.currentTool !== "select" &&
-      app.currentTool !== "lasso"
-    )
-      return;
+    if (!continuing && app.currentTool !== "select" && app.currentTool !== "lasso") {
+      const why = paintBlock(layer);
+      if (why) {
+        if (points.length === 1 && !done) flashStatus(why);
+        return;
+      }
+    }
     // A reference is drawn from its original, so paint on it would be wiped by its next move:
     // brush, eraser and fill are refused until it is baked.
     if (!continuing && layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
@@ -1033,6 +1057,8 @@
           // A reference without handles (loading, locked or hidden) can't be selected from.
           flashStatus(refHandlesBlock(layer) || REF_PAINT_REFUSED);
           return;
+        } else if (selection.state === "selected" && handle === "move" && paintBlock(layer)) {
+          flashStatus(paintBlock(layer)); // nothing to lift from a group, a locked or hidden layer
         } else if (selection.state === "selected" && handle === "move") {
           // First drag inside a fresh selection: lift pixels and enter transform mode.
           preSelectionSnapshot = layers.getSnapshot();
@@ -1516,7 +1542,8 @@
   function fillAllEnclosed() {
     if (!layers) return;
     const layer = layers.active;
-    if (layers.isLocked(layer)) return flashStatus("Layer is locked");
+    const why = paintBlock(layer);
+    if (why) return flashStatus(why);
     if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
     // Fill enclosed only paints EMPTY interiors, which alpha lock refuses: it could never land.
     if (layer.alphaLock)
@@ -1592,9 +1619,10 @@
     // Cancel would then restore an outline instead of the original art.
     if (outlineActive() || !layers) return;
     const layer = layers.active;
+    if (layers.activeIsGroup) return flashStatus(GROUP_SELECTED);
     if (layers.isLocked(layer)) return flashStatus("Layer is locked — nothing to outline");
     if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
-    if (!layer.visible) return flashStatus("Layer is hidden — show it to outline it");
+    if (layers.isHidden(layer)) return flashStatus("Layer is hidden — show it to outline it");
     const cw = layer.canvas.width,
       ch = layer.canvas.height;
     const before = layer.ctx.getImageData(0, 0, cw, ch);
@@ -2220,9 +2248,10 @@
   const liftBlock = $derived.by(() => {
     void app.layerVersion;
     const layer = layersReady ? layers.active : null;
+    if (layersReady && layers.activeIsGroup) return "a group is selected — pick a layer";
     if (layer && layers.isLocked(layer)) return "the layer is locked";
     if (layer?.ref) return "it's a reference — Bake it to edit its pixels";
-    if (layer && !layer.visible) return "the layer is hidden";
+    if (layer && layers.isHidden(layer)) return "the layer is hidden";
     return "";
   });
   // Copy also takes a float (as shown, transform applied); cut and delete need a plain marquee.
@@ -2305,7 +2334,8 @@
     if (!selection || selection.state !== "selected" || !layers) return;
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
-    if (layers.isLocked(layer)) return;
+    const why = paintBlock(layer);
+    if (why) return flashStatus(why);
     if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
     const dpr = docDpr();
     const before = layers.getSnapshot();
@@ -2324,7 +2354,9 @@
 
   /** Float `pixels` at `rect` on the active layer with transform handles; Enter/Esc resolves it. */
   function startPasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): boolean {
-    if (!selection || !layers || layers.isLocked(layers.active)) return false;
+    if (!selection || !layers) return false;
+    const why = paintBlock(layers.active);
+    if (why) return (flashStatus(why), false);
     if (layers.active.ref) {
       flashStatus("This layer is a reference — pick a drawing layer to paste onto");
       return false;
@@ -2545,7 +2577,7 @@
     const text = layer.ref?.src.text;
     if (!text) return;
     if (layers.isLocked(layer)) return flashStatus("Layer is locked");
-    if (!layer.visible) return flashStatus("Layer is hidden");
+    if (layers.isHidden(layer)) return flashStatus("Layer is hidden");
     textEdit = { layer, before: layer.ref, beforeTree: null };
     textDialog = { adding: false, initial: text.spec };
   }
@@ -2629,7 +2661,7 @@
     if (!layer.ref) return "";
     if (!layer.ref.src.image) return "The reference is still loading — try again in a moment";
     if (layers.isLocked(layer)) return "Layer is locked";
-    if (!layer.visible) return "Layer is hidden";
+    if (layers.isHidden(layer)) return "Layer is hidden";
     return "";
   }
 
@@ -2959,7 +2991,7 @@
     bg.ctx.fillRect(0, 0, app.docWidth, app.docHeight);
     layers.addLayer("Layer 1");
     loadSettings();
-    layers.setPixelRatio(docDpr()); // the saved layer resolution, before anything is drawn or restored
+    layers.setPixelRatio(wantedDpr()); // the saved layer resolution, before anything is drawn or restored
     resizeCanvas();
     updateCursor();
     layersReady = true;
@@ -3237,6 +3269,10 @@
           onWidthChange={debouncedSave}
           onAddText={() => void addText()}
           onEditText={editText}
+          settlePending={() => {
+            if (selection?.hasFloating) resolveFloat(true);
+            if (outlineActive()) cancelOutline();
+          }}
         />
       </div>
     {/if}

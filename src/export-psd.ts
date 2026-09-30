@@ -143,6 +143,10 @@ export function loadPsd(
         const left = psdLayer.left ?? 0;
         const top = psdLayer.top ?? 0;
         ctx.scale(dpr, dpr);
+        // Nearest-neighbour: saves scale each layer DOWN to document pixels, so a smoothed scale
+        // back up blurred it a little more on every save and reload (Sharp layers). Duplicated
+        // pixels come back down to exactly the stored ones.
+        ctx.imageSmoothingEnabled = false;
         ctx.drawImage(psdLayer.canvas, left, top);
         ctx.resetTransform();
       }
