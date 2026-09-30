@@ -26,6 +26,9 @@ export interface TouchGestureCallbacks {
   onRedo: () => void;
   onToggleEraser: () => void;
   onViewportChange: () => void;
+  /** A pen or mouse stroke is open: fingers touching down now are a resting hand, not a gesture
+   *  (they panned the view mid-stroke, so the line jumped, and a two-finger tap undid under it). */
+  isDrawing?: () => boolean;
 }
 
 const TAP_MAX_DURATION = 300; // ms
@@ -76,6 +79,8 @@ export function setupTouchGestures(
 
   // Track if gesture moved (to distinguish taps from drags)
   let gestureDidMove = false;
+  // Set when a finger lands while a stroke is open; the whole gesture is ignored until all lift.
+  let suppressed = false;
 
   // Tap detection
   let maxSimultaneousTouches = 0;
@@ -89,6 +94,7 @@ export function setupTouchGestures(
     workspace.setPointerCapture(e.pointerId);
 
     const starting = touches.size === 0;
+    if (callbacks.isDrawing?.()) suppressed = true;
     touches.set(e.pointerId, {
       id: e.pointerId,
       x: e.clientX,
@@ -130,6 +136,7 @@ export function setupTouchGestures(
 
     t.x = e.clientX;
     t.y = e.clientY;
+    if (suppressed) return; // a hand resting during a stroke: no pan, pinch or tap until it lifts
 
     // Check if this counts as movement
     const dx = t.x - t.startX;
@@ -159,6 +166,10 @@ export function setupTouchGestures(
     if (!t) return;
 
     // If all fingers lifted, check for tap gestures
+    if (touches.size === 0 && suppressed) {
+      suppressed = false;
+      return;
+    }
     if (touches.size === 0 && !gestureDidMove) {
       const duration = e.timeStamp - t.startTime;
       if (duration < TAP_MAX_DURATION) {
@@ -190,6 +201,7 @@ export function setupTouchGestures(
     if (touches.size === 0) {
       maxSimultaneousTouches = 0;
       gestureDidMove = false;
+      suppressed = false;
     }
     restartSinglePan();
   }

@@ -47,6 +47,8 @@
   <span class="truncate">
     {#if app.statusMessage}
       <span class="text-text">{app.statusMessage}</span>
+    {:else if app.statusSticky}
+      <span class="text-warn">{app.statusSticky}</span>
     {:else if app.statusHint}
       {app.statusHint}
     {:else if state === "reference"}

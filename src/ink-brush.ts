@@ -268,7 +268,7 @@ export function drawInkStroke(
 
   // Same ladder as brush.ts / calligraphy-brush.ts / stamp-brush.ts — this engine used to
   // hardcode source-over, which silently made the "Behind" toggle a no-op for Ink alone.
-  const alpha = settings.isEraser ? 1 : settings.opacity / 100;
+  const alpha = settings.opacity / 100; // the eraser's own opacity too (it was always full)
   const op: GlobalCompositeOperation = settings.isEraser
     ? "destination-out"
     : settings.alphaLock

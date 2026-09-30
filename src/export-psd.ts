@@ -181,7 +181,11 @@ export function loadPsd(
       if (node) manager.tree.push(node);
     }
   } else if (psd.canvas) {
-    // No layers, just a flat image
+    // No layers, just a flat image (a Photoshop file with only a Background). createLayer sizes
+    // the canvas from the manager's document size, which is still the OLD one here: the image came
+    // in stretched to it. Take the file's size first (the caller sets it again after).
+    manager.docWidth = w;
+    manager.docHeight = h;
     const layer = manager.createLayer("Background");
     layer.ctx.drawImage(psd.canvas, 0, 0);
     manager.tree.push(layer);

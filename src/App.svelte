@@ -113,6 +113,7 @@
     bumpLayerVersion,
     bumpSelectionVersion,
     flashStatus,
+    clearSticky,
     type Tool,
     type BrushKind,
   } from "./appState.svelte.js";
@@ -618,6 +619,13 @@
     if (selection.state === "transforming") {
       selection.beginWarp(rows, cols);
     } else if (selection.state === "warping") {
+      // W / M / Distort / Mesh while warping: finer carries the bends over, coarser would average
+      // them away (a 5×5 bent mesh went to 2×2 on W), so it is refused once a point has moved —
+      // the same rule as the mesh stepper's −.
+      if (rows < selection.warpRows && !selection.warpUntouched)
+        return flashStatus(
+          `${rows === 2 ? "Distort" : "Mesh"} — only before you bend it: fewer points would lose the bends`,
+        );
       selection.densifyWarp(rows, cols);
     }
   }
@@ -1081,6 +1089,9 @@
           if (selection.hasFloating) selection.commit();
           else if (selection.active) selection.cancel();
           selectionMode = "create";
+          // From the tool, not a stored mode: a reference's handles (pasteFloat) set it to rect,
+          // and a reload restored the Lasso tool without it — lasso drags made rectangles.
+          selection.mode = app.currentTool === "lasso" ? "lasso" : "rect";
           selection.startCreate(p.x, p.y);
         }
       } else if (!done) {
@@ -1299,6 +1310,10 @@
       return;
     const target = e.target as HTMLElement;
     if (isTextEntry(target)) return;
+    // Esc / Enter with a toolbar menu open belong to the menu (it closes on Esc): they also
+    // cancelled a live transform or Outline preview behind it, which Cancel can't take back.
+    if ((e.key === "Escape" || e.key === "Enter") && document.querySelector('[role="menu"]'))
+      return;
     // A dropdown keeps focus after a pick; its letter keys jump between options, so only the
     // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
     if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
@@ -1973,7 +1988,7 @@
     };
     void saveAutosave(buffer, meta).then(
       () => {
-        if (app.statusMessage.startsWith("Autosave is failing")) flashStatus("");
+        clearSticky("Autosave is failing");
       },
       (e) => {
         // Keep it dirty so the next change or the hide-flush retries, and SAY so: a silent
@@ -2109,7 +2124,7 @@
     if (!autosaveHalted) return;
     await keepLatestAutosave();
     autosaveHalted = false;
-    if (app.statusMessage === AUTOSAVE_PAUSED) flashStatus("");
+    clearSticky(AUTOSAVE_PAUSED);
   }
 
   /** Back from the background: were the layers blanked while away? */
@@ -2137,6 +2152,7 @@
       app.projectName = entry.projectName;
       docFile = null; // it may not match the file the document came from
       autosaveHalted = false;
+      clearSticky(AUTOSAVE_PAUSED);
       restoreDialog = null;
       flashStatus(`Restored the copy saved ${new Date(entry.savedAt).toLocaleTimeString()}`, 6000);
     } catch (e) {
@@ -2158,6 +2174,7 @@
     }
     markSaved();
     autosaveHalted = false;
+    clearSticky(AUTOSAVE_PAUSED);
     restoreDialog = null;
     flashStatus("Autosave is back on — the earlier copy stays in File ▸ Restore autosave…", 8000);
   }
@@ -2851,7 +2868,7 @@
       // Say what the browser said: iOS refuses for several reasons (the Paste callout dismissed, no
       // tap to count the read as the user's, no support), and each has a different remedy.
       const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      return flashStatus(`Can't read the clipboard (${why}) — try File ▸ Import image…`, 0);
+      return flashStatus(`Can't read the clipboard (${why}) — try File ▸ Import image…`, 10000);
     }
     const blob = await clipboardImage(items);
     if (blob) return importReferenceFile(blob);
@@ -3031,6 +3048,7 @@
         }
       },
       onViewportChange: () => updateZoomDisplay(),
+      isDrawing: () => isDrawing,
     });
 
     // Wheel zoom (needs passive: false)

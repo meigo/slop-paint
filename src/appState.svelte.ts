@@ -38,6 +38,9 @@ interface AppStateShape {
   layerPanelWidth: number;
   /** Transient message for the status bar (see flashStatus). */
   statusMessage: string;
+  /** A lasting condition (autosave off or failing), shown whenever no short message is: a later
+   *  ordinary message used to replace it for good, leaving e.g. "autosave is off" unsaid. */
+  statusSticky: string;
   /** What the control under the pointer does — iPad has no hover, so titles go here. */
   statusHint: string;
   /** Fill's own colour and opacity (as slop-animator): outlines and flats are different colours, so
@@ -92,6 +95,7 @@ export const app: AppStateShape = $state({
   historyVersion: 0,
   layerPanelWidth: DEFAULT_PANEL_WIDTH,
   statusMessage: "",
+  statusSticky: "",
   statusHint: "",
   fillColor: "#1a1a1a",
   fillOpacity: 100,
@@ -119,10 +123,21 @@ export function bumpSelectionVersion() {
 }
 
 let statusTimer: ReturnType<typeof setTimeout> | undefined;
-/** Show a short message in the status bar, e.g. why an action did nothing. */
+/** Show a short message in the status bar, e.g. why an action did nothing. `ms = 0` is a lasting
+ *  condition (autosave failing or off) rather than a one-off explanation: it stays, behind any
+ *  later short message, until `clearSticky`. */
 export function flashStatus(message: string, ms = 4000) {
-  app.statusMessage = message;
   clearTimeout(statusTimer);
-  // ms 0 = sticky: for conditions (e.g. autosave failing) rather than one-off explanations.
-  if (ms > 0) statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
+  if (ms === 0) {
+    app.statusSticky = message;
+    app.statusMessage = "";
+    return;
+  }
+  app.statusMessage = message;
+  statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
+}
+
+/** End a lasting condition (`flashStatus(msg, 0)`); with `message`, only if it's the one showing. */
+export function clearSticky(message?: string) {
+  if (message === undefined || app.statusSticky.startsWith(message)) app.statusSticky = "";
 }
