@@ -78,8 +78,8 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `brush-textures.ts` — procedural brush tip generation (hard round, soft round, pencil, charcoal, airbrush)
 - `layers.ts` — tree-based layer/group management with lock, alpha lock, duplicate, merge down; `captureStructure`/`restoreStructure` snapshot the tree's SHAPE (layers by reference, so their canvases survive undo), `snapshotOf`/`restoreTo` do pixels for one layer
 - `history.ts` — one undo/redo stack of commands for the whole document, with a 50-step / 256 MB budget (from slop-animator)
-- `undo.ts` — the single `history` instance plus `pushPixelEdit` (a pixel change on one layer) and `structuralEdit` (add/delete/duplicate/merge/group/reorder; takes an optional layer whose pixels change too, as merge down does)
-- `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear) and `pasteFloat` (start a float from external pixels); `flip`; pure `flipMatrix` / `cornerScaleMatrix` / `sideStretchMatrix` (from slop-animator). Corners keep proportions when `keepProportions` (Shift inverts), side handles stretch one axis (Shift skews); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
+- `undo.ts` — the single `history` instance plus `pushPixelEdit` (a pixel change on one layer) and `structuralEdit` (pushes nothing when the tree came out the same — `sameStructure`: an empty step wiped redo; merge down / delete say why they did nothing — and counts the canvases of layers it removed toward the budget, `detachedLayerBytes`: undo keeps them alive) (add/delete/duplicate/merge/group/reorder; takes an optional layer whose pixels change too, as merge down does)
+- `selection.ts` — rect/lasso selection with move/scale/rotate transform; `copyPixels` / `clearRegion` / `liftPixels` (copy + clear; `copyPixels` snaps the selection rect to the whole layer pixels it copied, or a marquee with fractional edges — zoom, Pencil — was cleared and redrawn off-grid and every move blurred the art) and `pasteFloat` (start a float from external pixels); `flip`; pure `flipMatrix` / `cornerScaleMatrix` / `sideStretchMatrix` (from slop-animator). Corners keep proportions when `keepProportions` (Shift inverts), side handles stretch one axis (Shift skews); the overlay sits inside the zoomed container, so handles/lines are sized with `px` (1 screen px in doc units) to stay constant on screen; corner scale is floored at `MIN_SCALE` (scale 0 froze the float)
 - `viewport.ts` — zoom/pan/rotation via CSS transform with coordinate mapping
 - `touch-gestures.ts` — iPad/touch gesture handling (a finger that lands while a pen/mouse stroke is open — `isDrawing` — is a resting hand: that whole gesture pans, pinches and taps nothing, or the line jumped with the view): one-finger pan, one-finger double-tap eraser toggle, two-finger pinch-zoom-rotate, two-finger tap undo, three-finger tap redo
 - `pressure-curve.ts` — cubic bezier pressure curve with LUT. Brush and eraser have their own (`pressureCurves`, `activePressureCurve()`); settings saved before the split give the eraser the brush's curve
@@ -141,7 +141,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Ctrl+S / Ctrl+O — save/open project (PSD)
 - Ctrl+G — put the selected layer or group into a new group
 - ↑ / ↓ — select the layer or group row above/below (`adjacentRow`; skips a collapsed group's members; ignored while a slider/dropdown has focus or a selection is lifted)
-- Space+drag or middle mouse — pan
+- Space+drag or middle mouse — pan (Space's default is claimed outside text fields: Chrome re-activated the last clicked button on the Space-pan's keyup)
 - Trackpad: two-finger swipe pans, pinch zooms; mouse wheel pans, Ctrl/Cmd+wheel zooms (as in slop-animator)
 
 ## Layer Features
@@ -251,6 +251,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 ## New Document
 
 - The dialog warns (in `warn`) that it replaces the drawing, its undo history and the autosaved copy
+- A press on the canvas blurs a focused text field (rename, size box, project name): the canvas blocks the browser's own focus change, which kept the iPad keyboard up and a rename uncommitted
 - App shortcuts stand aside only for real text entry (`lib/text-entry.ts` `isTextEntry`): a slider keeps focus after a drag (the canvas prevents the focus change on press), and treating every `<input>` as a text field left Ctrl+Z and the tool keys dead after touching one. A focused `<select>` lets only Ctrl/Cmd shortcuts through
 - Dialogs handle Enter/Escape on `window` (a backdrop never has focus, so a keydown there never fires), and App.svelte ignores app shortcuts while one is open
 
@@ -283,6 +284,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - The project has a name (`app.projectName`, saved with the settings; `filename.ts`): set in New, taken from an opened file, editable in the Document menu; the tab title shows it. Files: `name.psd` (save, Save to Files), `name-export.psd` (Spine export), `name.png`
 - iPad/iPhone only: File ▸ Save to Files… shares the PSD through the share sheet, the only way a web page can put a file where the user picks (Safari has no save picker; a download always lands in Downloads). It tries the sheet on the tap that started it and, if that tap has expired (`NotAllowedError`), opens a dialog whose fresh tap retries; the dialog also offers a plain download. On iPad/iPhone the two EXPORTS (PNG, PSD for Spine) take the same route (`sendToFiles`), as slop-animator's exports; and in the Home Screen app (`isStandalone`: display-mode standalone) plain Save does too, and the ready dialog hides "Download instead" — iOS can't download from a Home Screen app at all (the link does nothing; reported 2026-09-29: exports did nothing there and downloaded in the browser). A PNG export is encoded with `toBlob` first, so its sheet usually needs the ready dialog's fresh tap. "Shared" means the sheet completed, not that the file reached Files
 - `share.ts` (pure: device check, error classification), `download.ts` (`downloadBlob`, revokes the object URL after 60s — an immediate revoke can kill a large download on iPad), `lib/ShareReadyDialog.svelte`
+- Opening builds the new tree aside and swaps it in only when every layer exists (`loadPsd`): a load failing partway (iPad refusing canvas memory) had emptied the open document while saying nothing changed
 - Round-trips layer tree, names, opacity, visibility, groups, reference Smart Objects. A flat PSD (no layer records, e.g. only a Background) opens at its own size: the fallback layer used to be sized to the previous document and stretched
 - Interoperable with Photoshop, GIMP, Spine, etc.
 

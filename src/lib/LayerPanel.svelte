@@ -95,6 +95,11 @@
   }
 
   function removeNode() {
+    const node = layers.findNode(layers.activeId);
+    const members = (n: LayerNode): number =>
+      n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
+    if (node && layers.flatLayers().length - members(node) < 1)
+      return flashStatus("The document needs at least one layer");
     structuralEdit(layers, () => layers.removeNode(layers.activeId));
     layers.composite();
     bumpLayerVersion();
@@ -117,6 +122,11 @@
     // A reference is re-drawn from its original, which would wipe what was merged onto it.
     const loc = layers.findParent(layers.activeId);
     const target = loc && loc.index > 0 ? loc.parent[loc.index - 1] : null;
+    if (layers.findNode(layers.activeId)?.type === "group")
+      return flashStatus("Merge down merges a layer — pick a layer, not a group");
+    if (!target) return flashStatus("Nothing below to merge onto");
+    if (target.type === "group")
+      return flashStatus("The row below is a group — merge down works onto a layer");
     if (target?.type === "layer" && target.ref) {
       flashStatus("The layer below is a reference — Bake it first to merge onto it");
       return;

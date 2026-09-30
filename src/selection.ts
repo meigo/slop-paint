@@ -361,6 +361,11 @@ export class Selection {
     const pw = Math.round(r.w * dpr);
     const ph = Math.round(r.h * dpr);
     if (pw <= 0 || ph <= 0) return null;
+    // The selection takes the whole layer pixels it copied: a marquee dragged at zoom or with the
+    // Pencil has fractional edges, and clearing / redrawing at those while copying whole pixels
+    // blurred the art on an untouched lift + Apply (and left a faint line at the edge). A lasso's
+    // bounds snap; its outline stays as drawn.
+    this.rect = { x: px / dpr, y: py / dpr, w: pw / dpr, h: ph / dpr };
 
     const cvs = document.createElement("canvas");
     cvs.width = pw;

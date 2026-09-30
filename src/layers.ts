@@ -146,6 +146,45 @@ export function adjacentRow(tree: LayerNode[], id: number, dir: "up" | "down"): 
   return j >= 0 && j < rows.length ? rows[j] : null;
 }
 
+/** Whether two structure snapshots are the same tree: layers by identity, groups by their fields
+ *  (groups are cloned per snapshot) and members, and the same active node. An action that changed
+ *  nothing (merge down with nothing below, deleting the last layer) must push no undo step: an
+ *  empty one wiped the redo stack and made the next Undo look dead. */
+export function sameStructure(a: StructSnapshot, b: StructSnapshot): boolean {
+  const same = (x: LayerNode[], y: LayerNode[]): boolean =>
+    x.length === y.length &&
+    x.every((n, i) => {
+      const m = y[i];
+      if (n.type === "layer" || m.type === "layer") return n === m;
+      const { children: nc, ...nf } = n;
+      const { children: mc, ...mf } = m;
+      const keys = Object.keys(nf) as (keyof typeof nf)[];
+      return (
+        keys.length === Object.keys(mf).length && keys.every((k) => nf[k] === mf[k]) && same(nc, mc)
+      );
+    });
+  return a.activeId === b.activeId && same(a.tree, b.tree);
+}
+
+/** Pixel bytes of the layers `a` holds and `b` doesn't (deleted or merged away): only the undo
+ *  step keeps each alive, canvas and all, while it's in history, so it counts toward the budget
+ *  (it counted nothing, and 50 deletions could hold 50 whole canvases). An ADDED layer isn't
+ *  counted — it lives in the document anyway. */
+export function detachedLayerBytes(a: StructSnapshot, b: StructSnapshot): number {
+  const layersOf = (nodes: LayerNode[], out = new Set<Layer>()): Set<Layer> => {
+    for (const n of nodes) {
+      if (n.type === "layer") out.add(n);
+      else layersOf(n.children, out);
+    }
+    return out;
+  };
+  const x = layersOf(a.tree);
+  const y = layersOf(b.tree);
+  let bytes = 0;
+  for (const l of x) if (!y.has(l)) bytes += l.canvas.width * l.canvas.height * 4;
+  return bytes;
+}
+
 function cloneTree(nodes: LayerNode[]): LayerNode[] {
   return nodes.map((n) => (n.type === "group" ? { ...n, children: cloneTree(n.children) } : n));
 }

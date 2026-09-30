@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   adjacentRow,
+  detachedLayerBytes,
   hiddenInTree,
+  sameStructure,
   lockedInTree,
   wrapInGroup,
   type LayerGroup,
@@ -114,5 +116,35 @@ describe("hiddenInTree", () => {
 
   it("hides every member of a hidden group", () => {
     expect(hiddenInTree(tree, 3)).toBe(true);
+  });
+});
+
+describe("sameStructure / detachedLayerBytes", () => {
+  const lay = (id: number) =>
+    ({ type: "layer", id, canvas: { width: 10, height: 10 } }) as unknown as LayerNode;
+  const grp = (id: number, children: LayerNode[], name = "G") =>
+    ({ type: "group", id, name, visible: true, children }) as unknown as LayerNode;
+  const a = lay(1),
+    b = lay(2);
+
+  it("sees the same tree through fresh group clones", () => {
+    const s1 = { tree: [a, grp(9, [b])], activeId: 1 };
+    const s2 = { tree: [a, grp(9, [b])], activeId: 1 };
+    expect(sameStructure(s1, s2)).toBe(true);
+  });
+
+  it("sees an order, group field, member or active change", () => {
+    const s1 = { tree: [a, grp(9, [b])], activeId: 1 };
+    expect(sameStructure(s1, { tree: [grp(9, [b]), a], activeId: 1 })).toBe(false);
+    expect(sameStructure(s1, { tree: [a, grp(9, [b], "H")], activeId: 1 })).toBe(false);
+    expect(sameStructure(s1, { tree: [a, grp(9, [])], activeId: 1 })).toBe(false);
+    expect(sameStructure(s1, { tree: [a, grp(9, [b])], activeId: 2 })).toBe(false);
+  });
+
+  it("counts the pixels of layers the step removed, not of layers it added", () => {
+    const before = { tree: [a, b], activeId: 1 };
+    const after = { tree: [a], activeId: 1 };
+    expect(detachedLayerBytes(before, after)).toBe(400);
+    expect(detachedLayerBytes(after, before)).toBe(0);
   });
 });

@@ -110,8 +110,10 @@ export function loadPsd(
   // per embedded file however many layers share it; the layer's saved pixels show meanwhile.
   const refSources = new Map<string, RefSource>();
 
-  // Clear existing tree
-  manager.tree.length = 0;
+  // The new tree is built aside and swapped in only once every layer exists: a load that failed
+  // partway (iPad refusing canvas memory for layer N) had already emptied the open document, while
+  // the error said nothing had changed.
+  const tree: LayerNode[] = [];
 
   function buildNode(psdLayer: PsdLayer): LayerNode | null {
     if (psdLayer.children) {
@@ -136,7 +138,8 @@ export function loadPsd(
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
-      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) throw new Error("the device ran out of canvas memory");
 
       // Draw the PSD layer's canvas scaled up by dpr to fill the internal canvas
       if (psdLayer.canvas) {
@@ -178,19 +181,26 @@ export function loadPsd(
   if (psd.children) {
     for (const child of psd.children) {
       const node = buildNode(child);
-      if (node) manager.tree.push(node);
+      if (node) tree.push(node);
     }
   } else if (psd.canvas) {
     // No layers, just a flat image (a Photoshop file with only a Background). createLayer sizes
     // the canvas from the manager's document size, which is still the OLD one here: the image came
-    // in stretched to it. Take the file's size first (the caller sets it again after).
+    // in stretched to it. Take the file's size while it's made (the caller sets it for good).
+    const [oldW, oldH] = [manager.docWidth, manager.docHeight];
     manager.docWidth = w;
     manager.docHeight = h;
-    const layer = manager.createLayer("Background");
-    layer.ctx.drawImage(psd.canvas, 0, 0);
-    manager.tree.push(layer);
+    try {
+      const layer = manager.createLayer("Background");
+      layer.ctx.drawImage(psd.canvas, 0, 0);
+      tree.push(layer);
+    } finally {
+      manager.docWidth = oldW; // a failure leaves the open document as it was
+      manager.docHeight = oldH;
+    }
   }
 
+  manager.tree = tree;
   // Set active to the topmost layer
   const flat = manager.flatLayers();
   if (flat.length > 0) {

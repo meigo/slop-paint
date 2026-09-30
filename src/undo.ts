@@ -4,7 +4,13 @@
  * you actually did rather than through the active layer's own history.
  */
 import { History, changedTiles, cropPixels } from "./history";
-import type { Layer, LayerManager, RefPlacement } from "./layers";
+import {
+  detachedLayerBytes,
+  sameStructure,
+  type Layer,
+  type LayerManager,
+  type RefPlacement,
+} from "./layers";
 
 export const history = new History();
 
@@ -54,6 +60,7 @@ export function structuralEdit<T>(
   const result = run();
   const afterTree = layers.captureStructure();
   const afterPixels = target ? layers.snapshotOf(target) : null;
+  if (sameStructure(beforeTree, afterTree)) return result; // nothing happened: no empty step
   history.push({
     undo: () => {
       if (target && beforePixels) layers.restoreTo(target, beforePixels);
@@ -65,7 +72,10 @@ export function structuralEdit<T>(
       layers.restoreStructure(afterTree);
       hooks.onHistoryApplied();
     },
-    bytes: (beforePixels?.data.byteLength ?? 0) + (afterPixels?.data.byteLength ?? 0),
+    bytes:
+      (beforePixels?.data.byteLength ?? 0) +
+      (afterPixels?.data.byteLength ?? 0) +
+      detachedLayerBytes(beforeTree, afterTree),
   });
   return result;
 }

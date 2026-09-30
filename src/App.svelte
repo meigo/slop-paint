@@ -1477,7 +1477,10 @@
       setTool("eraser");
     }
 
-    // Space for pan
+    // Space for pan. Its default is claimed here and on keyup: Chrome focuses a clicked button, and
+    // the keyup of a Space-pan activated it again (an extra Undo, a second Flip). Text fields and
+    // dropdowns never get this far (checked above), so typing a space is unaffected.
+    if (e.code === "Space") e.preventDefault();
     if (e.code === "Space" && !spaceHeld) {
       spaceHeld = true;
       if (canvasClipEl) canvasClipEl.style.cursor = "grab";
@@ -1492,6 +1495,8 @@
       toolBeforeEraser = null;
     }
     if (e.code === "Space") {
+      // Only a Space that panned (see handleKeyDown): in a dialog it must still press its button.
+      if (spaceHeld && !isTextEntry(e.target as HTMLElement)) e.preventDefault();
       spaceHeld = false;
       updateCursor();
     }
@@ -3035,6 +3040,14 @@
     );
 
     // Touch gestures
+    // A press on the canvas leaves a text field (layer rename, size box, project name): the canvas
+    // blocks the browser's focus change on press (so a slider keeps focus), which also kept the
+    // field focused — on iPad the keyboard stayed up and a rename stayed uncommitted.
+    const blurTextEntry = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && isTextEntry(el)) el.blur();
+    };
+    canvasClipEl.addEventListener("pointerdown", blurTextEntry, true);
     const cleanupTouch = setupTouchGestures(canvasClipEl, viewport, {
       onUndo: undo,
       onRedo: redo,
@@ -3135,6 +3148,7 @@
     return () => {
       cleanupInput();
       cleanupTouch();
+      canvasClipEl.removeEventListener("pointerdown", blurTextEntry, true);
       canvasClipEl.removeEventListener("wheel", handleWheel);
       canvasClipEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
       overlayResize.disconnect();
