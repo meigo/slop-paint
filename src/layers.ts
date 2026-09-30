@@ -262,9 +262,37 @@ export class LayerManager {
     ctx.restore();
   }
 
+  /** Pixels per document unit that the layers are kept at (the layer resolution). */
+  get pixelRatio(): number {
+    return this.dpr;
+  }
+
   /** Update display pixel ratio */
   setDpr(dpr: number) {
     this.dpr = dpr;
+  }
+
+  /** Keep the layers at `dpr` pixels per document unit from now on, resampling what's there (a
+   *  reference is re-drawn from its original instead, so it loses nothing). */
+  setPixelRatio(dpr: number) {
+    if (dpr === this.dpr) return;
+    this.dpr = dpr;
+    const pxW = Math.round(this.docWidth * dpr);
+    const pxH = Math.round(this.docHeight * dpr);
+    for (const layer of this.flatLayers()) {
+      const old = document.createElement("canvas");
+      old.width = layer.canvas.width;
+      old.height = layer.canvas.height;
+      old.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+      layer.canvas.width = pxW;
+      layer.canvas.height = pxH;
+      layer.ctx.resetTransform();
+      layer.ctx.imageSmoothingQuality = "high";
+      layer.ctx.drawImage(old, 0, 0, pxW, pxH);
+      layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (layer.ref) this.renderRef(layer);
+    }
+    this.floatScratch = null;
   }
 
   /**

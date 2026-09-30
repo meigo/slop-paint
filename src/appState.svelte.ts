@@ -6,6 +6,7 @@ export type BrushKind = "smooth" | "ink" | "calligraphy" | BrushType;
 import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
+import { isAppleTouch } from "./share";
 
 export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedropper" | "outline";
 
@@ -25,6 +26,9 @@ interface AppStateShape {
   keepProportions: boolean;
   /** Settings: show the Spine tag UI (layer strip chips/menu, "for Spine" export wording). */
   spineTools: boolean;
+  /** Settings: keep layers at the screen's pixel density (2× on Retina/iPad, 4× the memory) rather
+   *  than at document pixels. Saves and exports are document pixels either way. */
+  hiResLayers: boolean;
   /** Bridge, for the bucket AND Fill enclosed: close line breaks of about 2×this px (0..MAX_GAP).
    *  Saved under its old name, from when only Fill enclosed had it. */
   fillEnclosedGap: number;
@@ -80,6 +84,10 @@ export const app: AppStateShape = $state({
   docHeight: 1080,
   keepProportions: true,
   spineTools: true,
+  // Off on iPad: 40 layers at 2× (1.2 GB) got blanked in the background.
+  hiResLayers:
+    typeof navigator === "undefined" ||
+    !isAppleTouch(navigator.userAgent, navigator.platform, navigator.maxTouchPoints),
   fillEnclosedGap: 0,
   historyVersion: 0,
   layerPanelWidth: DEFAULT_PANEL_WIDTH,

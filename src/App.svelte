@@ -266,12 +266,41 @@
     }
   }
 
+  // --- Layer resolution ---
+  /** Pixels per document unit the layers (and the display canvas) are kept at: the screen's
+   *  density with Sharp layers on, else 1. Saves and exports are document pixels either way, so
+   *  the extra is only on screen — and 4× the memory at 2×. The selection overlay stays at the
+   *  screen's density regardless (crisp handles). */
+  function docDpr(): number {
+    return app.hiResLayers ? window.devicePixelRatio || 1 : 1;
+  }
+
+  /** Edit ▸ Settings ▸ Sharp layers: resample the open document to the new resolution. */
+  function setLayerResolution(hi: boolean) {
+    if (!layers || hi === app.hiResLayers) return;
+    if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
+    if (outlineActive()) cancelOutline();
+    app.hiResLayers = hi;
+    layers.setPixelRatio(docDpr());
+    history.clear(); // snapshots are the old resolution
+    resizeCanvas();
+    layers.composite();
+    bumpLayerVersion();
+    debouncedSave();
+    flashStatus(
+      hi
+        ? "Layers are at screen resolution now — undo history cleared"
+        : "Layers are at document pixels now — undo history cleared",
+      6000,
+    );
+  }
+
   // --- Eyedropper ---
   let eyedropperSwatchEl: HTMLDivElement;
 
   /** Colour of the composited document at canvas coords, or null off-canvas / on transparency. */
   function sampleColor(x: number, y: number): string | null {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     const px = Math.floor(x * dpr);
     const py = Math.floor(y * dpr);
     if (px < 0 || py < 0 || px >= canvasEl.width || py >= canvasEl.height) return null;
@@ -333,6 +362,7 @@
     fillExpand?: number;
     keepProportions?: boolean;
     spineTools?: boolean;
+    hiResLayers?: boolean;
     fillEnclosedGap?: number;
     fillColor?: string;
     projectName?: string;
@@ -376,6 +406,7 @@
       fillExpand: app.fillSettings.expand,
       keepProportions: app.keepProportions,
       spineTools: app.spineTools,
+      hiResLayers: app.hiResLayers,
       fillEnclosedGap: app.fillEnclosedGap,
       layerPanelWidth: app.layerPanelWidth,
       nibAngle: app.brushSettings.nibAngle,
@@ -417,6 +448,7 @@
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (typeof data.spineTools === "boolean") app.spineTools = data.spineTools;
+      if (typeof data.hiResLayers === "boolean") app.hiResLayers = data.hiResLayers;
       if (data.fillEnclosedGap != null) app.fillEnclosedGap = clampGap(data.fillEnclosedGap);
       if (data.layerPanelWidth != null) {
         app.layerPanelWidth = clampPanelWidth(data.layerPanelWidth, window.innerWidth);
@@ -519,7 +551,7 @@
     if (!selectLayerContent() || selection.state !== "selected") return;
     const layer = layers.active;
     if (layers.isLocked(layer)) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     preSelectionSnapshot = layers.getSnapshot();
     floatLayer = layers.active;
     const lifted = selection.liftPixels(layer.ctx, dpr);
@@ -543,7 +575,7 @@
     if (selection.state === "selected") {
       const layer = layers.active;
       if (layers.isLocked(layer)) return;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = docDpr();
       preSelectionSnapshot = layers.getSnapshot();
       floatLayer = layers.active;
       const lifted = selection.liftPixels(layer.ctx, dpr);
@@ -802,7 +834,7 @@
       // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged or
       // non-PSD file fails here with the open document unchanged.
       try {
-        size = loadPsd(buffer, layers, window.devicePixelRatio || 1, bumpLayerVersion);
+        size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion);
       } catch (e) {
         failed(e);
         return;
@@ -866,7 +898,7 @@
 
   function resizeCanvas() {
     if (!canvasEl || !selectionOverlayEl || !layers) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     const docW = app.docWidth;
     const docH = app.docHeight;
     // Display canvas = document size (CSS transform handles zoom/pan)
@@ -938,7 +970,7 @@
     }
 
     const layer = layers.active;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
 
     if (layers.isLocked(layer) && app.currentTool !== "select" && app.currentTool !== "lasso")
       return;
@@ -1459,7 +1491,7 @@
     const color = hexToRgba(app.fillColor, app.fillOpacity);
     if (selection?.state === "selected") {
       // Same as the click fill: paint a temp copy, composite back through the clip.
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = docDpr();
       const tmp = document.createElement("canvas");
       tmp.width = layer.canvas.width;
       tmp.height = layer.canvas.height;
@@ -1588,7 +1620,7 @@
     // A marquee clips the WRITE, not the maths: the field is built from the whole drawing, so where
     // the line meets the cut it is simply truncated — no line is drawn along the marquee itself.
     if (selection?.state === "selected") {
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = docDpr();
       ctx.putImageData(src, r.x, r.y); // outside the marquee nothing changes
       if (!outlineScratch) {
         outlineScratch = document.createElement("canvas");
@@ -1903,7 +1935,7 @@
   /** Make an autosaved PSD the document (startup, or File ▸ Restore autosave…). */
   function loadAutosaveBuffer(buffer: ArrayBuffer) {
     if (!layers) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
     if (outlineActive()) cancelOutline();
     history.clear(); // restored document: nothing from this session to undo
@@ -2051,12 +2083,7 @@
   const memoryUse = $derived.by(() => {
     void app.layerVersion;
     const count = layersReady && layers ? layers.flatLayers().length : 0;
-    const bytes = layerMemoryBytes(
-      count,
-      app.docWidth,
-      app.docHeight,
-      window.devicePixelRatio || 1,
-    );
+    const bytes = layerMemoryBytes(count, app.docWidth, app.docHeight, docDpr());
     return { text: formatBytes(bytes), warn: onAppleTouch && bytes > IPAD_MEMORY_WARN_BYTES };
   });
   let memoryWarned = false;
@@ -2070,7 +2097,7 @@
     memoryWarned = true;
     untrack(() =>
       flashStatus(
-        `This document's layers take ~${text} — an iPad may blank them while the app is in the background. Save to Files often, or merge layers.`,
+        `This document's layers take ~${text} — an iPad may blank them while the app is in the background. Turn off Edit ▸ Settings ▸ Sharp layers, merge layers, or Save to Files often.`,
         12000,
       ),
     );
@@ -2171,7 +2198,7 @@
     if (selection?.hasFloating) return copyFloat();
     if (!selection || selection.state !== "selected" || !selection.rect || !layers) return;
     if (outlineActive()) cancelOutline(); // copy the art, not the preview
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     const pixels = selection.copyPixels(layers.active.ctx, dpr);
     if (!pixels) return;
     pixelClipboard = { canvas: pixels, rect: { ...selection.rect } };
@@ -2191,7 +2218,7 @@
     const x1 = Math.ceil(Math.max(...pts.map((p) => p.x)));
     const y1 = Math.ceil(Math.max(...pts.map((p) => p.y)));
     const rect = { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     const pixels = document.createElement("canvas");
     pixels.width = Math.round(rect.w * dpr);
     pixels.height = Math.round(rect.h * dpr);
@@ -2219,7 +2246,7 @@
     const layer = layers.active;
     if (layers.isLocked(layer)) return;
     if (layer.ref) return flashStatus(REF_PAINT_REFUSED);
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = docDpr();
     const before = layers.getSnapshot();
     selection.clearRegion(layer.ctx, dpr);
     selection.cancel(); // drop the marquee
@@ -2868,6 +2895,8 @@
     bg.ctx.fillRect(0, 0, app.docWidth, app.docHeight);
     layers.addLayer("Layer 1");
     loadSettings();
+    layers.setPixelRatio(docDpr()); // the saved layer resolution, before anything is drawn or restored
+    resizeCanvas();
     updateCursor();
     layersReady = true;
     void restoreAutosave().then((ok) => {
@@ -3173,6 +3202,7 @@
   <SettingsDialog
     open={showSettingsDialog}
     onChange={debouncedSave}
+    onLayerResolution={setLayerResolution}
     fonts={fontList.map((f) => ({ key: fontKey(f), label: fontLabel(f) }))}
     onAddFont={(file) => void addFont(file)}
     onRemoveFont={(key) => void removeFont(key)}

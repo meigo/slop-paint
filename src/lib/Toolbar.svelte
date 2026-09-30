@@ -610,7 +610,7 @@
         <div
           class="px-3 py-1.5 text-xs {memoryUse.warn ? 'text-warn' : 'text-text-muted'}"
           title={memoryUse.warn
-            ? "More than an iPad reliably keeps for a page in the background: it may blank the layers. Save to Files often, or merge layers"
+            ? "More than an iPad reliably keeps for a page in the background: it may blank the layers. Turn off Edit ▸ Settings ▸ Sharp layers, merge layers, or Save to Files often"
             : "Image memory the layers take"}
         >
           Layer memory ~{memoryUse.text}

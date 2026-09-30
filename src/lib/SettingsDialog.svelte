@@ -7,6 +7,7 @@
   let {
     open = false,
     onChange,
+    onLayerResolution,
     onClose,
     fonts,
     onAddFont,
@@ -15,6 +16,8 @@
     open: boolean;
     /** Called after a setting changes, so the caller can persist it. */
     onChange: () => void;
+    /** Sharp layers toggled: the caller resamples the document. */
+    onLayerResolution: (hi: boolean) => void;
     onClose: () => void;
     /** The fonts added on this device (the text dialog's +), as listed there. */
     fonts: { key: string; label: string }[];
@@ -66,6 +69,24 @@
           <span class="text-text">Spine tools</span><br />
           Tag chips and the tag menu in the layer strip, and Spine wording on the PSD export. Off only
           hides them: tags already on layers stay, and are still exported.
+        </span>
+      </label>
+
+      <label
+        class="flex cursor-pointer items-start gap-2 text-xs text-text-secondary"
+        title="Keep layers at the screen's pixel density: sharper when zoomed in, 4× the memory"
+      >
+        <input
+          type="checkbox"
+          class="mt-0.5 accent-accent"
+          checked={app.hiResLayers}
+          onchange={(e) => onLayerResolution(e.currentTarget.checked)}
+        />
+        <span>
+          <span class="text-text">Sharp layers ({window.devicePixelRatio || 1}×)</span><br />
+          Layers at the screen's density: crisper when zoomed in, but 4× the memory — an iPad may blank
+          a big document's layers in the background. Saves and exports are document pixels either way.
+          Changing it clears undo.
         </span>
       </label>
 
