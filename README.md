@@ -125,7 +125,11 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - Export a flattened **PNG** or a **PSD** for Spine (groups become PSD folders, layer order is draw
   order); exports use document pixels, not the screen's
 - **Autosave** to the browser (IndexedDB) a few seconds after each change — waiting while you draw —
-  and when the tab is hidden, restored on the next visit
+  and when the tab is hidden, restored on the next visit. It also keeps copies from up to 15
+  minutes back: **File ▸ Restore autosave…**
+- If the layers ever come back **blank** (an iPad can reclaim the memory of an app left in the
+  background), autosave stops before it overwrites the saved copy and offers to restore it. The
+  Document menu shows how much memory the layers take, and warns on iPad when it's a lot
 - On iPad/iPhone, **File ▸ Save to Files…** and both exports go through the share sheet (pick
   Save to Files there); in the Home Screen app, Save does too
 - On iPad, Share → Add to Home Screen runs it full-screen as an app

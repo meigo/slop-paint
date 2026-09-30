@@ -73,9 +73,28 @@
   import { Viewport } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
-  import { clearAutosave, loadAutosave, saveAutosave } from "./persist/autosave";
+  import {
+    clearAutosave,
+    keepLatestAutosave,
+    listAutosaves,
+    loadAutosave,
+    saveAutosave,
+    type AutosaveEntry,
+  } from "./persist/autosave";
+  import {
+    formatBytes,
+    IPAD_MEMORY_WARN_BYTES,
+    layerMemoryBytes,
+    looksBlanked,
+  } from "./persist/autosave-plan";
   import { history, pushPixelEdit, pushRefEdit, setOnHistoryApplied, structuralEdit } from "./undo";
-  import { canShareFile, isStandalone, saveToFilesAvailable, shareFile } from "./share";
+  import {
+    canShareFile,
+    isAppleTouch,
+    isStandalone,
+    saveToFilesAvailable,
+    shareFile,
+  } from "./share";
   import {
     fileAccessAvailable,
     isAbort,
@@ -85,6 +104,7 @@
   } from "./file-access";
   import { downloadBlob } from "./download";
   import ShareReadyDialog from "./lib/ShareReadyDialog.svelte";
+  import RestoreDialog from "./lib/RestoreDialog.svelte";
   import { untrack } from "svelte";
   import {
     app,
@@ -1167,7 +1187,14 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (selection) selection.shiftHeld = e.shiftKey;
     // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
-    if (showNewDocDialog || showResizeDialog || showSettingsDialog || shareFileReady || textDialog)
+    if (
+      showNewDocDialog ||
+      showResizeDialog ||
+      showSettingsDialog ||
+      shareFileReady ||
+      textDialog ||
+      restoreDialog
+    )
       return;
     const target = e.target as HTMLElement;
     if (isTextEntry(target)) return;
@@ -1386,11 +1413,14 @@
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") onHide();
+      else checkBlankOnReturn();
     };
     window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", checkBlankOnReturn);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", checkBlankOnReturn);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   });
@@ -1815,7 +1845,9 @@
   }
 
   function flushAutosave() {
-    if (!autosaveReady || !autosaveDirty || !layers) return;
+    if (!autosaveReady || autosaveHalted || !autosaveDirty || !layers) return;
+    const inked = inkedLayerIds();
+    if (blankedSince(inked)) return haltForBlankLayers();
     autosaveDirty = false;
     let buffer: ArrayBuffer;
     try {
@@ -1825,7 +1857,15 @@
       console.error("autosave encode failed", e);
       return;
     }
-    void saveAutosave(buffer).then(
+    inkedAtSave = inked;
+    historyAtSave = app.historyVersion;
+    const meta = {
+      savedAt: Date.now(),
+      projectName: app.projectName,
+      layerCount: layers.flatLayers().length,
+      inkedCount: inked.size,
+    };
+    void saveAutosave(buffer, meta).then(
       () => {
         if (app.statusMessage.startsWith("Autosave is failing")) flashStatus("");
       },
@@ -1847,18 +1887,8 @@
   async function restoreAutosave(): Promise<boolean> {
     try {
       const buffer = await loadAutosave();
-      if (!buffer || !layers) return true;
-      const dpr = window.devicePixelRatio || 1;
-      const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
-      history.clear(); // restored document: nothing from this session to undo
-      app.docWidth = width;
-      app.docHeight = height;
-      layers.docWidth = width;
-      layers.docHeight = height;
-      resizeCanvas();
-      layers.composite();
-      bumpLayerVersion();
-      fitDocumentInView();
+      if (buffer) loadAutosaveBuffer(buffer);
+      else markSaved();
       return true;
     } catch (e) {
       console.error("autosave restore failed", e);
@@ -1869,6 +1899,182 @@
       return false;
     }
   }
+
+  /** Make an autosaved PSD the document (startup, or File ▸ Restore autosave…). */
+  function loadAutosaveBuffer(buffer: ArrayBuffer) {
+    if (!layers) return;
+    const dpr = window.devicePixelRatio || 1;
+    const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
+    if (outlineActive()) cancelOutline();
+    history.clear(); // restored document: nothing from this session to undo
+    app.docWidth = width;
+    app.docHeight = height;
+    layers.docWidth = width;
+    layers.docHeight = height;
+    resizeCanvas();
+    layers.composite();
+    bumpLayerVersion();
+    fitDocumentInView();
+    markSaved();
+  }
+
+  // --- Blank layers guard ---
+  // An iPad reclaims a backgrounded page's image memory: a 40-layer document came back with every
+  // layer still listed and every one EMPTY, and the next autosave would have replaced the only
+  // stored copy with that. So each autosave, and each return from the background, first checks
+  // whether layers lost all their pixels with no undo step to explain it (`looksBlanked`); if so,
+  // autosave pauses and the restore dialog opens.
+  let inkedAtSave = new Set<number>(); // layers with pixels at the last save (or restore)
+  let historyAtSave = 0; // app.historyVersion then: how many undo steps have happened since
+  let autosaveHalted = false;
+  let restoreDialog = $state<{ blanked: boolean; entries: AutosaveEntry[] } | null>(null);
+  let probeCanvas: HTMLCanvasElement | null = null;
+
+  /** Ids of the layers that have any pixels. Each is drawn into a small probe (high-quality
+   *  downscaling averages, so a thin line still leaves some alpha) rather than read whole. */
+  function inkedLayerIds(): Set<number> {
+    const out = new Set<number>();
+    if (!layers) return out;
+    const W = 256;
+    const H = Math.max(1, Math.round((W * app.docHeight) / app.docWidth));
+    probeCanvas ??= document.createElement("canvas");
+    probeCanvas.width = W;
+    probeCanvas.height = H;
+    const ctx = probeCanvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.imageSmoothingQuality = "high";
+    for (const layer of layers.flatLayers()) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(layer.canvas, 0, 0, W, H);
+      const d = ctx.getImageData(0, 0, W, H).data;
+      for (let i = 3; i < d.length; i += 4) {
+        if (d[i]) {
+          out.add(layer.id);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The document now counts as saved in this state: the guard compares against it. */
+  function markSaved() {
+    inkedAtSave = inkedLayerIds();
+    historyAtSave = app.historyVersion;
+  }
+
+  function blankedSince(inked: Set<number>): boolean {
+    if (!layers) return false;
+    const existing = new Set(layers.flatLayers().map((l) => l.id));
+    return looksBlanked(inkedAtSave, inked, existing, app.historyVersion - historyAtSave);
+  }
+
+  function haltForBlankLayers() {
+    autosaveHalted = true;
+    clearTimeout(autosaveTimer);
+    flashStatus(
+      "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back.",
+      0,
+    );
+    void openRestoreDialog(true);
+  }
+
+  // Dev builds only: blank every layer's pixels, as the iPad does, to try the guard on a desktop.
+  if (import.meta.env.DEV) {
+    (window as unknown as { slopBlankLayers: () => void }).slopBlankLayers = () => {
+      for (const layer of layers?.flatLayers() ?? []) {
+        layer.ctx.save();
+        layer.ctx.resetTransform();
+        layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        layer.ctx.restore();
+      }
+      layers?.composite();
+    };
+  }
+
+  /** Back from the background: were the layers blanked while away? */
+  function checkBlankOnReturn() {
+    if (!autosaveReady || autosaveHalted || !layers) return;
+    if (blankedSince(inkedLayerIds())) haltForBlankLayers();
+  }
+
+  async function openRestoreDialog(blanked: boolean) {
+    try {
+      restoreDialog = { blanked, entries: await listAutosaves() };
+    } catch (e) {
+      flashStatus(
+        `Couldn't list the autosaves — ${e instanceof Error ? e.message : String(e)}`,
+        10000,
+      );
+    }
+  }
+
+  async function restoreAutosaveEntry(entry: AutosaveEntry) {
+    try {
+      const buffer = await loadAutosave(entry.key);
+      if (!buffer) throw new Error("that copy is gone");
+      loadAutosaveBuffer(buffer);
+      app.projectName = entry.projectName;
+      docFile = null; // it may not match the file the document came from
+      autosaveHalted = false;
+      restoreDialog = null;
+      flashStatus(`Restored the copy saved ${new Date(entry.savedAt).toLocaleTimeString()}`, 6000);
+    } catch (e) {
+      flashStatus(`Couldn't restore — ${e instanceof Error ? e.message : String(e)}`, 10000);
+    }
+  }
+
+  /** The user keeps the blank layers: set the last good copy aside, where autosave can't reach it,
+   *  and resume. */
+  async function keepBlankLayers() {
+    try {
+      await keepLatestAutosave();
+    } catch (e) {
+      flashStatus(
+        `Couldn't set the saved copy aside — ${e instanceof Error ? e.message : String(e)}`,
+        0,
+      );
+      return; // stay paused: resuming now could overwrite the only good copy
+    }
+    markSaved();
+    autosaveHalted = false;
+    restoreDialog = null;
+    flashStatus("Autosave is back on — the earlier copy stays in File ▸ Restore autosave…", 8000);
+  }
+
+  // Image memory the layers take, shown in the Document menu. On iPad a document over the limit
+  // gets a warning: it's what a backgrounded app loses first (see the blank layers guard).
+  const onAppleTouch = isAppleTouch(
+    navigator.userAgent,
+    navigator.platform,
+    navigator.maxTouchPoints,
+  );
+  const memoryUse = $derived.by(() => {
+    void app.layerVersion;
+    const count = layersReady && layers ? layers.flatLayers().length : 0;
+    const bytes = layerMemoryBytes(
+      count,
+      app.docWidth,
+      app.docHeight,
+      window.devicePixelRatio || 1,
+    );
+    return { text: formatBytes(bytes), warn: onAppleTouch && bytes > IPAD_MEMORY_WARN_BYTES };
+  });
+  let memoryWarned = false;
+  $effect(() => {
+    const { warn, text } = memoryUse;
+    if (!warn) {
+      memoryWarned = false;
+      return;
+    }
+    if (memoryWarned) return;
+    memoryWarned = true;
+    untrack(() =>
+      flashStatus(
+        `This document's layers take ~${text} — an iPad may blank them while the app is in the background. Save to Files often, or merge layers.`,
+        12000,
+      ),
+    );
+  });
 
   // Mirrors of imperative state, so buttons can dim when they would do nothing.
   const undoAvailable = $derived.by(() => {
@@ -2798,6 +3004,12 @@
 </script>
 
 <ShareReadyDialog file={shareFileReady} onClose={() => (shareFileReady = null)} />
+<RestoreDialog
+  dialog={restoreDialog}
+  onRestore={(entry) => void restoreAutosaveEntry(entry)}
+  onKeep={() => void keepBlankLayers()}
+  onClose={() => (restoreDialog = null)}
+/>
 
 <svelte:window
   onpointerovercapture={onPointerHint}
@@ -2867,6 +3079,8 @@
           exportPsd={doExportPsd}
           savePsd={doSavePsd}
           saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
+          restoreAutosave={() => void openRestoreDialog(false)}
+          {memoryUse}
           saveAs={fileAccessAvailable() ? () => void doSaveAs() : null}
           openPsd={() => void doOpenPsd()}
           importReference={() => imageInputEl?.click()}

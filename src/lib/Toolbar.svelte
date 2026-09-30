@@ -81,6 +81,8 @@
     savePsd,
     saveAs,
     saveToFiles,
+    restoreAutosave,
+    memoryUse,
     openPsd,
     importReference,
     importReferenceFromClipboard,
@@ -136,6 +138,10 @@
     savePsd: () => void;
     /** iPad/iPhone only: null elsewhere, and then the menu item is hidden. */
     saveToFiles: (() => void) | null;
+    /** File ▸ Restore autosave…: pick one of the stored copies. */
+    restoreAutosave: () => void;
+    /** The layers' image memory ("1.3 GB"), and whether it's past the iPad warning. */
+    memoryUse: { text: string; warn: boolean };
     /** Save to a file the user picks (Chrome/Edge desktop); null where the browser can't. */
     saveAs: (() => void) | null;
     openPsd: () => void;
@@ -391,6 +397,15 @@
         <button
           class={menuItem}
           role="menuitem"
+          title="Bring back an autosaved copy: the latest, or one from a few minutes earlier"
+          onclick={() => {
+            restoreAutosave();
+            close();
+          }}>Restore autosave…</button
+        >
+        <button
+          class={menuItem}
+          role="menuitem"
           title={saveAs
             ? "Save the project to its PSD file — the first time, pick where (references stay Smart Objects)"
             : "Save the project as a PSD download — references stay Smart Objects"}
@@ -592,6 +607,14 @@
             close();
           }}>Resize canvas… <span class={kbd}>{app.docWidth} × {app.docHeight}</span></button
         >
+        <div
+          class="px-3 py-1.5 text-xs {memoryUse.warn ? 'text-warn' : 'text-text-muted'}"
+          title={memoryUse.warn
+            ? "More than an iPad reliably keeps for a page in the background: it may blank the layers. Save to Files often, or merge layers"
+            : "Image memory the layers take"}
+        >
+          Layer memory ~{memoryUse.text}
+        </div>
       {/snippet}
     </ToolbarMenu>
     <ToolbarMenu label="View">
