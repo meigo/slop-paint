@@ -214,7 +214,23 @@ export function drawStampStrokeIncremental(
   const stamp = (x: number, y: number, drawSize: number) => {
     if (drawSize * toDevice > SMALL_STAMP_PX) {
       const tip = tips[mipIndex(drawSize * toDevice, tipSizes)];
-      ctx.drawImage(tip, x - drawSize / 2, y - drawSize / 2, drawSize, drawSize);
+      // A random turn per stamp (2026-10-01): every stamp is the same tip, so unturned its holes
+      // land in the same place each time and line up into rows along the stroke (Charcoal showed
+      // it most). Turned about the stamp's centre via the transform: the layer's own (`m`) times
+      // a translate to (x, y) and a rotation — cheaper than save/translate/rotate/restore.
+      const t = Math.random() * Math.PI * 2;
+      const cos = Math.cos(t);
+      const sin = Math.sin(t);
+      ctx.setTransform(
+        m.a * cos + m.c * sin,
+        m.b * cos + m.d * sin,
+        m.c * cos - m.a * sin,
+        m.d * cos - m.b * sin,
+        m.a * x + m.c * y + m.e,
+        m.b * x + m.d * y + m.f,
+      );
+      ctx.drawImage(tip, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+      ctx.setTransform(m);
       return;
     }
     const a = ctx.globalAlpha;
