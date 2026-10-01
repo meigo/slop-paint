@@ -72,7 +72,8 @@ export function makeBristles(count: number, seed: number): Bristle[] {
     out.push({
       offset,
       thickness: 0.6 + r() * 0.7,
-      load: Math.max(0, 0.55 + r() * 0.45 - edge ** 3 * 0.35),
+      // Few hairs (a narrow stroke) are nearly all edge: don't starve them.
+      load: Math.max(0, 0.55 + r() * 0.45 - edge ** 3 * 0.35 * Math.min(1, count / 12)),
       lag: r() * (0.15 + edge * 0.6),
       tail: r() * (0.15 + edge * 0.6),
       tone: 0.85 + r() * 0.15,
@@ -102,12 +103,17 @@ export function hairPaints(
 ): boolean {
   const dry = Math.max(0, Math.min(100, dryness)) / 100;
   if (s < b.lag * width) return false;
-  const edge = Math.abs(b.offset);
+  // A narrow stroke has few hairs, nearly all of them "edge": thin the edge only as it widens
+  // (a 4 px stroke came out hollow and faint at Press 1).
+  const edge = Math.abs(b.offset) * Math.min(1, width / 16);
+  // Lengths ALONG the stroke scale with its width, but never below 24 px: scaled to a 4 px
+  // stroke, the breaks came every ~10 px (dashes) and the paint ran out after ~100 px.
+  const long = Math.max(width, 24);
   // Breaks every ~1–3 widths along a hair: a coarse noise for long dry runs, a fine one for grain.
-  const coarse = noise1(b.key, s / (width * 2.5));
-  const fine = noise1(b.key ^ 0x5bd1e995, s / (width * 0.6));
+  const coarse = noise1(b.key, s / (long * 2.5));
+  const fine = noise1(b.key ^ 0x5bd1e995, s / (long * 0.6));
   // The paint runs out: over ~25 widths at Dryness 100, never at 0.
-  const spent = dry > 0 ? Math.min(1, s / (width * (6 + 40 * (1 - dry)))) * dry * 0.4 : 0;
+  const spent = dry > 0 ? Math.min(1, s / (long * (6 + 40 * (1 - dry)))) * dry * 0.4 : 0;
   const contact = 0.55 + 0.45 * pressure;
   const presence = b.load * contact - spent + (coarse - 0.5) * 0.55 + (fine - 0.5) * 0.3;
   // Dryness raises the bar a hair has to clear; the edge raises it more.
@@ -190,7 +196,8 @@ export function bristleRuns(
       }
     }
     return {
-      width: Math.max(0.5, spacing * b.thickness),
+      // At least 0.9 px: a sub-pixel hair antialiases to a faint grey.
+      width: Math.max(0.9, spacing * b.thickness),
       tone: b.tone,
       runs: runs.filter((r) => r.length >= 2),
     };

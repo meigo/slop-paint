@@ -100,6 +100,17 @@ describe("dry brush", () => {
     expect(early(long)).toEqual(early(short));
   });
 
+  it("keeps a narrow stroke (Press 1) mostly painted, not dashed", () => {
+    // 4 px at Press 1 used to break every ~10 px and run dry after ~100 px.
+    for (const size of [2, 4, 8]) {
+      const hairs = bristleRuns(line(600), size, 1, 50);
+      const share = painted(hairs) / (hairs.length * 600);
+      expect(share).toBeGreaterThan(0.6);
+      // And no hair is thinner than a pixel's worth (a faint grey line).
+      expect(Math.min(...hairs.map((h) => h.width))).toBeGreaterThanOrEqual(0.9);
+    }
+  });
+
   it("draws nothing for fewer than two points", () => {
     expect(bristleRuns(line(0), 30, 1, 50)).toEqual([]);
   });
