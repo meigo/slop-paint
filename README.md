@@ -176,6 +176,7 @@ npm run dev:lan    # also on your local network, to try it on an iPad
 ```bash
 npm run build        # svelte-check + tsc + production build
 npm run test         # Vitest, once (test:watch to keep watching)
+npm run test:ipad    # the app in WebKit at iPad size with touch (first: npx playwright install webkit)
 npm run lint         # ESLint
 npm run check        # svelte-check
 npm run format       # Prettier (format:check to only check)

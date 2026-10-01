@@ -25,3 +25,6 @@ dist-ssr
 .wrangler/
 
 temp
+
+# npm run test:ipad screenshots
+test-results/

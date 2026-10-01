@@ -14,9 +14,11 @@ export default tseslint.config(
     },
   },
   {
-    // Build-time Node script (icon generation): the two Node globals it uses.
+    // Node scripts (icon generation, the iPad smoke check): the Node globals they use.
     files: ["tools/**/*.mjs"],
-    languageOptions: { globals: { Buffer: "readonly", console: "readonly" } },
+    languageOptions: {
+      globals: { Buffer: "readonly", console: "readonly", process: "readonly" },
+    },
   },
   // Disable rules that conflict with Prettier (must be after the rule configs).
   prettier,

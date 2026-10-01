@@ -27,6 +27,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `npm run deploy` — build, then `wrangler deploy` to the Cloudflare Worker `slop-paint` (`wrangler.jsonc`: assets-only, no Worker script, as slop-animator; `public/_headers` caches only the content-hashed `/assets/*`). Manual, not on push; the name matches the Worker first made in the Cloudflare dashboard, so a deploy replaces it in place. `preview_urls: false`: no preview/alias URLs (the 2026-09-26 debug aliases were turned off this way — Wrangler can't delete an alias, and versions are immutable history)
 - `npm run test` — run tests once
 - `npm run test:watch` — run tests in watch mode
+- `npm run test:ipad` — iPad smoke check (`tools/ipad-smoke.mjs`, Playwright): the app in WebKit (Safari's engine) at iPad Pro 11 landscape with touch, in a fresh profile (never the user's IndexedDB). Starts its own dev server on a free port; `npm run test:ipad -- <url>` checks a URL (e.g. the deployed site). Checks: it loads, a simulated pen stroke draws and adds an undo step, a real touch tap opens the File menu, no page errors; screenshots in `test-results/ipad/` (gitignored); exit 1 on failure. First run per machine: `npx playwright install webkit` (~100 MB). Synthetic pen events aren't live pointers, so WebKit refuses `setPointerCapture` for them — the script lets that fail quietly; a real Pencil is unaffected. NOT covered (test on the iPad): the real Pencil, multi-finger gestures, the share sheet, the keyboard, iPadOS memory limits. The user can't install Xcode, so the real-device and Simulator routes (`safaridriver`) are out
 - `npm run lint` — run ESLint
 - `npm run check` — run svelte-check
 - `npm run format` / `npm run format:check` — Prettier
@@ -39,6 +40,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - A bug seen only on the deployed site: reproduce it against the production build (`npm run build && npx vite preview`), not `npm run dev` — the minified bundle can behave differently (see Undo)
+- After UI or input changes, run `npm run test:ipad` too: WebKit catches Safari-only breakage Chrome doesn't
 - Run `npm run check` to verify Svelte components
 - Run `npx tsc --noEmit` to type-check non-Svelte TypeScript
 
