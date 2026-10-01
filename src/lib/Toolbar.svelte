@@ -955,6 +955,22 @@
               />
               <span class={valueCls}>{app.brushSettings.dryness}</span>
             </label>
+            <label
+              class={rowCls}
+              title="How long each bristle mark tapers at its ends — up to twice the stroke's width"
+            >
+              <span class={labelCls}>Taper</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.dryTaper ?? 10, 0, 100)}
+                bind:value={app.brushSettings.dryTaper}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.dryTaper}</span>
+            </label>
           {/if}
 
           {#if app.brushType === "smooth"}

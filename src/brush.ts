@@ -61,6 +61,8 @@ export interface BrushSettings {
   dwellPool?: number;
   /** Dry brush only: 0-100, how short of paint the bristles are (more breaks, sparser edges). */
   dryness?: number;
+  /** Dry brush only: 0-100, how long each hair tapers at its ends (`dryTaperPx`); 10 by default. */
+  dryTaper?: number;
   /** Pencil only: its grade, "4H" (hard, light) to "8B" (soft, dark); HB by default. */
   pencilGrade?: string;
   /** Charcoal only: "rough" (big holes) … "dense"; "medium" by default (`charcoalHoles`). */

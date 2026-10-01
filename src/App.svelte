@@ -401,6 +401,7 @@
     nibFlatness?: number;
     dwellPool?: number;
     dryness?: number;
+    dryTaper?: number;
     pencilGrade?: string;
     charcoalTexture?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
@@ -445,6 +446,7 @@
       nibFlatness: app.brushSettings.nibFlatness,
       dwellPool: app.brushSettings.dwellPool,
       dryness: app.brushSettings.dryness,
+      dryTaper: app.brushSettings.dryTaper,
       pencilGrade: app.brushSettings.pencilGrade,
       charcoalTexture: app.brushSettings.charcoalTexture,
     };
@@ -492,6 +494,7 @@
       if (data.nibFlatness != null) app.brushSettings.nibFlatness = data.nibFlatness;
       if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
       if (data.dryness != null) app.brushSettings.dryness = data.dryness;
+      if (data.dryTaper != null) app.brushSettings.dryTaper = data.dryTaper;
       if (data.pencilGrade != null) app.brushSettings.pencilGrade = data.pencilGrade;
       if (data.charcoalTexture != null) app.brushSettings.charcoalTexture = data.charcoalTexture;
       if (data.curveCp1 && data.curveCp2) {
