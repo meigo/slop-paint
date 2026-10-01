@@ -92,8 +92,9 @@ function pageSetup() {
 
   /** Plays simulated pointer steps: `{ type: "down" | "move" | "up" | "cancel", id, kind, x, y,
    *  p?, wait? }`, or `{ type: "click", x, y }` for the click a browser may add after a lift. */
+  // Kept across calls, so a check can look at the page mid-gesture and lift in a later call.
+  const targets = new Map();
   window.__gesture = async (steps) => {
-    const targets = new Map();
     const fire = (el, type, s, extra) =>
       el.dispatchEvent(
         new PointerEvent(type, {
@@ -708,7 +709,7 @@ async function main(page) {
     const r1 = await rowCount();
     const name = (await activeRow().innerText()).trim();
     // Rename: a double-tap on the name.
-    const nameSpan = activeRow().locator("span.truncate, span[role=presentation]").first();
+    const nameSpan = activeRow().locator("span.text-ellipsis").first();
     const box = await nameSpan.boundingBox();
     const c = { x: box.x + Math.min(20, box.width / 2), y: box.y + box.height / 2 };
     await tap(c);
@@ -798,6 +799,47 @@ async function main(page) {
       r1 === r0 + 1 && groups === 1 && r2 === r0 && r3 === r0 - 1 && r4 === r0,
       `Duplicate (${r0} → ${r1} rows), Group (a group row), Merge down (${r2}), Delete (${r3}), Undo (${r4})`,
       "layer-ops",
+    ];
+  });
+
+  await step(async () => {
+    // A finger drags the bottom row by its grip to the top of the list. Mid-drag: the floating
+    // copy, the rows slid down to open the gap, the dragged row dimmed. Then Undo puts it back.
+    const names = () => page.$$eval("[data-row-id]", (els) => els.map((e) => e.textContent.trim()));
+    const n0 = await names();
+    const bottom = n0.at(-1);
+    const grip = page
+      .locator("[data-row-id]", { hasText: bottom })
+      .first()
+      .locator('[title^="Drag to move"]');
+    const g = await grip.boundingBox();
+    const top = await page.locator("[data-row-id]").first().boundingBox();
+    const from = { x: g.x + g.width / 2, y: g.y + g.height / 2 };
+    const to = { x: from.x, y: top.y + 3 };
+    const steps = pathSteps("touch", 80, line(from, to), { n: 12, wait: 16 });
+    const lift = steps.pop();
+    await gesture(steps);
+    await page.waitForTimeout(250);
+    const mid = await page.evaluate(() => ({
+      ghost: !!document.querySelector("[data-drag-ghost]"),
+      slid: [...document.querySelectorAll("[data-row-id]")].filter((e) => e.style.transform).length,
+      dimmed: document.querySelectorAll("[data-row-id].opacity-40").length,
+    }));
+    await shot(`${String(n).padStart(2, "0")}-row-drag-mid`);
+    await gesture([lift]);
+    await page.waitForTimeout(300);
+    const n1 = await names();
+    await undo();
+    await page.waitForTimeout(300);
+    const n2 = await names();
+    return [
+      mid.ghost &&
+        mid.slid === n0.length &&
+        mid.dimmed === 1 &&
+        n1[0] === bottom &&
+        n2.join("|") === n0.join("|"),
+      `[sim] a finger drags the bottom row (${bottom}) to the top by its grip: mid-drag a floating copy (${mid.ghost}), ${mid.slid} rows slid to open the gap, ${mid.dimmed} dimmed; dropped (${n1.join(", ")}); Undo restores`,
+      "row-drag",
     ];
   });
 

@@ -18,8 +18,15 @@
   } from "@lucide/svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
-  import type { LayerManager, LayerNode, Layer as AppLayer, LayerGroup } from "../layers";
-  import Sortable from "sortablejs";
+  import {
+    moveNode,
+    type LayerManager,
+    type LayerNode,
+    type Layer as AppLayer,
+    type LayerGroup,
+  } from "../layers";
+  import { dragBlock, dropTarget, type Drop, type RowBox } from "./layer-drop";
+  import { autoScrollStep, ghostTop, pastThreshold, shiftedRowIds } from "./layer-drag-visual";
   import LayerProps from "./LayerProps.svelte";
   import { clampPanelWidth } from "../panel-layout";
   import { isDoubleTap, type Tap } from "./double-tap";
@@ -71,11 +78,9 @@
     onWidthChange();
   }
 
-  // The layer tree is imperative, so the list is rebuilt whenever layerVersion changes (and after a
-  // drag, see rebuildFromDom). Reading it in a $derived is what makes {#key} re-render.
+  // The layer tree is imperative, so the rows are rebuilt whenever layerVersion changes. Reading it
+  // in a $derived is what makes {#key} re-render.
   const version = $derived(app.layerVersion);
-  let dragNonce = $state(0);
-  let dropHandled = false; // one drop can fire onEnd twice (cross-list); rebuild once
   let listEl = $state<HTMLDivElement>()!;
 
   let editingId = $state<number | null>(null);
@@ -150,59 +155,179 @@
     bumpLayerVersion();
   }
 
-  // --- Drag reorder (SortableJS owns the DOM during a drag; we read the result back) ---
+  // --- Drag reorder (2026-10-01, as slop-vector-editor; ../SLOP-LAYER-DRAG.md) ---
+  // Pointer events on the grip; `layer-drop.ts` decides where a drop lands; the panel only draws
+  // that (the gap, the floating row, the outlined group); the tree changes once, on release,
+  // through `moveNode` as one undo step. Nothing moves a DOM node. It replaced SortableJS, which
+  // moved Svelte's nodes and had the order read back from the DOM (a duplicate row, a double-fired
+  // drop, and no say in locks).
 
-  function syncTreeFromDom(
-    container: HTMLElement,
-    targetArray: LayerNode[],
-    lookup: Map<number, LayerNode>,
-  ) {
-    targetArray.length = 0;
-    // The list is drawn top-first, the data is bottom-first.
-    for (let i = container.children.length - 1; i >= 0; i--) {
-      const el = container.children[i] as HTMLElement;
-      const node = lookup.get(Number(el.dataset.nodeId));
-      if (!node) continue;
-      targetArray.push(node);
-      if (node.type === "group") {
-        const childContainer = el.querySelector(":scope > .layer-group-children");
-        if (childContainer) syncTreeFromDom(childContainer as HTMLElement, node.children, lookup);
-      }
-    }
+  /** A press on a grip; `live` once it has travelled past the threshold and become a drag. The
+   *  rows, the grab offset and the content height are measured then, once. */
+  let dragging: {
+    id: number;
+    pointerId: number;
+    row: HTMLElement;
+    startX: number;
+    startY: number;
+    clientY: number;
+    live: boolean;
+    boxes: RowBox[];
+    grab: number;
+    rowPx: number;
+    contentHeight: number;
+  } | null = null;
+  let drop = $state<Drop | null>(null);
+  /** The floating copy of the grabbed row, in content coordinates. */
+  let ghost = $state<{ top: number; label: string; pad: string; height: number } | null>(null);
+  /** Rows slid down to open the gap, and the rows being dragged (dimmed in place: a group keeps
+   *  its members where they are, and the gap is one row — the doc's rule 7). */
+  let shifted = $state.raw<Set<number>>(new Set());
+  let dimmed = $state.raw<Set<number>>(new Set());
+  let slidePx = $state(0);
+  let scrollFrame = 0;
+
+  /** Every rendered row, in the list's content coordinates. */
+  function rowBoxes(): RowBox[] {
+    const off = listEl.scrollTop - listEl.getBoundingClientRect().top;
+    return [...listEl.querySelectorAll<HTMLElement>("[data-row-id]")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        kind: el.dataset.rowKind === "group" ? "group" : "layer",
+        id: Number(el.dataset.rowId),
+        top: r.top + off,
+        bottom: r.bottom + off,
+      };
+    });
   }
 
-  function rebuildFromDom(evt: Sortable.SortableEvent) {
-    // One drop can fire onEnd twice (source list + destination list). The first walk already reads
-    // the whole final order, and the node removal below would corrupt a second one.
-    if (dropHandled) return;
-    dropHandled = true;
-    queueMicrotask(() => (dropHandled = false));
+  function startDrag(e: PointerEvent, node: LayerNode) {
+    if (e.button !== 0 || dragging) return;
+    const row = (e.currentTarget as Element).closest<HTMLElement>("[data-row-id]");
+    if (!row) return;
+    const why = dragBlock(layers.tree, node.id);
+    if (why) return flashStatus(why);
+    e.preventDefault();
+    try {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    } catch {
+      // Capture is a convenience (and refused for a simulated pointer); the window still hears it.
+    }
+    dragging = {
+      id: node.id,
+      pointerId: e.pointerId,
+      row,
+      startX: e.clientX,
+      startY: e.clientY,
+      clientY: e.clientY,
+      live: false,
+      boxes: [],
+      grab: 0,
+      rowPx: 0,
+      contentHeight: 0,
+    };
+    drop = null;
+  }
 
-    const lookup = new Map<number, LayerNode>();
-    for (const n of layers.flatAll()) lookup.set(n.id, n);
-    structuralEdit(layers, () => syncTreeFromDom(listEl, layers.tree, lookup));
+  /** The press became a drag: measure the rows once — rows sliding aside must not move the targets
+   *  they are measured against — dim what moves, lift the copy and start the edge scroll. */
+  function lift(d: NonNullable<typeof dragging>) {
+    d.live = true;
+    d.boxes = rowBoxes();
+    const r = d.row.getBoundingClientRect();
+    d.grab = d.startY - r.top;
+    d.rowPx = r.height;
+    d.contentHeight = listEl.scrollHeight;
+    const node = layers.findNode(d.id);
+    const ids = new Set<number>();
+    const collect = (n: LayerNode) => {
+      ids.add(n.id);
+      if (n.type === "group") n.children.forEach(collect);
+    };
+    if (node) collect(node);
+    dimmed = ids;
+    slidePx = r.height;
+    ghost = {
+      top: 0,
+      label: node ? parseTags(node.name).baseName || "(unnamed)" : "",
+      pad: d.row.style.paddingLeft,
+      height: r.height,
+    };
+    document.documentElement.classList.add("layer-dragging");
+    scrollFrame = requestAnimationFrame(edgeScroll);
+  }
 
-    // SortableJS physically moved the dragged node. Dropped at the bottom it can land past the
-    // {#each} end anchor, where the re-render's teardown can't reach it and it survives as a
-    // duplicate row. Remove it ourselves; the dragNonce re-render then rebuilds from state.
-    evt.item.remove();
-    dragNonce++;
+  function update(d: NonNullable<typeof dragging>) {
+    if (!ghost) return;
+    const y = d.clientY - listEl.getBoundingClientRect().top + listEl.scrollTop;
+    drop = dropTarget(layers.tree, d.boxes, y, d.id);
+    shifted = shiftedRowIds(d.boxes, drop?.line ?? null);
+    ghost = { ...ghost, top: ghostTop(y, d.grab, d.contentHeight, d.rowPx) };
+    document.documentElement.classList.toggle("layer-drop-refused", drop === null);
+  }
+
+  /** Near the list's top or bottom edge, scroll it — once a frame while the drag lasts. */
+  function edgeScroll() {
+    const d = dragging;
+    if (!d) return;
+    if (!listEl?.isConnected) return finishDrag();
+    const view = listEl.getBoundingClientRect();
+    const step = autoScrollStep(d.clientY, view.top, view.bottom);
+    const max = Math.max(d.contentHeight - listEl.clientHeight, 0);
+    const next = Math.min(Math.max(listEl.scrollTop + step, 0), max);
+    if (next !== listEl.scrollTop) {
+      listEl.scrollTop = next;
+      update(d);
+    }
+    scrollFrame = requestAnimationFrame(edgeScroll);
+  }
+
+  // The cursor classes sit on <html>, outside this component: never leave them behind.
+  $effect(() => () => finishDrag());
+
+  /** Puts everything back as it was before the press. */
+  function finishDrag() {
+    cancelAnimationFrame(scrollFrame);
+    dragging = null;
+    drop = null;
+    ghost = null;
+    shifted = new Set();
+    dimmed = new Set();
+    document.documentElement.classList.remove("layer-dragging", "layer-drop-refused");
+  }
+
+  function moveDrag(e: PointerEvent) {
+    const d = dragging;
+    if (!d || e.pointerId !== d.pointerId) return;
+    d.clientY = e.clientY;
+    if (!d.live) {
+      if (!pastThreshold(e.clientX - d.startX, e.clientY - d.startY)) return;
+      lift(d);
+    }
+    update(d);
+  }
+
+  function endDrag(e: PointerEvent, apply: boolean) {
+    const d = dragging;
+    if (!d || e.pointerId !== d.pointerId) return;
+    d.clientY = e.clientY;
+    // A press that never became a drag lands nothing.
+    if (apply && d.live) update(d);
+    const target = apply && d.live ? drop : null;
+    const id = d.id;
+    // Clear the slides first, in the same tick as the commit, or the re-ordered rows would
+    // animate back from the gap.
+    finishDrag();
+    if (!target) return;
+    structuralEdit(layers, () => moveNode(layers.tree, id, target.parentId, target.index));
     layers.composite();
     bumpLayerVersion();
   }
 
-  /** Svelte action: make a container's rows draggable, including between groups. */
-  function sortable(node: HTMLElement) {
-    const s = Sortable.create(node, {
-      group: "layers",
-      animation: 150,
-      fallbackOnBody: true,
-      swapThreshold: 0.65,
-      handle: ".layer-drag-handle",
-      onEnd: rebuildFromDom,
-    });
-    return { destroy: () => s.destroy() };
-  }
+  /** A row's slide while a drag is open, and its transition (only while open: at the drop the rows
+   *  jump straight to their new order). */
+  const slide = (id: number) => (shifted.has(id) ? `translateY(${slidePx}px)` : null);
+  const slideTransition = $derived(ghost ? "transform 150ms ease" : null);
 
   /** Svelte action: draw a layer's pixels into its thumbnail canvas. */
   function thumbnail(node: HTMLCanvasElement, layer: AppLayer) {
@@ -261,6 +386,19 @@
     "flex size-7 cursor-pointer items-center justify-center rounded text-text-secondary hover:bg-surface-hover";
 </script>
 
+<svelte:window
+  onpointermove={moveDrag}
+  onpointerup={(e) => endDrag(e, true)}
+  onpointercancel={(e) => endDrag(e, false)}
+  onkeydowncapture={(e) => {
+    // Escape puts the drag back — and only that: the app's own Escape mustn't also run.
+    if (e.key !== "Escape" || !dragging) return;
+    finishDrag();
+    e.preventDefault();
+    e.stopPropagation();
+  }}
+/>
+
 {#snippet nameCell(node: LayerNode)}
   {#if editingId === node.id}
     <!-- svelte-ignore a11y_autofocus -->
@@ -296,6 +434,19 @@
   {/if}
 {/snippet}
 
+{#snippet grip(node: LayerNode)}
+  <!-- `touch-action: none`, or iPad takes the drag for a scroll and cancels the pointer. The moves
+       and the release are heard on the window. -->
+  <span
+    class="flex shrink-0 cursor-grab items-center self-stretch text-text-muted hover:text-text-secondary"
+    style="touch-action: none"
+    title="Drag to move this {node.type}"
+    onpointerdown={(e) => startDrag(e, node)}
+    onlostpointercapture={(e) => endDrag(e, false)}
+    role="presentation"><GripVertical size={14} /></span
+  >
+{/snippet}
+
 {#snippet layerRow(layer: AppLayer, depth: number)}
   <!-- ONE line. Left is identity (grip, thumbnail, name); right is state you scan ACROSS rows in
        fixed 20px columns — lock, alpha lock, eye — so they line up whatever the nesting. The
@@ -310,8 +461,12 @@
     layers.activeId
       ? 'ui-selected text-text'
       : 'text-text-secondary'}"
+    class:opacity-40={dimmed.has(layer.id)}
     style:padding-left="{8 + 16 * depth}px"
-    data-node-id={layer.id}
+    style:transform={slide(layer.id)}
+    style:transition={slideTransition}
+    data-row-id={layer.id}
+    data-row-kind="layer"
     title="Tap to draw on this layer · double-tap the name to rename"
     onclick={() => {
       layers.setActive(layer.id);
@@ -319,9 +474,7 @@
     }}
     role="presentation"
   >
-    <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
-      ><GripVertical size={14} /></span
-    >
+    {@render grip(layer)}
     <!-- 20px (was 28), drawn at 40 so it stays sharp on a retina screen. -->
     <canvas
       class="thumb-checkerboard size-5 shrink-0 rounded-sm border border-border"
@@ -406,16 +559,19 @@
 {/snippet}
 
 {#snippet groupRow(group: LayerGroup, depth: number)}
-  <div
-    class="layer-group {depth > 0 ? 'group-rail' : ''} border-b border-border"
-    data-node-id={group.id}
-  >
+  <div class="layer-group {depth > 0 ? 'group-rail' : ''} border-b border-border">
     <div
       class="flex min-w-0 cursor-default items-center gap-1 py-1 pr-[6px] text-sm font-semibold transition-colors {group.id ===
       layers.activeId
         ? 'ui-selected text-text'
         : 'text-text-secondary hover:bg-surface-hover'}"
+      class:opacity-40={dimmed.has(group.id)}
+      class:ui-drop-target={drop?.parentId === group.id}
       style:padding-left="{8 + 16 * depth}px"
+      style:transform={slide(group.id)}
+      style:transition={slideTransition}
+      data-row-id={group.id}
+      data-row-kind="group"
       title="Layer group · double-tap the name to rename"
       onclick={() => {
         layers.activeId = group.id;
@@ -423,9 +579,7 @@
       }}
       role="presentation"
     >
-      <span class="layer-drag-handle shrink-0 cursor-grab text-text-muted hover:text-text-secondary"
-        ><GripVertical size={14} /></span
-      >
+      {@render grip(group)}
       <!-- `-ml-0.5 mr-0.5`: the chevron glyph carries its own padding on the left; shifting the box
            2px left and giving it back on the right balances the ink without moving the name. -->
       <button
@@ -473,17 +627,14 @@
       </button>
     </div>
 
-    <!-- Always rendered (hidden when collapsed) so rows can still be dropped into a collapsed
-         group's container and the DOM walk keeps seeing its members. -->
+    <!-- A collapsed group's members aren't rendered: a drop on its header goes in at the top. -->
     <!-- No margin or padding: members run full width (their rail on the panel edge) and indent
          their own content by depth, as slop-animator's `group-members`. -->
-    <div
-      class="layer-group-children min-h-1"
-      style:display={group.collapsed ? "none" : "block"}
-      use:sortable
-    >
-      {@render nodeList(group.children, depth + 1)}
-    </div>
+    {#if !group.collapsed}
+      <div>
+        {@render nodeList(group.children, depth + 1)}
+      </div>
+    {/if}
   </div>
 {/snippet}
 
@@ -565,10 +716,23 @@
     {onEditText}
   />
 
-  <!-- Rebuilt whenever the tree changes (the manager is imperative) or after a drag. -->
-  {#key `${version}:${dragNonce}`}
-    <div class="layer-list flex-1 overflow-y-auto" bind:this={listEl} use:sortable>
-      {@render nodeList(layers.tree)}
+  <div class="layer-list flex-1 overflow-y-auto" bind:this={listEl}>
+    <div class="relative">
+      <!-- Rebuilt whenever the tree changes (the manager is imperative). -->
+      {#key version}
+        {@render nodeList(layers.tree)}
+      {/key}
+      {#if ghost}
+        <!-- The grabbed row, following the pointer. -->
+        <div
+          data-drag-ghost
+          class="pointer-events-none absolute inset-x-0 z-10 flex items-center gap-1 rounded bg-surface-raised pr-[6px] text-sm text-text shadow-lg ring-1 ring-accent"
+          style="top: {ghost.top}px; height: {ghost.height}px; padding-left: {ghost.pad}"
+        >
+          <span class="shrink-0 text-text-muted"><GripVertical size={14} /></span>
+          <span class="min-w-0 flex-1 truncate">{ghost.label}</span>
+        </div>
+      {/if}
     </div>
-  {/key}
+  </div>
 </div>
