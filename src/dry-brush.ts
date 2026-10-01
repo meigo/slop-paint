@@ -93,19 +93,22 @@ export function noise1(key: number, x: number): number {
 }
 
 /** Whether hair `b` leaves paint at arc length `s` (px) with `pressure` 0–1. `width` is the
- *  stroke's widest, `dryness` 0–100. Pure, so it can be tested and is the same every frame. */
+ *  stroke's widest, `dryness` 0–100, `edgeNow` how near the hair is to the stroke's CURRENT edge
+ *  (0 the middle, 1 the edge; light pressure narrows the stroke, so a hair near the middle can be
+ *  at its edge). Pure, so it can be tested and is the same every frame. */
 export function hairPaints(
   b: Bristle,
   s: number,
   pressure: number,
   width: number,
   dryness: number,
+  edgeNow: number = Math.abs(b.offset),
 ): boolean {
   const dry = Math.max(0, Math.min(100, dryness)) / 100;
   if (s < b.lag * width) return false;
   // A narrow stroke has few hairs, nearly all of them "edge": thin the edge only as it widens
   // (a 4 px stroke came out hollow and faint at Press 1).
-  const edge = Math.abs(b.offset) * Math.min(1, width / 16);
+  const edge = edgeNow * Math.min(1, width / 16);
   // Lengths ALONG the stroke scale with its width, but never below 24 px: scaled to a 4 px
   // stroke, the breaks came every ~10 px (dashes) and the paint ran out after ~100 px.
   const long = Math.max(width, 24);
@@ -114,7 +117,9 @@ export function hairPaints(
   const fine = noise1(b.key ^ 0x5bd1e995, s / (long * 0.6));
   // The paint runs out: over ~25 widths at Dryness 100, never at 0.
   const spent = dry > 0 ? Math.min(1, s / (long * (6 + 40 * (1 - dry)))) * dry * 0.4 : 0;
-  const contact = 0.55 + 0.45 * pressure;
+  // Light pressure: only the hair tips skim the paper, so more breaks; pressing hard flattens the
+  // hairs onto it and the stroke fills in — as a real dry brush (2026-10-01).
+  const contact = 0.4 + 0.6 * pressure;
   const presence = b.load * contact - spent + (coarse - 0.5) * 0.55 + (fine - 0.5) * 0.3;
   // Dryness raises the bar a hair has to clear; the edge raises it more.
   const threshold = -0.35 + dry * 0.7 + edge ** 2 * (0.1 + dry * 0.25);
@@ -179,16 +184,29 @@ export function bristleRuns(
   const samples = resample(points, step);
   const spacing = max / count;
   const end = samples.length ? samples[samples.length - 1].s : 0;
+  // A mouse has no pressure (it reads 0): touch as a medium press, not the lightest.
+  const mouse = points[0].hasPressure === false;
   return bristles.map((b) => {
     const runs: number[][] = [];
     let run: number[] | null = null;
+    // The hairs keep their spacing: each sits at its place across the WIDEST stroke. Pressure
+    // narrows the stroke, so only the hairs within it touch — fewer hairs, not the same hairs
+    // squeezed together (which overlapped into a solid band at light pressure, the opposite of a
+    // dry brush). 2026-10-01.
+    const across = Math.abs(b.offset) * (max / 2);
     for (const p of samples) {
       const half = (min + p.pressure * (max - min)) / 2;
-      // The outer hairs wander a little across the stroke.
-      const wander =
-        (noise1(b.key ^ 0x68e31da4, p.s / (max * 1.5)) - 0.5) * Math.abs(b.offset) * 0.25;
-      const o = (b.offset + wander) * half;
-      if (p.s <= end - b.tail * max && hairPaints(b, p.s, p.pressure, max, dryness)) {
+      const pressure = mouse ? 0.6 : p.pressure;
+      const touching = across <= half + spacing / 2;
+      const edgeNow = Math.min(1, across / Math.max(half, spacing));
+      // The hairs near the edge wander a little across the stroke.
+      const wander = (noise1(b.key ^ 0x68e31da4, p.s / (max * 1.5)) - 0.5) * edgeNow * 0.25;
+      const o = b.offset * (max / 2) + wander * half;
+      if (
+        touching &&
+        p.s <= end - b.tail * max &&
+        hairPaints(b, p.s, pressure, max, dryness, edgeNow)
+      ) {
         if (!run) runs.push((run = []));
         run.push(p.x + p.nx * o, p.y + p.ny * o);
       } else {

@@ -8,6 +8,7 @@ import {
   pauseBreaks,
   catchUpPath,
   collapseRuns,
+  trailPressureAt,
   trailTimeAt,
   ropeLength,
   ropeStep,
@@ -298,6 +299,22 @@ describe("collapseRuns", () => {
     expect(out.length).toBeLessThan(250);
     // the rest is still a pause: Sharp corners keeps the corner
     expect(Math.min(...out.map((p) => Math.hypot(p.x - 198, p.y)))).toBeLessThan(1);
+  });
+});
+
+describe("trailPressureAt", () => {
+  // The pen pressed lightly at the start and harder further on.
+  const trail = [
+    { x: 0, y: 0, pressure: 0.2, t: 0 },
+    { x: 10, y: 0, pressure: 0.6, t: 100 },
+    { x: 20, y: 0, pressure: 1, t: 150 },
+  ];
+
+  it("gives the lagging line the pressure the pen had THERE, not now", () => {
+    expect(trailPressureAt(trail, { x: 5, y: 1 }, 100)).toBeCloseTo(0.4, 9);
+    expect(trailPressureAt(trail, { x: 15, y: -2 }, 100)).toBeCloseTo(0.8, 9);
+    expect(trailPressureAt(trail, { x: 0, y: 0 }, 100)).toBeCloseTo(0.2, 9);
+    expect(trailPressureAt([], { x: 0, y: 0 }, 100)).toBeNull();
   });
 });
 
