@@ -260,6 +260,14 @@ export function taperedRibbon(run: readonly number[], width: number, taper: numb
   return left;
 }
 
+/** How long each hair run's taper is, in px: `taper` 0–100 (the Taper slider) as a share of the
+ *  stroke's widest width `width` — 10 (the default, close to the first look) is a fifth of it, 100
+ *  twice it — and never under 4 px. */
+export function dryTaperPx(width: number, taper: number): number {
+  const t = Math.max(0, Math.min(100, taper));
+  return Math.max(4, (width * t) / 50);
+}
+
 /** Scratch for a translucent stroke: the hairs overlap, so they're drawn opaque here and the
  *  whole stroke composited once at the opacity (as Ink does). */
 let scratch: HTMLCanvasElement | null = null;
@@ -272,6 +280,7 @@ export function drawDryStroke(
 ) {
   const hairs = bristleRuns(points, settings.size, sizeRange, settings.dryness ?? 50);
   if (hairs.length === 0) return;
+  const taperPx = dryTaperPx(widthRange(settings.size, sizeRange).max, settings.dryTaper ?? 10);
   const alpha = settings.opacity / 100;
   const op: GlobalCompositeOperation = settings.isEraser
     ? "destination-out"
@@ -285,11 +294,10 @@ export function drawDryStroke(
     c.fillStyle = settings.color;
     for (const h of hairs) {
       c.globalAlpha = h.tone;
-      // Each run tapers over a few hair widths at either end (at least 6 px).
-      const taper = Math.max(6, h.width * 4);
+      // Each run tapers at either end, as long as the Taper slider says.
       c.beginPath();
       for (const r of h.runs) {
-        const outline = taperedRibbon(r, h.width, taper);
+        const outline = taperedRibbon(r, h.width, taperPx);
         if (outline.length < 6) continue;
         c.moveTo(outline[0], outline[1]);
         for (let i = 2; i < outline.length; i += 2) c.lineTo(outline[i], outline[i + 1]);

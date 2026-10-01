@@ -8,6 +8,7 @@ import {
   resample,
   rng,
   taperedRibbon,
+  dryTaperPx,
 } from "../dry-brush";
 import type { InputPoint } from "../input";
 
@@ -127,6 +128,14 @@ describe("dry brush", () => {
     const short = taperedRibbon([0, 0, 4, 0, 8, 0], 4, 10);
     expect(Math.abs(short[3] - short[(2 * 3 - 1 - 1) * 2 + 1])).toBeLessThan(4);
     expect(taperedRibbon([0, 0], 4, 10)).toEqual([]);
+  });
+
+  it("sets the taper from the Taper slider as a share of the stroke's width, at least 4 px", () => {
+    expect(dryTaperPx(60, 10)).toBeCloseTo(12); // the default: a fifth of the width
+    expect(dryTaperPx(60, 100)).toBeCloseTo(120); // twice the width
+    expect(dryTaperPx(60, 0)).toBe(4);
+    expect(dryTaperPx(4, 50)).toBe(4);
+    expect(dryTaperPx(60, 500)).toBeCloseTo(120); // clamped
   });
 
   it("draws nothing for fewer than two points", () => {
