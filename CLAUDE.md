@@ -44,6 +44,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - Run `npm run check` to verify Svelte components
 - Run `npx tsc --noEmit` to type-check non-Svelte TypeScript
 
+## Workflow
+
+As slop-vector-editor: branch off `main` (`fix/…`, `feat/…`, `chore/…`, `docs/…`), one commit per
+task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge into `main` with
+`--no-ff` ("Merge <what>") only when the user says so. Before 2026-10-01 commits went straight to
+`main`. Keep README.md current with every user-visible change.
+
 ## Architecture
 
 ### Svelte UI Layer
