@@ -1112,6 +1112,33 @@ try {
       lay.fits && lay.below && inside && ink > 30,
       `portrait: row 1 fits (${lay.fits}), the layer panel sits below the options row (${lay.below}), the File menu is on screen (${inside}), a pen stroke draws (${ink} dark px)`,
     );
+
+    // The tool-options row stays one line (40 px) for every tool: a wrapped row is taller, and
+    // switching tools would move the canvas. The brush row once wrapped at 834 px.
+    const heights = [];
+    for (const t of [
+      "Brush (B)",
+      "Eraser (E)",
+      "Rect Select",
+      "Paint Bucket",
+      "Eyedropper",
+      "Outline",
+    ]) {
+      await pp.locator(`button[title^="${t}"]`).first().tap();
+      await pp.waitForTimeout(200);
+      const h = await pp.evaluate(
+        () =>
+          [...document.querySelectorAll("div")]
+            .find((e) => getComputedStyle(e).gridRowStart === "row2")
+            .getBoundingClientRect().height,
+      );
+      heights.push(`${t.split(" (")[0]} ${Math.round(h)}`);
+      if (t === "Brush (B)") await pp.screenshot({ path: `${OUT}/91-portrait-brush-row.png` });
+    }
+    check(
+      heights.every((h) => / 40$/.test(h)),
+      `portrait: the tool-options row is one line for every tool (${heights.join(", ")} px)`,
+    );
   } catch (e) {
     check(false, `portrait threw: ${e.message.split("\n")[0]}`);
   }
