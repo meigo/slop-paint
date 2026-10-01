@@ -5,6 +5,7 @@ import {
   MIN_STAMP_PX,
   PENCIL_GRADES,
   pencilGrade,
+  mipIndex,
 } from "../stamp-brush";
 
 /**
@@ -102,5 +103,27 @@ describe("pencilGrade", () => {
       expect(floor).toBeLessThan(1);
       expect(strength).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("mipIndex", () => {
+  const sizes = [64, 32, 16, 8, 4];
+
+  it("picks the smallest level still at least the stamp, so nothing shrinks more than 2×", () => {
+    expect(mipIndex(2, sizes)).toBe(4); // 4 px
+    expect(mipIndex(4, sizes)).toBe(4);
+    expect(mipIndex(5, sizes)).toBe(3); // 8 px
+    expect(mipIndex(12, sizes)).toBe(2); // 16 px
+    expect(mipIndex(32, sizes)).toBe(1);
+    expect(mipIndex(33, sizes)).toBe(0);
+    for (const px of [2, 3, 5, 7, 9, 15, 17, 31, 40]) {
+      const level = sizes[mipIndex(px, sizes)];
+      expect(level).toBeGreaterThanOrEqual(Math.min(px, 64));
+      expect(level / px).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("uses the full tip above its own size", () => {
+    expect(mipIndex(200, sizes)).toBe(0);
   });
 });
