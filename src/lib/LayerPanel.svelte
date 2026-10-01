@@ -25,8 +25,8 @@
     type Layer as AppLayer,
     type LayerGroup,
   } from "../layers";
-  import { dragBlock, dropTarget, type Drop, type RowBox } from "./layer-drop";
-  import { autoScrollStep, ghostTop, pastThreshold, shiftedRowIds } from "./layer-drag-visual";
+  import { dragBlock, dropTarget, rowOrderAfter, type Drop, type RowBox } from "./layer-drop";
+  import { autoScrollStep, ghostTop, pastThreshold, slideOffsets } from "./layer-drag-visual";
   import LayerProps from "./LayerProps.svelte";
   import { clampPanelWidth } from "../panel-layout";
   import { isDoubleTap, type Tap } from "./double-tap";
@@ -157,7 +157,7 @@
 
   // --- Drag reorder (2026-10-01, as slop-vector-editor; ../SLOP-LAYER-DRAG.md) ---
   // Pointer events on the grip; `layer-drop.ts` decides where a drop lands; the panel only draws
-  // that (the gap, the floating row, the destination group's lines); the tree changes once, on release,
+  // that (the rows' slides, the floating row, the destination group's lines); the tree changes once, on release,
   // through `moveNode` as one undo step. Nothing moves a DOM node. It replaced SortableJS, which
   // moved Svelte's nodes and had the order read back from the DOM (a duplicate row, a double-fired
   // drop, and no say in locks).
@@ -180,11 +180,11 @@
   let drop = $state<Drop | null>(null);
   /** The floating copy of the grabbed row, in content coordinates. */
   let ghost = $state<{ top: number; label: string; pad: string; height: number } | null>(null);
-  /** Rows slid down to open the gap, and the rows being dragged (dimmed in place: a group keeps
-   *  its members where they are, and the gap is one row — the doc's rule 7). */
-  let shifted = $state.raw<Set<number>>(new Set());
+  /** How far each row slides (2026-10-01, as slop-spine): the dragged row's own place — a group
+   *  with its members — moves to the drop slot, dimmed, and the rows it passes close up; no extra
+   *  gap, so the list keeps its height. And the rows being dragged, dimmed. */
+  let shifted = $state.raw<Map<number, number>>(new Map());
   let dimmed = $state.raw<Set<number>>(new Set());
-  let slidePx = $state(0);
   let scrollFrame = 0;
 
   /** Every rendered row, in the list's content coordinates. */
@@ -246,7 +246,6 @@
     };
     if (node) collect(node);
     dimmed = ids;
-    slidePx = r.height;
     ghost = {
       top: 0,
       label: node ? parseTags(node.name).baseName || "(unnamed)" : "",
@@ -261,7 +260,7 @@
     if (!ghost) return;
     const y = d.clientY - listEl.getBoundingClientRect().top + listEl.scrollTop;
     drop = dropTarget(layers.tree, d.boxes, y, d.id);
-    shifted = shiftedRowIds(d.boxes, drop?.line ?? null);
+    shifted = slideOffsets(d.boxes, drop ? rowOrderAfter(layers.tree, d.id, drop) : []);
     ghost = { ...ghost, top: ghostTop(y, d.grab, d.contentHeight, d.rowPx) };
     document.documentElement.classList.toggle("layer-drop-refused", drop === null);
   }
@@ -291,7 +290,7 @@
     dragging = null;
     drop = null;
     ghost = null;
-    shifted = new Set();
+    shifted = new Map();
     dimmed = new Set();
     document.documentElement.classList.remove("layer-dragging", "layer-drop-refused");
   }
@@ -316,7 +315,7 @@
     const target = apply && d.live ? drop : null;
     const id = d.id;
     // Clear the slides first, in the same tick as the commit, or the re-ordered rows would
-    // animate back from the gap.
+    // animate back from their slides.
     finishDrag();
     if (!target) return;
     structuralEdit(layers, () => moveNode(layers.tree, id, target.parentId, target.index));
@@ -326,7 +325,10 @@
 
   /** A row's slide while a drag is open, and its transition (only while open: at the drop the rows
    *  jump straight to their new order). */
-  const slide = (id: number) => (shifted.has(id) ? `translateY(${slidePx}px)` : null);
+  const slide = (id: number) => {
+    const dy = shifted.get(id);
+    return dy ? `translateY(${dy}px)` : null;
+  };
   const slideTransition = $derived(ghost ? "transform 150ms ease" : null);
 
   /** Svelte action: draw a layer's pixels into its thumbnail canvas. */

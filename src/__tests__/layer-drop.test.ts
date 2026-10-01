@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dragBlock, dropTarget, type RowBox } from "../lib/layer-drop";
+import { dragBlock, dropTarget, rowOrderAfter, type RowBox } from "../lib/layer-drop";
 import { moveNode, type LayerNode } from "../layers";
 
 // Plain nodes: the drop rule reads only the tree's shape and its lock/visible/collapsed flags.
@@ -43,38 +43,38 @@ function dropAt(tree: LayerNode[], id: number, y: number) {
   const d = dropTarget(tree, rowsOf(tree), y, id);
   if (!d) return null;
   expect(moveNode(tree, id, d.parentId, d.index)).toBe(true);
-  return { line: d.line, shape: shape(tree) };
+  return shape(tree);
 }
 
 describe("dropTarget", () => {
   it("reorders among siblings: upper half above a row, lower half below it", () => {
-    expect(dropAt(make(), 1, 2)).toEqual({ line: 0, shape: [2, [10, 3, 4], 5, 1] });
-    expect(dropAt(make(), 5, 58)).toEqual({ line: 60, shape: [5, 1, 2, [10, 3, 4]] });
-    expect(dropAt(make(), 5, 43)).toEqual({ line: 40, shape: [1, 2, 5, [10, 3, 4]] });
+    expect(dropAt(make(), 1, 2)).toEqual([2, [10, 3, 4], 5, 1]);
+    expect(dropAt(make(), 5, 58)).toEqual([5, 1, 2, [10, 3, 4]]);
+    expect(dropAt(make(), 5, 43)).toEqual([1, 2, 5, [10, 3, 4]]);
   });
 
   it("drops into a group: on a member's row, or the lower half of the header (at the top)", () => {
-    expect(dropAt(make(), 1, 33)).toEqual({ line: 30, shape: [2, [10, 3, 1, 4], 5] });
-    expect(dropAt(make(), 5, 17)).toEqual({ line: 20, shape: [1, 2, [10, 3, 4, 5]] });
+    expect(dropAt(make(), 1, 33)).toEqual([2, [10, 3, 1, 4], 5]);
+    expect(dropAt(make(), 5, 17)).toEqual([1, 2, [10, 3, 4, 5]]);
   });
 
   it("the upper half of a group's header puts the node above the group, outside it", () => {
-    expect(dropAt(make(), 1, 12)).toEqual({ line: 10, shape: [2, [10, 3, 4], 1, 5] });
+    expect(dropAt(make(), 1, 12)).toEqual([2, [10, 3, 4], 1, 5]);
   });
 
   it("takes a member out of its group", () => {
-    expect(dropAt(make(), 4, 2)).toEqual({ line: 0, shape: [1, 2, [10, 3], 5, 4] });
-    expect(dropAt(make(), 3, 70)).toEqual({ line: 60, shape: [3, 1, 2, [10, 4], 5] });
+    expect(dropAt(make(), 4, 2)).toEqual([1, 2, [10, 3], 5, 4]);
+    expect(dropAt(make(), 3, 70)).toEqual([3, 1, 2, [10, 4], 5]);
   });
 
   it("a collapsed group takes a drop on its header only", () => {
     const tree = make({ collapsed: true });
     // Rows: 5, G10 (collapsed), 2, 1.
-    expect(dropAt(tree, 1, 17)).toEqual({ line: 20, shape: [2, [10, 3, 4, 1], 5] });
+    expect(dropAt(tree, 1, 17)).toEqual([2, [10, 3, 4, 1], 5]);
   });
 
   it("moves a whole group", () => {
-    expect(dropAt(make(), 10, 2)).toEqual({ line: 0, shape: [1, 2, 5, [10, 3, 4]] });
+    expect(dropAt(make(), 10, 2)).toEqual([1, 2, 5, [10, 3, 4]]);
   });
 
   it("refuses a group into itself or onto its own members", () => {
@@ -104,6 +104,23 @@ describe("dropTarget", () => {
     expect(dropTarget(tree, rows, 47, 2)).toBeNull(); // its own row, lower half
     expect(dropTarget(tree, rows, 52, 2)).toBeNull(); // the row below, upper half: same gap
     expect(dropTarget(tree, [], 0, 2)).toBeNull();
+  });
+});
+
+describe("rowOrderAfter", () => {
+  // Rows now: 5, G10, 4, 3, 2, 1.
+  it("lists the rows as they will be after the drop, a moved group with its members", () => {
+    const tree = make();
+    expect(rowOrderAfter(tree, 1, { parentId: null, index: 4 })).toEqual([1, 5, 10, 4, 3, 2]);
+    expect(rowOrderAfter(tree, 10, { parentId: null, index: 0 })).toEqual([5, 2, 1, 10, 4, 3]);
+    expect(rowOrderAfter(tree, 5, { parentId: 10, index: 2 })).toEqual([10, 5, 4, 3, 2, 1]);
+  });
+
+  it("shows a node dropped into a collapsed group just under its header, and leaves the tree", () => {
+    const tree = make({ collapsed: true });
+    // Rows now: 5, G10, 2, 1 (members hidden).
+    expect(rowOrderAfter(tree, 1, { parentId: 10, index: 2 })).toEqual([5, 10, 1, 2]);
+    expect(shape(tree)).toEqual([1, 2, [10, 3, 4], 5]);
   });
 });
 
