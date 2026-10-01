@@ -7,7 +7,7 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke } from "./brush";
-  import { pathSmoothRadius } from "./stroke-smoothing";
+  import { pathSmoothRadius, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
@@ -3045,6 +3045,15 @@
         // and stop short of the lift.
         streamline: () =>
           app.currentTool === "brush" || app.currentTool === "eraser" ? app.streamline / 100 : 0,
+        // The stamp tips follow the points exactly, so they always get a short string
+        // (STAMP_MIN_ROPE_PX): at Stream 0 a thin Pencil line came out stepped on iPad.
+        minRopePx: () =>
+          (app.currentTool === "brush" || app.currentTool === "eraser") &&
+          (app.brushType === "pencil" ||
+            app.brushType === "charcoal" ||
+            app.brushType === "airbrush")
+            ? STAMP_MIN_ROPE_PX
+            : 0,
       },
     );
 
