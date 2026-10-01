@@ -206,6 +206,8 @@
   }
 
   const sizePresets = [1, 2, 3, 5, 8, 12, 20, 40, 80];
+  // Below 960px (iPad portrait) only these show, so the brush row fits on one line at 834px.
+  const narrowPresets = new Set([1, 3, 8, 20, 80]);
 
   // Brush settings popover (holds the set-once options, incl. the pressure curve editor)
   let curvePopupEl = $state<HTMLDivElement | null>(null);
@@ -644,7 +646,7 @@
      switching tools doesn't move the canvas. Wraps (rather than scrolling) so the pressure-curve
      popup isn't clipped; a very narrow window can still make it taller. -->
 <div
-  class="z-10 flex min-h-10 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0"
+  class="z-10 flex min-h-10 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface px-4 py-1 *:shrink-0 max-[960px]:gap-x-2"
   style:grid-area="row2"
 >
   <!-- Brush options -->
@@ -710,7 +712,9 @@
           <button
             class="size-6 rounded-md text-[10px] transition-colors {app.brushSettings.size === s
               ? 'ui-on'
-              : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+              : 'text-text-muted hover:bg-surface-hover hover:text-text'} {narrowPresets.has(s)
+              ? ''
+              : 'max-[960px]:hidden'}"
             title="Brush size {s}"
             onclick={() => setSize(s)}>{s}</button
           >
@@ -1099,7 +1103,11 @@
       >
     </div>
     {#if !app.outlineActive}
-      <span class="text-xs text-text-muted">Tap the canvas to outline the active layer</span>
+      <!-- flex-1 (a zero basis): takes only the room left, with "…", so it never wraps the row
+           (iPad portrait). -->
+      <span class="min-w-0 flex-1 truncate text-xs text-text-muted"
+        >Tap the canvas to outline the active layer</span
+      >
     {/if}
   {:else if activeTool === "select" || activeTool === "lasso"}
     <!-- Every selection action lives here (this app has no floating bar over the selection): a float
