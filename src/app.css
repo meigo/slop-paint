@@ -153,14 +153,21 @@ textarea,
     -3px 0;
 }
 
-/* SortableJS styles */
-.sortable-ghost {
-  opacity: 0.4;
-  background: var(--color-surface-active) !important;
+/* Layer drag (as slop-vector-editor's): the group a drop lands in is outlined — an outline, so it
+   stacks with a selected row's left edge. */
+.ui-drop-target {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
 }
-
-.sortable-chosen {
-  background: var(--color-surface-hover);
+/* While a layer row is dragged: the cursor everywhere, whatever the element under it sets —
+   not-allowed while the position under the pointer refuses the drop. */
+html.layer-dragging,
+html.layer-dragging * {
+  cursor: grabbing !important;
+}
+html.layer-drop-refused,
+html.layer-drop-refused * {
+  cursor: not-allowed !important;
 }
 
 /* Pressure curve editor (inside the brush settings popover) */

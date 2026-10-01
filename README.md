@@ -90,7 +90,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Layers**
 
 - Layers and nested groups: **New group** (or Ctrl+G) puts the selected layer or group into one;
-  drag-and-drop reordering, double-tap (or double-click) a name to rename
+  drag a row by its grip to reorder it (onto the lower half of a group's row to put it in the group,
+  past the last row to take it out at the bottom; a locked or hidden group takes nothing),
+  double-tap (or double-click) a name to rename
 - **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
   other modes are kept too)
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;

@@ -96,6 +96,80 @@ export function wrapInGroup(tree: LayerNode[], id: number, group: LayerGroup): b
   return false;
 }
 
+/** Where node `id` sits: the array holding it (the root `tree` or a group's `children`), its index,
+ *  and the enclosing group (null at the root). */
+export function locateNode(
+  tree: LayerNode[],
+  id: number,
+): { siblings: LayerNode[]; index: number; group: LayerGroup | null } | null {
+  const walk = (nodes: LayerNode[], group: LayerGroup | null): ReturnType<typeof locateNode> => {
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.id === id) return { siblings: nodes, index: i, group };
+      if (n.type === "group") {
+        const found = walk(n.children, n);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  return walk(tree, null);
+}
+
+/** Whether `id` is `ancestorId` itself or somewhere inside it. */
+export function isWithin(tree: LayerNode[], id: number, ancestorId: number): boolean {
+  const anc = locateNode(tree, ancestorId);
+  if (!anc) return false;
+  const node = anc.siblings[anc.index];
+  const has = (n: LayerNode): boolean =>
+    n.id === id || (n.type === "group" && n.children.some(has));
+  return has(node);
+}
+
+/** Whether `moveNode(tree, id, parentId, index)` would move anything (it changes nothing here):
+ *  false when either id is missing, the parent isn't a group, a group would go inside itself, the
+ *  index is out of range, or the node would land where it is. */
+export function moveAllowed(
+  tree: LayerNode[],
+  id: number,
+  parentId: number | null,
+  index: number,
+): boolean {
+  const from = locateNode(tree, id);
+  if (!from) return false;
+  const to = childrenOf(tree, parentId);
+  if (!to || (parentId !== null && isWithin(tree, parentId, id))) return false;
+  if (index < 0 || index > to.length) return false;
+  return !(to === from.siblings && (index === from.index || index === from.index + 1));
+}
+
+/** Move node `id` into `parentId`'s children (null = the root) at `index`, counted in that array
+ *  AS IT IS NOW (bottom-first, 0 = the bottom; `length` = the top), so the caller needn't allow for
+ *  the node leaving it. The layer panel's drag commits through this (2026-10-01; it used to read
+ *  the order back from SortableJS's DOM). False, and the tree untouched, when `moveAllowed` is. */
+export function moveNode(
+  tree: LayerNode[],
+  id: number,
+  parentId: number | null,
+  index: number,
+): boolean {
+  if (!moveAllowed(tree, id, parentId, index)) return false;
+  const from = locateNode(tree, id)!;
+  const to = childrenOf(tree, parentId)!;
+  const [node] = from.siblings.splice(from.index, 1);
+  to.splice(to === from.siblings && index > from.index ? index - 1 : index, 0, node);
+  return true;
+}
+
+/** The array a node dropped into `parentId` joins: the root, or that group's children; null when
+ *  it isn't a group. */
+function childrenOf(tree: LayerNode[], parentId: number | null): LayerNode[] | null {
+  if (parentId === null) return tree;
+  const p = locateNode(tree, parentId);
+  const parent = p?.siblings[p.index];
+  return parent?.type === "group" ? parent.children : null;
+}
+
 /** Whether node `id` refuses edits: its own lock, or any enclosing group's. */
 export function lockedInTree(tree: LayerNode[], id: number): boolean {
   const walk = (nodes: LayerNode[], inherited: boolean): boolean | null => {
