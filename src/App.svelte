@@ -8,6 +8,7 @@
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange } from "./brush";
   import { pathSmoothRadius, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
+  import { settledIndex } from "./stroke-freeze";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
@@ -1234,13 +1235,9 @@
         strokeSettings.opacity >= 100 &&
         !(import.meta.env.DEV && (window as unknown as { slopNoFreeze?: boolean }).slopNoFreeze);
       if (!canFreeze || !preStrokeCanvas) return;
-      const marginPx = 2 * widthRange(strokeSettings.size, sizeRange).max + 30;
-      let i = pts.length - 1;
-      let d = 0;
-      while (i > 0 && (d < marginPx || pts.length - 1 - i < 40)) {
-        d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-        i--;
-      }
+      // Travel, not raw path length: a resting pen's jitter would "travel" the margin standing
+      // still (slop-animator's review, 2026-10-02 — see `settledIndex`).
+      const i = settledIndex(pts, 2 * widthRange(strokeSettings.size, sizeRange).max + 30, 40);
       if (i - frozenTo < FREEZE_STEP) return;
       const f = preStrokeCanvas.getContext("2d")!;
       f.save();
