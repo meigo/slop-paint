@@ -17,7 +17,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Smooth** ([perfect-freehand](https://github.com/steveruizok/perfect-freehand)), **Ink** (optional
   pooling that swells the mark where the pen lingers), **Calligraphy** (a broad nib with adjustable
   angle and flatness), **Dry brush** (bristle stripes broken where the paint runs out, with hairy
-  edges; Dryness sets how dry), and textured **Pencil**, **Charcoal** and **Airbrush** tips
+  edges; Dryness sets how dry), and textured **Pencil** (with a grade, 4H to 8B: hard and light to soft and dark),
+  **Charcoal** and **Airbrush** tips
 - Pressure curves — the brush and the eraser each have their own, edited as a bezier curve
 - **Press** on the brush bar: size is the medium width, light pressure thins the stroke and full
   pressure widens it, by up to that many times (as in slop-animator)

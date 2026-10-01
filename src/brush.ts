@@ -61,6 +61,8 @@ export interface BrushSettings {
   dwellPool?: number;
   /** Dry brush only: 0-100, how short of paint the bristles are (more breaks, sparser edges). */
   dryness?: number;
+  /** Pencil only: its grade, "4H" (hard, light) to "8B" (soft, dark); HB by default. */
+  pencilGrade?: string;
   /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
   taper?: boolean;
   /** Smooth brush: keep a corner sharp where the pen paused, instead of smoothing it round. */

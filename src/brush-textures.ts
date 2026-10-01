@@ -48,9 +48,11 @@ function softRoundTip(): HTMLCanvasElement {
   });
 }
 
-/** Pencil tip — uses scattered small circles for grain */
-function pencilTip(): HTMLCanvasElement {
-  return getCachedTip("pencil", (ctx, s) => {
+/** Pencil tip — uses scattered small circles for grain. `grain` scales how much paper shows
+ *  through (1 = HB, the original tip; a soft grade fills more of the paper's tooth, a hard one
+ *  less — `pencilGrade` in stamp-brush.ts). */
+function pencilTip(grain = 1): HTMLCanvasElement {
+  return getCachedTip(grain === 1 ? "pencil" : `pencil:${grain}`, (ctx, s) => {
     const r = s / 2;
 
     // Base soft shape
@@ -64,7 +66,7 @@ function pencilTip(): HTMLCanvasElement {
 
     // Subtract random dots to create grain
     ctx.globalCompositeOperation = "destination-out";
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < Math.round(300 * grain); i++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = Math.random() * r;
       const x = r + Math.cos(angle) * dist;
@@ -72,7 +74,7 @@ function pencilTip(): HTMLCanvasElement {
       const dotR = 0.5 + Math.random() * 2;
       // More grain near edges
       const edgeFactor = dist / r;
-      ctx.globalAlpha = 0.3 + edgeFactor * 0.7;
+      ctx.globalAlpha = Math.min(1, (0.3 + edgeFactor * 0.7) * grain);
       ctx.beginPath();
       ctx.arc(x, y, dotR, 0, Math.PI * 2);
       ctx.fill();
@@ -128,12 +130,12 @@ function airbrushTip(): HTMLCanvasElement {
 
 export type BrushType = "smooth" | "pencil" | "charcoal" | "airbrush";
 
-export function getTip(type: BrushType): HTMLCanvasElement {
+export function getTip(type: BrushType, grain = 1): HTMLCanvasElement {
   switch (type) {
     case "smooth":
       return hardRoundTip();
     case "pencil":
-      return pencilTip();
+      return pencilTip(grain);
     case "charcoal":
       return charcoalTip();
     case "airbrush":

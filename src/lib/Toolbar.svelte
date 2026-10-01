@@ -39,6 +39,7 @@
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
   import { MAX_THICKNESS } from "../outline";
   import { PRESS_MAX, PRESS_MIN } from "../brush";
+  import { PENCIL_GRADES } from "../stamp-brush";
   import { meshStepBlock } from "../mesh-size";
   import { sliderFill } from "./slider-fill";
   import { selectOnFocus } from "./select-on-focus";
@@ -882,6 +883,31 @@
               />
               <span class={valueCls}>{app.brushSettings.dwellPool}</span>
             </label>
+          {/if}
+
+          {#if app.brushType === "pencil"}
+            <div
+              class={rowCls}
+              title="Pencil grade, as on real pencils: H is hard — lighter, more paper grain; B is soft — darker, even at a light touch"
+            >
+              <span class={labelCls}>Grade</span>
+              <div class="flex min-w-0 flex-1 gap-px">
+                {#each PENCIL_GRADES as g (g)}
+                  <button
+                    class="h-6 min-w-0 flex-1 rounded-md text-[10px] transition-colors {(app
+                      .brushSettings.pencilGrade ?? 'HB') === g
+                      ? 'ui-on'
+                      : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+                    aria-pressed={(app.brushSettings.pencilGrade ?? "HB") === g}
+                    title="{g} pencil{g === 'HB' ? ' — the default' : ''}"
+                    onclick={() => {
+                      app.brushSettings.pencilGrade = g;
+                      onSettingsChange();
+                    }}>{g}</button
+                  >
+                {/each}
+              </div>
+            </div>
           {/if}
 
           {#if app.brushType === "dry"}
