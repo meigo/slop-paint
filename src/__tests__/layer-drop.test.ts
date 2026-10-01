@@ -84,17 +84,20 @@ describe("dropTarget", () => {
     expect(dropTarget(tree, rows, 23, 10)).toBeNull(); // its member's row
   });
 
-  it("refuses a locked or hidden group, and anything inside one", () => {
-    for (const flags of [{ locked: true }, { visible: false }]) {
-      const tree = make(flags);
-      const rows = rowsOf(tree);
-      expect(dropTarget(tree, rows, 17, 1)).toBeNull();
-      expect(dropTarget(tree, rows, 33, 1)).toBeNull();
-      // Beside it is fine.
-      expect(dropTarget(tree, rows, 12, 1)).not.toBeNull();
-    }
+  it("refuses a locked group, and anything inside one", () => {
+    const tree = make({ locked: true });
+    const rows = rowsOf(tree);
+    expect(dropTarget(tree, rows, 17, 1)).toBeNull();
+    expect(dropTarget(tree, rows, 33, 1)).toBeNull();
+    // Beside it is fine.
+    expect(dropTarget(tree, rows, 12, 1)).not.toBeNull();
     const nested = [layer(1), group(20, [group(21, [layer(2)])], { locked: true })];
     expect(dropTarget(nested, rowsOf(nested), 17, 1)).toBeNull(); // into G21, inside locked G20
+  });
+
+  it("takes a drop into a hidden group, as layers can leave one", () => {
+    expect(dropAt(make({ visible: false }), 5, 17)).toEqual([1, 2, [10, 3, 4, 5]]);
+    expect(dropAt(make({ visible: false }), 1, 33)).toEqual([2, [10, 3, 1, 4], 5]);
   });
 
   it("refuses a drop that changes nothing", () => {
