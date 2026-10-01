@@ -12,6 +12,38 @@ export interface StampBrushSettings extends BrushSettings {
   brushType: BrushType;
 }
 
+/** Pencil grades, hardest first, as on real graphite pencils (2026-10-01). */
+export const PENCIL_GRADES = ["4H", "2H", "HB", "2B", "4B", "6B", "8B"] as const;
+export type PencilGrade = (typeof PENCIL_GRADES)[number];
+
+/** What a grade does to the Pencil: `strength` scales every stamp's alpha (a hard pencil is
+ *  lighter), `floor` is how dark the lightest touch already is (a soft one is dark even when barely
+ *  pressed; the stamp's pressure alpha runs `floor` → 1), `grain` how much paper shows through the
+ *  tip (soft graphite fills the paper's tooth). HB is the Pencil as it was: strength 1, floor 0.5
+ *  (the stamp engine's old `0.5 + p × 0.5`), grain 1. An unknown grade is HB. */
+export function pencilGrade(grade: string | undefined): {
+  strength: number;
+  floor: number;
+  grain: number;
+} {
+  switch (grade) {
+    case "4H":
+      return { strength: 0.55, floor: 0.3, grain: 1.3 };
+    case "2H":
+      return { strength: 0.75, floor: 0.4, grain: 1.15 };
+    case "2B":
+      return { strength: 1, floor: 0.62, grain: 0.8 };
+    case "4B":
+      return { strength: 1, floor: 0.72, grain: 0.6 };
+    case "6B":
+      return { strength: 1, floor: 0.8, grain: 0.45 };
+    case "8B":
+      return { strength: 1, floor: 0.88, grain: 0.3 };
+    default:
+      return { strength: 1, floor: 0.5, grain: 1 };
+  }
+}
+
 /**
  * Below this box size a 64px tip downsamples to alpha 0 (Chrome samples a couple of texels in the
  * transparent corner), so the stamp draws nothing at all. Measured in slop-animator.
@@ -51,6 +83,7 @@ export function spaceStamps(
 let tintedTip: HTMLCanvasElement | null = null;
 let tintedColor = "";
 let tintedType: BrushType | null = null;
+let tintedGrain = 1;
 
 export function resetStampState() {
   lastStampCount = 0;
@@ -58,10 +91,12 @@ export function resetStampState() {
   tintedTip = null;
 }
 
-function getTintedTip(type: BrushType, color: string): HTMLCanvasElement {
-  if (tintedTip && tintedColor === color && tintedType === type) return tintedTip;
+function getTintedTip(type: BrushType, color: string, grain = 1): HTMLCanvasElement {
+  if (tintedTip && tintedColor === color && tintedType === type && tintedGrain === grain) {
+    return tintedTip;
+  }
 
-  const tip = getTip(type);
+  const tip = getTip(type, grain);
   const cvs = document.createElement("canvas");
   cvs.width = tip.width;
   cvs.height = tip.height;
@@ -74,6 +109,7 @@ function getTintedTip(type: BrushType, color: string): HTMLCanvasElement {
   tintedTip = cvs;
   tintedColor = color;
   tintedType = type;
+  tintedGrain = grain;
   return cvs;
 }
 
@@ -91,11 +127,14 @@ export function drawStampStrokeIncremental(
   if (points.length === 0) return;
 
   const { min: minSize, max: maxSize } = widthRange(settings.size, sizeRange);
-  const tip = getTintedTip(settings.brushType, settings.color);
+  // The Pencil's grade (HB for every other tip: the original numbers).
+  const grade = pencilGrade(settings.brushType === "pencil" ? settings.pencilGrade : undefined);
+  const tip = getTintedTip(settings.brushType, settings.color, grade.grain);
   // A mouse has no pressure (reported 0): its width is already the nominal one, and its alpha
   // mustn't take the light-pressure half either — mouse stamps drew at half the chosen opacity.
   const hasPressure = points[0].hasPressure ?? true;
-  const pressureAlpha = (p: number) => (hasPressure ? 0.5 + p * 0.5 : 1);
+  const pressureAlpha = (p: number) =>
+    grade.strength * (hasPressure ? grade.floor + p * (1 - grade.floor) : 1);
 
   ctx.save();
   if (settings.isEraser) {

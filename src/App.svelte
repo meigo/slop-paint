@@ -401,6 +401,7 @@
     nibFlatness?: number;
     dwellPool?: number;
     dryness?: number;
+    pencilGrade?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
   }
@@ -443,6 +444,7 @@
       nibFlatness: app.brushSettings.nibFlatness,
       dwellPool: app.brushSettings.dwellPool,
       dryness: app.brushSettings.dryness,
+      pencilGrade: app.brushSettings.pencilGrade,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -488,6 +490,7 @@
       if (data.nibFlatness != null) app.brushSettings.nibFlatness = data.nibFlatness;
       if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
       if (data.dryness != null) app.brushSettings.dryness = data.dryness;
+      if (data.pencilGrade != null) app.brushSettings.pencilGrade = data.pencilGrade;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurves.brush.cp1 = data.curveCp1;
         pressureCurves.brush.cp2 = data.curveCp2;

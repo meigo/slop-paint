@@ -76,6 +76,7 @@ export const app: AppStateShape = $state({
     nibFlatness: 0.35,
     dwellPool: 0,
     dryness: 50,
+    pencilGrade: "HB",
   },
   fillSettings: {
     tolerance: 32,

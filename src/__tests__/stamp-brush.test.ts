@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { spaceStamps, stampFootprint, MIN_STAMP_PX } from "../stamp-brush";
+import {
+  spaceStamps,
+  stampFootprint,
+  MIN_STAMP_PX,
+  PENCIL_GRADES,
+  pencilGrade,
+} from "../stamp-brush";
 
 /**
  * A 64px tip drawn into a box smaller than MIN_STAMP_PX downsamples to alpha 0 in
@@ -74,5 +80,27 @@ describe("spaceStamps", () => {
 
   it("stamps at the segment start when a step is already due", () => {
     expect(spaceStamps(3, 2, 5).positions).toEqual([0, 2]);
+  });
+});
+
+describe("pencilGrade", () => {
+  it("HB is the Pencil as it was, and the default for anything else", () => {
+    expect(pencilGrade("HB")).toEqual({ strength: 1, floor: 0.5, grain: 1 });
+    expect(pencilGrade(undefined)).toEqual(pencilGrade("HB"));
+    expect(pencilGrade("9Z")).toEqual(pencilGrade("HB"));
+  });
+
+  it("darkens from hard to soft: stronger, darker at a light touch, less paper grain", () => {
+    const g = PENCIL_GRADES.map(pencilGrade);
+    for (let i = 1; i < g.length; i++) {
+      expect(g[i].strength).toBeGreaterThanOrEqual(g[i - 1].strength);
+      expect(g[i].floor).toBeGreaterThan(g[i - 1].floor);
+      expect(g[i].grain).toBeLessThan(g[i - 1].grain);
+    }
+    // Full pressure always reaches the grade's strength; a light touch never above it.
+    for (const { strength, floor } of g) {
+      expect(floor).toBeLessThan(1);
+      expect(strength).toBeLessThanOrEqual(1);
+    }
   });
 });
