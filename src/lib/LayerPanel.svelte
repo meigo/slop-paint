@@ -157,7 +157,7 @@
 
   // --- Drag reorder (2026-10-01, as slop-vector-editor; ../SLOP-LAYER-DRAG.md) ---
   // Pointer events on the grip; `layer-drop.ts` decides where a drop lands; the panel only draws
-  // that (the gap, the floating row, the outlined group); the tree changes once, on release,
+  // that (the gap, the floating row, the destination group's lines); the tree changes once, on release,
   // through `moveNode` as one undo step. Nothing moves a DOM node. It replaced SortableJS, which
   // moved Svelte's nodes and had the order read back from the DOM (a duplicate row, a double-fired
   // drop, and no say in locks).
@@ -726,7 +726,7 @@
         <!-- The grabbed row, following the pointer. -->
         <div
           data-drag-ghost
-          class="pointer-events-none absolute inset-x-0 z-10 flex items-center gap-1 rounded bg-surface-raised pr-[6px] text-sm text-text shadow-lg ring-1 ring-accent"
+          class="pointer-events-none absolute inset-x-0 z-10 flex items-center gap-1 border-y border-accent bg-surface-raised pr-[6px] text-sm text-text shadow-lg"
           style="top: {ghost.top}px; height: {ghost.height}px; padding-left: {ghost.pad}"
         >
           <span class="shrink-0 text-text-muted"><GripVertical size={14} /></span>
