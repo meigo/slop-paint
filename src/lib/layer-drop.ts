@@ -2,14 +2,7 @@
  *  `layer-drop.ts`; see ../SLOP-LAYER-DRAG.md). Pure: the panel measures the rows, this decides,
  *  and the panel draws the rows' slides, the destination's lines and the commit from the one
  *  result, so what is shown is what lands. */
-import {
-  hiddenInTree,
-  locateNode,
-  lockedInTree,
-  moveAllowed,
-  moveNode,
-  type LayerNode,
-} from "../layers";
+import { locateNode, lockedInTree, moveAllowed, moveNode, type LayerNode } from "../layers";
 
 /** A rendered row, in display order (top first), in the list's content coordinates. A group's row
  *  is its header; a collapsed group's members aren't rendered, so they have no row. */
@@ -20,8 +13,10 @@ export type Drop = { parentId: number | null; index: number };
 const mid = (r: RowBox) => (r.top + r.bottom) / 2;
 
 /** The drop for node `dragId` with the pointer at content `y`, or null when it is refused: into a
- *  locked or hidden group (or one inside such a group — the node would become something you can't
- *  draw on or see), a group into its own subtree, or a move that changes nothing.
+ *  locked group (or one inside one — its lock locks every member, so it takes none in, as
+ *  `dragBlock` lets none out), a group into its own subtree, or a move that changes nothing. A
+ *  HIDDEN group takes drops, as in Photoshop: the node is simply hidden with it (2026-10-01; it was
+ *  refused, as slop-vector-editor does, while layers could still be dragged out of it).
  *
  *  The upper half of a row puts the node above it, as its sibling; the lower half of a layer row
  *  below it. The lower half of a GROUP's row puts it into that group, at the top. Past the last row, it goes to the bottom of the root, which is the way out of a group
@@ -50,7 +45,7 @@ export function dropTarget(
     }
   }
   const into = drop.parentId;
-  if (into !== null && (lockedInTree(tree, into) || hiddenInTree(tree, into))) return null;
+  if (into !== null && lockedInTree(tree, into)) return null;
   if (!moveAllowed(tree, dragId, drop.parentId, drop.index)) return null;
   return drop;
 }
