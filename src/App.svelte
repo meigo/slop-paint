@@ -6,7 +6,7 @@
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
-  import { clampPress, drawStroke } from "./brush";
+  import { clampPress, drawStroke, widthRange } from "./brush";
   import { pathSmoothRadius, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
@@ -204,6 +204,22 @@
     ctx.drawImage(layer.canvas, 0, 0);
     return preStrokeCanvas;
   }
+
+  /**
+   * Freezing a long stroke (2026-10-01). Ink and Calligraphy redraw the whole stroke every frame
+   * (a piecewise draw would composite edge pixels many times and harden them), so a frame cost
+   * more the longer the stroke: at ~20 s of Pencil (4800 points) 14–16 ms on a Mac, laggy on
+   * iPad. For an OPAQUE stroke the settled part — far enough behind the pen that new points can no
+   * longer change it — is now baked into `preStrokeCanvas` every `FREEZE_STEP` points, so each
+   * frame's restore brings it back and only the rest is redrawn. The engines draw a RANGE of the
+   * stroke from geometry worked out over the whole of it, so the baked part is the same pixels;
+   * each draw starts `FREEZE_OVERLAP` points early, so the cut lies inside paint and can't show as
+   * a seam (opaque paint drawn twice looks the same). Translucent strokes keep the full redraw:
+   * drawn twice, the overlap would darken.
+   */
+  let frozenTo = 0;
+  const FREEZE_STEP = 300;
+  const FREEZE_OVERLAP = 8;
 
   function restoreLayerFromCanvas(layer: {
     canvas: HTMLCanvasElement;
@@ -1191,15 +1207,56 @@
       pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
     };
 
-    function drawFullStroke(ctx: CanvasRenderingContext2D, pts: InputPoint[], finished: boolean) {
-      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange);
-      else if (kind === "calligraphy") drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange);
-      else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange);
+    function drawFullStroke(
+      ctx: CanvasRenderingContext2D,
+      pts: InputPoint[],
+      finished: boolean,
+      from = 0,
+      to = Infinity,
+    ) {
+      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange, from, to);
+      else if (kind === "calligraphy") {
+        drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange, from, to);
+      } else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange);
       else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);
+    }
+
+    /** Where this frame's draw starts: the whole stroke, or just past the frozen part. */
+    const unfrozenFrom = () => (frozenTo === 0 ? 0 : frozenTo - FREEZE_OVERLAP);
+
+    /** Bake the stroke's settled part into the pre-stroke copy, once it has grown by FREEZE_STEP
+     *  points (see `frozenTo`). Settled = at least 2 × the widest nib plus 30 px of path, and 40
+     *  points, behind the pen: Calligraphy's normals reach half a width back, its smoothing 2
+     *  points, Ink's Pool 32 ms. */
+    function freezeSettled(pts: InputPoint[]) {
+      const canFreeze =
+        (kind === "ink" || kind === "calligraphy") &&
+        strokeSettings.opacity >= 100 &&
+        !(import.meta.env.DEV && (window as unknown as { slopNoFreeze?: boolean }).slopNoFreeze);
+      if (!canFreeze || !preStrokeCanvas) return;
+      const marginPx = 2 * widthRange(strokeSettings.size, sizeRange).max + 30;
+      let i = pts.length - 1;
+      let d = 0;
+      while (i > 0 && (d < marginPx || pts.length - 1 - i < 40)) {
+        d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        i--;
+      }
+      if (i - frozenTo < FREEZE_STEP) return;
+      const f = preStrokeCanvas.getContext("2d")!;
+      f.save();
+      try {
+        f.setTransform(layer.ctx.getTransform());
+        selection?.applyClip(f);
+        drawFullStroke(f, pts, false, unfrozenFrom(), i);
+      } finally {
+        f.restore();
+      }
+      frozenTo = i;
     }
 
     if (points.length <= 1 && !done) {
       strokeLayer = layer;
+      frozenTo = 0;
       preStrokeSnapshot = layers.getSnapshot();
       if (fullRedraw) {
         saveLayerToCanvas(layer);
@@ -1215,7 +1272,7 @@
         restoreLayerFromCanvas(layer);
         layer.ctx.save();
         selection?.applyClip(layer.ctx);
-        drawFullStroke(layer.ctx, points, true);
+        drawFullStroke(layer.ctx, points, true, unfrozenFrom());
         layer.ctx.restore();
         layers.composite();
         if (preStrokeSnapshot) {
@@ -1231,10 +1288,11 @@
           const latest = smoothPendingPoints;
           smoothPendingPoints = null;
           if (!latest || !layers) return;
+          freezeSettled(latest);
           restoreLayerFromCanvas(layer);
           layer.ctx.save();
           selection?.applyClip(layer.ctx);
-          drawFullStroke(layer.ctx, latest, false);
+          drawFullStroke(layer.ctx, latest, false, unfrozenFrom());
           layer.ctx.restore();
           layers.composite();
         });
