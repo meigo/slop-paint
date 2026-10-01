@@ -78,7 +78,15 @@ export function parseSlot(raw: unknown, fallback: StrokeSlot): StrokeSlot {
   if (!raw || typeof raw !== "object") return fallback;
   const r = raw as Record<string, unknown>;
   const out = { ...fallback };
-  const types: BrushKind[] = ["smooth", "ink", "calligraphy", "pencil", "charcoal", "airbrush"];
+  const types: BrushKind[] = [
+    "smooth",
+    "ink",
+    "calligraphy",
+    "dry",
+    "pencil",
+    "charcoal",
+    "airbrush",
+  ];
   if (types.includes(r.brushType as BrushKind)) out.brushType = r.brushType as BrushKind;
   for (const k of ["size", "opacity", "smoothing", "streamline", "sizeRange"] as const) {
     if (typeof r[k] === "number" && Number.isFinite(r[k])) out[k] = r[k];

@@ -9,6 +9,7 @@
   import { clampPress, drawStroke } from "./brush";
   import { pathSmoothRadius } from "./stroke-smoothing";
   import { drawInkStroke } from "./ink-brush";
+  import { drawDryStroke } from "./dry-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import {
@@ -399,6 +400,7 @@
     nibAngle?: number;
     nibFlatness?: number;
     dwellPool?: number;
+    dryness?: number;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
   }
@@ -440,6 +442,7 @@
       nibAngle: app.brushSettings.nibAngle,
       nibFlatness: app.brushSettings.nibFlatness,
       dwellPool: app.brushSettings.dwellPool,
+      dryness: app.brushSettings.dryness,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -484,6 +487,7 @@
       if (data.nibAngle != null) app.brushSettings.nibAngle = data.nibAngle;
       if (data.nibFlatness != null) app.brushSettings.nibFlatness = data.nibFlatness;
       if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
+      if (data.dryness != null) app.brushSettings.dryness = data.dryness;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurves.brush.cp1 = data.curveCp1;
         pressureCurves.brush.cp2 = data.curveCp2;
@@ -1164,10 +1168,11 @@
     openStrokePoints = done ? null : rawPoints;
     if (done) strokeLayer = null;
     const kind = app.brushType;
-    // smooth / ink / calligraphy redraw the whole stroke each frame from a pre-stroke copy; the
-    // stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
+    // smooth / ink / calligraphy / dry redraw the whole stroke each frame from a pre-stroke copy;
+    // the stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
     // harden the antialiased edges (see the engines' own notes).
-    const fullRedraw = kind === "smooth" || kind === "ink" || kind === "calligraphy";
+    const fullRedraw =
+      kind === "smooth" || kind === "ink" || kind === "calligraphy" || kind === "dry";
     // Mouse input has no pressure: draw at the nominal width instead of the widest.
     const sizeRange = (points[0]?.hasPressure ?? true) ? app.sizeRange : 1;
     const strokeSettings = {
@@ -1180,6 +1185,7 @@
     function drawFullStroke(ctx: CanvasRenderingContext2D, pts: InputPoint[], finished: boolean) {
       if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange);
       else if (kind === "calligraphy") drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange);
+      else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange);
       else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);
     }
 

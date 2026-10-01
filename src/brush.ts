@@ -59,6 +59,8 @@ export interface BrushSettings {
   nibFlatness?: number;
   /** Ink only: 0-100, how much the mark swells where the nib lingers (0 = off). */
   dwellPool?: number;
+  /** Dry brush only: 0-100, how short of paint the bristles are (more breaks, sparser edges). */
+  dryness?: number;
   /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
   taper?: boolean;
   /** Smooth brush: keep a corner sharp where the pen paused, instead of smoothing it round. */
