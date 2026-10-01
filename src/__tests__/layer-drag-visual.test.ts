@@ -6,7 +6,7 @@ import {
   pastThreshold,
   ROW_PX,
   SCROLL_MAX_PX,
-  shiftedRowIds,
+  slideOffsets,
 } from "../lib/layer-drag-visual";
 import type { RowBox } from "../lib/layer-drop";
 
@@ -26,11 +26,35 @@ describe("layer drag visuals", () => {
     expect(pastThreshold(-3, 0)).toBe(true);
   });
 
-  it("slides every row at or below the drop line, and none without a drop", () => {
-    expect([...shiftedRowIds(rows, 64)]).toEqual([3, 4]);
-    expect([...shiftedRowIds(rows, 0)]).toEqual([1, 2, 3, 4]);
-    expect([...shiftedRowIds(rows, 128)]).toEqual([]);
-    expect(shiftedRowIds(rows, null).size).toBe(0);
+  it("slides each row to its place in the new order, by the rows' own heights", () => {
+    // Top row down two places: it moves 64px down, the two rows it passed close up.
+    expect([...slideOffsets(rows, [2, 3, 1, 4])]).toEqual([
+      [2, -32],
+      [3, -32],
+      [1, 64],
+    ]);
+    // Bottom row to the top: the rest move down one row.
+    expect([...slideOffsets(rows, [4, 1, 2, 3])]).toEqual([
+      [4, -96],
+      [1, 32],
+      [2, 32],
+      [3, 32],
+    ]);
+    // Mixed heights: a 40px row and a 20px row swap.
+    const mixed: RowBox[] = [
+      { kind: "group", id: 1, top: 0, bottom: 40 },
+      { kind: "layer", id: 2, top: 40, bottom: 60 },
+    ];
+    expect([...slideOffsets(mixed, [2, 1])]).toEqual([
+      [2, -40],
+      [1, 20],
+    ]);
+  });
+
+  it("slides nothing for the same order or a refused drop", () => {
+    expect(slideOffsets(rows, [1, 2, 3, 4]).size).toBe(0);
+    expect(slideOffsets(rows, []).size).toBe(0);
+    expect(slideOffsets([], [1]).size).toBe(0);
   });
 
   it("keeps the floating row inside the content", () => {

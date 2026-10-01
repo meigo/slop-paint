@@ -1,15 +1,21 @@
 /** Where a row dragged in the layer panel lands (2026-10-01, after slop-vector-editor's
  *  `layer-drop.ts`; see ../SLOP-LAYER-DRAG.md). Pure: the panel measures the rows, this decides,
- *  and the panel draws the gap, the outline and the commit from the one result, so what is shown
- *  is what lands. */
-import { hiddenInTree, locateNode, lockedInTree, moveAllowed, type LayerNode } from "../layers";
+ *  and the panel draws the rows' slides, the destination's lines and the commit from the one
+ *  result, so what is shown is what lands. */
+import {
+  hiddenInTree,
+  locateNode,
+  lockedInTree,
+  moveAllowed,
+  moveNode,
+  type LayerNode,
+} from "../layers";
 
 /** A rendered row, in display order (top first), in the list's content coordinates. A group's row
  *  is its header; a collapsed group's members aren't rendered, so they have no row. */
 export type RowBox = { kind: "layer" | "group"; id: number; top: number; bottom: number };
-/** `parentId` (null = the root) and `index` are what `moveNode` takes; `line` is where the gap
- *  opens. */
-export type Drop = { parentId: number | null; index: number; line: number };
+/** What `moveNode` takes: the parent (null = the root) and the index in its children as they are. */
+export type Drop = { parentId: number | null; index: number };
 
 const mid = (r: RowBox) => (r.top + r.bottom) / 2;
 
@@ -18,9 +24,7 @@ const mid = (r: RowBox) => (r.top + r.bottom) / 2;
  *  draw on or see), a group into its own subtree, or a move that changes nothing.
  *
  *  The upper half of a row puts the node above it, as its sibling; the lower half of a layer row
- *  below it. The lower half of a GROUP's row puts it into that group, at the top — for an expanded
- *  group the gap then opens between the header and its first member, for a collapsed one under the
- *  header. Past the last row, it goes to the bottom of the root, which is the way out of a group
+ *  below it. The lower half of a GROUP's row puts it into that group, at the top. Past the last row, it goes to the bottom of the root, which is the way out of a group
  *  that ends the list. */
 export function dropTarget(
   tree: LayerNode[],
@@ -32,7 +36,7 @@ export function dropTarget(
   const last = rows[rows.length - 1];
   let drop: Drop;
   if (y >= last.bottom) {
-    drop = { parentId: null, index: 0, line: last.bottom };
+    drop = { parentId: null, index: 0 };
   } else {
     const row = rows.find((r) => y >= r.top && y < r.bottom) ?? rows[0];
     const at = locateNode(tree, row.id);
@@ -40,13 +44,9 @@ export function dropTarget(
     const node = at.siblings[at.index];
     const upper = y < mid(row);
     if (!upper && node.type === "group") {
-      drop = { parentId: node.id, index: node.children.length, line: row.bottom };
+      drop = { parentId: node.id, index: node.children.length };
     } else {
-      drop = {
-        parentId: at.group?.id ?? null,
-        index: upper ? at.index + 1 : at.index,
-        line: upper ? row.top : row.bottom,
-      };
+      drop = { parentId: at.group?.id ?? null, index: upper ? at.index + 1 : at.index };
     }
   }
   const into = drop.parentId;
@@ -63,4 +63,33 @@ export function dragBlock(tree: LayerNode[], id: number): string {
   return at?.group && lockedInTree(tree, at.group.id)
     ? "It's in a locked group — unlock the group to move it"
     : "";
+}
+
+/** The rendered rows' ids, top first, as they would be after `drop` — what the panel slides the
+ *  rows to while dragging (2026-10-01, as slop-spine: the dragged row's own place moves to the
+ *  slot, the rows it passes close up, the list keeps its height). Worked out on a copy of the
+ *  tree's shape. A collapsed group lists no members, except the dragged node landing in it, which
+ *  shows just under the header (where it lands: the group's top). */
+export function rowOrderAfter(tree: LayerNode[], dragId: number, drop: Drop): number[] {
+  type Shape = { type: LayerNode["type"]; id: number; collapsed: boolean; children: Shape[] };
+  const copy = (nodes: LayerNode[]): Shape[] =>
+    nodes.map((n) => ({
+      type: n.type,
+      id: n.id,
+      collapsed: n.type === "group" && n.collapsed,
+      children: n.type === "group" ? copy(n.children) : [],
+    }));
+  const shape = copy(tree);
+  moveNode(shape as unknown as LayerNode[], dragId, drop.parentId, drop.index);
+  const ids: number[] = [];
+  const list = (nodes: Shape[]) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      ids.push(n.id);
+      if (n.type !== "group") continue;
+      list(n.collapsed ? n.children.filter((c) => c.id === dragId) : n.children);
+    }
+  };
+  list(shape);
+  return ids;
 }

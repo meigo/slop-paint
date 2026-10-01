@@ -1,6 +1,6 @@
 /** What a row drag in the layer panel looks like (2026-10-01, copied from slop-vector-editor — see
- *  ../SLOP-LAYER-DRAG.md): the dragged row follows the pointer and the rows below the drop point
- *  slide down to open a gap, drawn over `layer-drop.ts`'s `dropTarget`, which alone decides where
+ *  ../SLOP-LAYER-DRAG.md): the dragged row follows the pointer and its place in the list moves to the
+ *  drop slot, the rows in between closing up — drawn over `layer-drop.ts`'s `dropTarget`, which alone decides where
  *  a drop lands.
  *  Pure: no DOM, so it is testable. Every position is in the list's CONTENT coordinates (client y −
  *  list top + scrollTop), measured once when the drag starts, so rows sliding aside never move
@@ -9,8 +9,8 @@ import type { RowBox } from "./layer-drop";
 
 /** How far the pointer travels before a press on a grip becomes a drag, so a tap lifts nothing. */
 export const DRAG_THRESHOLD_PX = 3;
-/** The height of the gap opened at the drop point: one row. slop-paint's rows are ~29px, so the
- *  panel passes the dragged row's measured height; this is the default. */
+/** One row's height, for the floating row. slop-paint's rows are ~29px, so the panel passes the
+ *  dragged row's measured height; this is the default. */
 export const ROW_PX = 32;
 /** The band at the list's top and bottom edge that scrolls it, and the fastest step per frame. */
 export const SCROLL_EDGE_PX = 32;
@@ -20,11 +20,27 @@ export function pastThreshold(dx: number, dy: number): boolean {
   return Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
 }
 
-/** The rows that slide down to open the gap: every row at or below the drop line. Nothing slides
- *  when there is no drop (a refused position), so the gap closes. */
-export function shiftedRowIds(rows: readonly RowBox[], line: number | null): Set<number> {
-  if (line === null) return new Set();
-  return new Set(rows.filter((r) => r.top >= line - 0.5).map((r) => r.id));
+/** How far each row slides while dragging: from where it is to where `order` (the row ids, top
+ *  first, after the drop — `layer-drop.ts` `rowOrderAfter`) puts it, stacking the rows by their
+ *  own heights from the first row's top. So the dragged row's own place (its members too) moves to
+ *  the drop slot and the rows it passes close up behind it, as slop-spine (2026-10-01) and
+ *  SortableJS: no extra gap, the list keeps its height. Only rows that move are listed; an empty
+ *  `order` (a refused position) slides nothing. Ids `order` lacks are skipped. */
+export function slideOffsets(
+  rows: readonly RowBox[],
+  order: readonly number[],
+): Map<number, number> {
+  const out = new Map<number, number>();
+  if (rows.length === 0 || order.length === 0) return out;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  let top = rows[0].top;
+  for (const id of order) {
+    const r = byId.get(id);
+    if (!r) continue;
+    if (Math.abs(top - r.top) > 0.5) out.set(id, top - r.top);
+    top += r.bottom - r.top;
+  }
+  return out;
 }
 
 /** The floating row's top: the pointer less where on its row it was grabbed, kept inside the

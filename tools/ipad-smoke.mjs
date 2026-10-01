@@ -804,7 +804,7 @@ async function main(page) {
 
   await step(async () => {
     // A finger drags the bottom row by its grip to the top of the list. Mid-drag: the floating
-    // copy, the rows slid down to open the gap, the dragged row dimmed. Then Undo puts it back.
+    // copy, the dragged row's place (dimmed) slid to the top, the rest closed up. Then Undo puts it back.
     const names = () => page.$$eval("[data-row-id]", (els) => els.map((e) => e.textContent.trim()));
     const n0 = await names();
     const bottom = n0.at(-1);
@@ -822,7 +822,11 @@ async function main(page) {
     await page.waitForTimeout(250);
     const mid = await page.evaluate(() => ({
       ghost: !!document.querySelector("[data-drag-ghost]"),
-      slid: [...document.querySelectorAll("[data-row-id]")].filter((e) => e.style.transform).length,
+      // Each row's slide, top first: the dragged (bottom) row's own place moves up to the top and
+      // the rows above it close up downward (as slop-spine) — no extra gap.
+      slides: [...document.querySelectorAll("[data-row-id]")].map((e) =>
+        Number(/translateY\((-?[\d.]+)px\)/.exec(e.style.transform)?.[1] ?? 0),
+      ),
       dimmed: document.querySelectorAll("[data-row-id].opacity-40").length,
     }));
     await shot(`${String(n).padStart(2, "0")}-row-drag-mid`);
@@ -834,11 +838,12 @@ async function main(page) {
     const n2 = await names();
     return [
       mid.ghost &&
-        mid.slid === n0.length &&
+        mid.slides.at(-1) < 0 &&
+        mid.slides.slice(0, -1).every((dy) => dy > 0) &&
         mid.dimmed === 1 &&
         n1[0] === bottom &&
         n2.join("|") === n0.join("|"),
-      `[sim] a finger drags the bottom row (${bottom}) to the top by its grip: mid-drag a floating copy (${mid.ghost}), ${mid.slid} rows slid to open the gap, ${mid.dimmed} dimmed; dropped (${n1.join(", ")}); Undo restores`,
+      `[sim] a finger drags the bottom row (${bottom}) to the top by its grip: mid-drag a floating copy (${mid.ghost}), the dragged row's place slid to the top (${mid.slides.at(-1)}px) and the rest closed up (${mid.slides.slice(0, -1).join(", ")}px), ${mid.dimmed} dimmed; dropped (${n1.join(", ")}); Undo restores`,
       "row-drag",
     ];
   });
