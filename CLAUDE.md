@@ -27,7 +27,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - `npm run deploy` — build, then `wrangler deploy` to the Cloudflare Worker `slop-paint` (`wrangler.jsonc`: assets-only, no Worker script, as slop-animator; `public/_headers` caches only the content-hashed `/assets/*`). Manual, not on push; the name matches the Worker first made in the Cloudflare dashboard, so a deploy replaces it in place. `preview_urls: false`: no preview/alias URLs (the 2026-09-26 debug aliases were turned off this way — Wrangler can't delete an alias, and versions are immutable history)
 - `npm run test` — run tests once
 - `npm run test:watch` — run tests in watch mode
-- `npm run test:ipad` — iPad smoke check (`tools/ipad-smoke.mjs`, Playwright): the app in WebKit (Safari's engine) at iPad Pro 11 landscape with touch, in a fresh profile (never the user's IndexedDB). Starts its own dev server on a free port; `npm run test:ipad -- <url>` checks a URL (e.g. the deployed site). Checks: it loads, a simulated pen stroke draws and adds an undo step, a real touch tap opens the File menu, no page errors; screenshots in `test-results/ipad/` (gitignored); exit 1 on failure. First run per machine: `npx playwright install webkit` (~100 MB). Synthetic pen events aren't live pointers, so WebKit refuses `setPointerCapture` for them — the script lets that fail quietly; a real Pencil is unaffected. NOT covered (test on the iPad): the real Pencil, multi-finger gestures, the share sheet, the keyboard, iPadOS memory limits. The user can't install Xcode, so the real-device and Simulator routes (`safaridriver`) are out
+- `npm run test:ipad` — iPad smoke check (`tools/ipad-smoke.mjs`, Playwright): the app in WebKit (Safari's engine) at iPad Pro 11 landscape with touch, in a fresh profile (never the user's IndexedDB). Starts its own dev server on a free port; `npm run test:ipad -- <url>` checks a URL (e.g. the deployed site). Walks most of the app (~33 checks, ~1.5 min; each step runs on its own, so one failure doesn't stop the rest): every tool and all six brush types, two/three-finger tap undo/redo, pinch, pan, double-tap eraser, eyedropper, bucket and Fill enclosed, Rect/Lasso select, delete, copy/paste, Free transform + flip, Distort, Mesh, Outline, the layer panel (add, double-tap rename, blend, hide/lock refusals, alpha lock, duplicate, group, merge, delete), text and image references (move, Bake), Settings, project name, Save to Files / Export PNG / Export PSD through a stubbed share sheet (`navigator.share` records the files), New, Open of the saved PSD, Resize canvas, autosave across a reload + Restore autosave, and portrait layout; plus no page errors. Results are read back from the on-screen canvas's pixels, not from undo titles (the Undo title is the same for one step or fifty). Real taps are Playwright's touchscreen; pen strokes and multi-finger gestures are dispatched pointer events (`[sim]` in the output). Paste falls back to the internal copy: WebKit refuses `navigator.clipboard.read()` there. Screenshots in `test-results/ipad/` (gitignored, cleared each run; `-FAIL` on a failed step); exit 1 on failure. First run per machine: `npx playwright install webkit` (~100 MB). Synthetic pen events aren't live pointers, so WebKit refuses `setPointerCapture` for them — the script lets that fail quietly; a real Pencil is unaffected. NOT covered (test on the iPad): the real Pencil, how gestures feel (they are simulated), the real share sheet, the system clipboard, the keyboard, iPadOS memory limits. The user can't install Xcode, so the real-device and Simulator routes (`safaridriver`) are out
 - `npm run lint` — run ESLint
 - `npm run check` — run svelte-check
 - `npm run format` / `npm run format:check` — Prettier
@@ -43,6 +43,13 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 - After UI or input changes, run `npm run test:ipad` too: WebKit catches Safari-only breakage Chrome doesn't
 - Run `npm run check` to verify Svelte components
 - Run `npx tsc --noEmit` to type-check non-Svelte TypeScript
+
+## Workflow
+
+As slop-vector-editor: branch off `main` (`fix/…`, `feat/…`, `chore/…`, `docs/…`), one commit per
+task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge into `main` with
+`--no-ff` ("Merge <what>") only when the user says so. Before 2026-10-01 commits went straight to
+`main`. Keep README.md current with every user-visible change.
 
 ## Architecture
 
