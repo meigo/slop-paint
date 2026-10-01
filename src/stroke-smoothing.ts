@@ -40,6 +40,17 @@ export const SMOOTH_MAX_PX = 32;
 
 /** The string length for Stream `v` (0–1). Squared, so the low half of the slider stays gentle
  *  (50% = 10 px) and the top end is strong. */
+/**
+ * The shortest string the stamp brushes (Pencil, Charcoal, Airbrush) get, in screen px, even at
+ * Stream 0 (2026-10-01). They stamp exactly where the input points are, and on iPad a thin line at
+ * Stream 0 came out stepped and beaded while Stream ≳ 30 (a ~3.6 px string) drew it clean: the
+ * raw Pencil points carry a pixel or two of steps or jitter, which the full-redraw brushes' curves
+ * smooth over and a stamp shows. 4 px is a little more than Stream 30's string. NOT reproduced in
+ * Playwright's WebKit (pixel-rounded input drew clean there), so it rests on that device test. Too
+ * short to feel; a lift still ends at the pen.
+ */
+export const STAMP_MIN_ROPE_PX = 4;
+
 export function ropeLength(v: number): number {
   const s = Math.min(1, Math.max(0, v));
   return ROPE_MAX_PX * s * s;

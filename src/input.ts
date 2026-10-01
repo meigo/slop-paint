@@ -29,6 +29,9 @@ export interface InputOptions {
   /** Stream 0-1, or a getter for dynamic values: the line trails the pen on a string of
    *  `ropeLength(v)` screen px (0 = follows the pen exactly). See stroke-smoothing.ts. */
   streamline?: number | (() => number);
+  /** The shortest string, in screen px, whatever Stream says (`STAMP_MIN_ROPE_PX` for the stamp
+   *  brushes); 0 by default. */
+  minRopePx?: () => number;
 }
 
 /** Max distance (canvas px) between consecutive points before we interpolate */
@@ -49,7 +52,7 @@ export function setupInput(
   const streamlineOpt = options?.streamline;
   function getRopeLength(): number {
     const v = typeof streamlineOpt === "function" ? streamlineOpt() : (streamlineOpt ?? 0);
-    return ropeLength(v);
+    return Math.max(ropeLength(v), options?.minRopePx?.() ?? 0);
   }
   let rope: { x: number; y: number } | null = null;
   // The pen's recent path (client px), a point each time it has moved STILL_PX from the last —
