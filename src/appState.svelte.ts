@@ -2,7 +2,7 @@ import { PRESS_DEFAULT, type BrushSettings } from "./brush";
 import type { BrushType } from "./brush-textures";
 
 /** Every brush the toolbar offers: the full-redraw engines plus the stamp tips. */
-export type BrushKind = "smooth" | "ink" | "calligraphy" | BrushType;
+export type BrushKind = "smooth" | "ink" | "calligraphy" | "dry" | BrushType;
 import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
@@ -75,6 +75,7 @@ export const app: AppStateShape = $state({
     nibAngle: 45,
     nibFlatness: 0.35,
     dwellPool: 0,
+    dryness: 50,
   },
   fillSettings: {
     tolerance: 32,

@@ -338,8 +338,8 @@ async function main(page) {
   });
 
   // ------------------------------------------------------------------------------- brushes
-  const brushTypes = ["smooth", "ink", "calligraphy", "pencil", "charcoal", "airbrush"];
-  const bandY = (i) => 0.1 + i * 0.15;
+  const brushTypes = ["smooth", "ink", "calligraphy", "dry", "pencil", "charcoal", "airbrush"];
+  const bandY = (i) => 0.08 + i * 0.135;
   await step(async () => {
     const select = page
       .locator("select")
@@ -370,7 +370,7 @@ async function main(page) {
     ...fs.map((f, i) => ({ type: "down", kind: "touch", ...f, wait: i ? 15 : 0 })),
     ...fs.map((f, i) => ({ type: "up", kind: "touch", ...f, wait: i ? 10 : 80 })),
   ];
-  const lastBand = band(bandY(5));
+  const lastBand = band(bandY(brushTypes.length - 1));
   await step(async () => {
     const c = at(0.75, 0.5);
     const ink0 = (await pixels(lastBand)).dark;

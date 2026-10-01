@@ -661,6 +661,7 @@
         <option value="smooth">Smooth</option>
         <option value="ink">Ink</option>
         <option value="calligraphy">Calligraphy</option>
+        <option value="dry">Dry brush</option>
         <option value="pencil">Pencil</option>
         <option value="charcoal">Charcoal</option>
         <option value="airbrush">Airbrush</option>
@@ -880,6 +881,25 @@
                 class="min-w-0 flex-1"
               />
               <span class={valueCls}>{app.brushSettings.dwellPool}</span>
+            </label>
+          {/if}
+
+          {#if app.brushType === "dry"}
+            <label
+              class={rowCls}
+              title="How short of paint the bristles are: more dry breaks and sparser edges — 0 is a wet, solid stroke"
+            >
+              <span class={labelCls}>Dryness</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.dryness ?? 50, 0, 100)}
+                bind:value={app.brushSettings.dryness}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.dryness}</span>
             </label>
           {/if}
 
