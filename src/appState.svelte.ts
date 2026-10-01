@@ -77,6 +77,7 @@ export const app: AppStateShape = $state({
     dwellPool: 0,
     dryness: 50,
     pencilGrade: "HB",
+    charcoalTexture: "medium",
   },
   fillSettings: {
     tolerance: 32,

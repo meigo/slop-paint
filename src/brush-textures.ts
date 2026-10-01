@@ -82,9 +82,37 @@ function pencilTip(grain = 1): HTMLCanvasElement {
   });
 }
 
-/** Charcoal tip — rough, chunky */
-function charcoalTip(): HTMLCanvasElement {
-  return getCachedTip("charcoal", (ctx, s) => {
+/** Charcoal textures, from big holes to dense (2026-10-01). */
+export const CHARCOAL_TEXTURES = ["rough", "medium", "fine", "dense"] as const;
+export type CharcoalTexture = (typeof CHARCOAL_TEXTURES)[number];
+
+/** The holes cut into the Charcoal tip for a texture: how many, their radius range (px on the
+ *  64 px tip) and how much each lets through (alpha range). Medium is the tip as it was; an unknown
+ *  name is Medium. */
+export function charcoalHoles(texture: string | undefined): {
+  count: number;
+  minR: number;
+  maxR: number;
+  minA: number;
+  maxA: number;
+} {
+  switch (texture) {
+    case "rough":
+      return { count: 200, minR: 2, maxR: 6, minA: 0.4, maxA: 1 };
+    case "fine":
+      return { count: 450, minR: 0.6, maxR: 1.8, minA: 0.55, maxA: 1 };
+    case "dense":
+      return { count: 300, minR: 0.5, maxR: 1.2, minA: 0.35, maxA: 0.8 };
+    default:
+      return { count: 200, minR: 1, maxR: 4, minA: 0.2, maxA: 0.8 };
+  }
+}
+
+/** Charcoal tip — rough, chunky; `texture` sets its holes (`charcoalHoles`). */
+function charcoalTip(texture?: string): HTMLCanvasElement {
+  const holes = charcoalHoles(texture);
+  const key = texture && texture !== "medium" ? `charcoal:${texture}` : "charcoal";
+  return getCachedTip(key, (ctx, s) => {
     const r = s / 2;
 
     // Rough base shape using overlapping circles
@@ -100,13 +128,13 @@ function charcoalTip(): HTMLCanvasElement {
 
     // Cut out chunks for rough texture
     ctx.globalCompositeOperation = "destination-out";
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < holes.count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = Math.random() * r;
       const x = r + Math.cos(angle) * dist;
       const y = r + Math.sin(angle) * dist;
-      const dotR = 1 + Math.random() * 3;
-      ctx.globalAlpha = 0.2 + Math.random() * 0.6;
+      const dotR = holes.minR + Math.random() * (holes.maxR - holes.minR);
+      ctx.globalAlpha = holes.minA + Math.random() * (holes.maxA - holes.minA);
       ctx.beginPath();
       ctx.arc(x, y, dotR, 0, Math.PI * 2);
       ctx.fill();
@@ -130,14 +158,14 @@ function airbrushTip(): HTMLCanvasElement {
 
 export type BrushType = "smooth" | "pencil" | "charcoal" | "airbrush";
 
-export function getTip(type: BrushType, grain = 1): HTMLCanvasElement {
+export function getTip(type: BrushType, grain = 1, texture?: string): HTMLCanvasElement {
   switch (type) {
     case "smooth":
       return hardRoundTip();
     case "pencil":
       return pencilTip(grain);
     case "charcoal":
-      return charcoalTip();
+      return charcoalTip(texture);
     case "airbrush":
       return airbrushTip();
     default:

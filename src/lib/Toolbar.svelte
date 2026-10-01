@@ -40,6 +40,7 @@
   import { MAX_THICKNESS } from "../outline";
   import { PRESS_MAX, PRESS_MIN } from "../brush";
   import { PENCIL_GRADES } from "../stamp-brush";
+  import { CHARCOAL_TEXTURES } from "../brush-textures";
   import { meshStepBlock } from "../mesh-size";
   import { sliderFill } from "./slider-fill";
   import { selectOnFocus } from "./select-on-focus";
@@ -904,6 +905,33 @@
                       app.brushSettings.pencilGrade = g;
                       onSettingsChange();
                     }}>{g}</button
+                  >
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if app.brushType === "charcoal"}
+            <div
+              class={rowCls}
+              title="Charcoal texture: Rough has big holes in it, Dense hardly any"
+            >
+              <span class={labelCls}>Texture</span>
+              <div class="flex min-w-0 flex-1 gap-px">
+                {#each CHARCOAL_TEXTURES as t (t)}
+                  <button
+                    class="h-6 min-w-0 flex-1 rounded-md text-[10px] capitalize transition-colors {(app
+                      .brushSettings.charcoalTexture ?? 'medium') === t
+                      ? 'ui-on'
+                      : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+                    aria-pressed={(app.brushSettings.charcoalTexture ?? "medium") === t}
+                    title="{t[0].toUpperCase() + t.slice(1)} charcoal{t === 'medium'
+                      ? ' — the default'
+                      : ''}"
+                    onclick={() => {
+                      app.brushSettings.charcoalTexture = t;
+                      onSettingsChange();
+                    }}>{t}</button
                   >
                 {/each}
               </div>
