@@ -138,6 +138,7 @@ let tintedProfile = { inner: 1, outer: 1 };
 let tintedColor = "";
 let tintedType: BrushType | null = null;
 let tintedGrain = 1;
+let tintedTexture: string | undefined;
 
 export function resetStampState() {
   lastStampCount = 0;
@@ -145,12 +146,23 @@ export function resetStampState() {
   tintedTip = null;
 }
 
-function getTintedTip(type: BrushType, color: string, grain = 1): HTMLCanvasElement[] {
-  if (tintedTip && tintedColor === color && tintedType === type && tintedGrain === grain) {
+function getTintedTip(
+  type: BrushType,
+  color: string,
+  grain = 1,
+  texture?: string,
+): HTMLCanvasElement[] {
+  if (
+    tintedTip &&
+    tintedColor === color &&
+    tintedType === type &&
+    tintedGrain === grain &&
+    tintedTexture === texture
+  ) {
     return tintedTip;
   }
 
-  const tip = getTip(type, grain);
+  const tip = getTip(type, grain, texture);
   const cvs = document.createElement("canvas");
   cvs.width = tip.width;
   cvs.height = tip.height;
@@ -180,6 +192,7 @@ function getTintedTip(type: BrushType, color: string, grain = 1): HTMLCanvasElem
   tintedColor = color;
   tintedType = type;
   tintedGrain = grain;
+  tintedTexture = texture;
   return levels;
 }
 
@@ -199,7 +212,12 @@ export function drawStampStrokeIncremental(
   const { min: minSize, max: maxSize } = widthRange(settings.size, sizeRange);
   // The Pencil's grade (HB for every other tip: the original numbers).
   const grade = pencilGrade(settings.brushType === "pencil" ? settings.pencilGrade : undefined);
-  const tips = getTintedTip(settings.brushType, settings.color, grade.grain);
+  const tips = getTintedTip(
+    settings.brushType,
+    settings.color,
+    grade.grain,
+    settings.brushType === "charcoal" ? settings.charcoalTexture : undefined,
+  );
   const tipSizes = tips.map((t) => t.width);
   // Stamps are sized in document units; the layer's transform scales them to device pixels.
   const m = ctx.getTransform();
