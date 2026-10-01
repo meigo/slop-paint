@@ -94,8 +94,47 @@ export function mipIndex(devicePx: number, sizes: readonly number[]): number {
   return i;
 }
 
+/**
+ * Stamps this small (in device px) are drawn as two soft discs, not the tip image (2026-10-01).
+ * On iPad small Pencil strokes still came out dashed and beaded after the mip levels — a tiny
+ * image draw there seems to land on whole pixels (the GPU canvas; not reproducible in software
+ * WebKit), so stamps 1–2 px apart clumped into a pattern. A filled arc is antialiased at its
+ * sub-pixel position on every renderer, and at this size the grain is finer than a pixel anyway.
+ */
+export const SMALL_STAMP_PX = 8;
+
+/** A tip's darkness as two rings, for the disc stand-in: mean alpha (0–1) inside 0.6 of the
+ *  radius, and between 0.6 and 1. `alpha` is the tip's alpha channel, `size`×`size`, row by row. */
+export function discProfile(
+  alpha: ArrayLike<number>,
+  size: number,
+): { inner: number; outer: number } {
+  const r = size / 2;
+  let inner = 0;
+  let nIn = 0;
+  let outer = 0;
+  let nOut = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x + 0.5 - r, y + 0.5 - r) / r;
+      if (d > 1) continue;
+      const a = alpha[y * size + x] / 255;
+      if (d < 0.6) {
+        inner += a;
+        nIn++;
+      } else {
+        outer += a;
+        nOut++;
+      }
+    }
+  }
+  return { inner: nIn ? inner / nIn : 0, outer: nOut ? outer / nOut : 0 };
+}
+
 /** The tinted tip and its halvings down to 4 px, largest first. */
 let tintedTip: HTMLCanvasElement[] | null = null;
+/** The tinted tip's two-ring darkness, for small stamps. */
+let tintedProfile = { inner: 1, outer: 1 };
 let tintedColor = "";
 let tintedType: BrushType | null = null;
 let tintedGrain = 1;
@@ -132,6 +171,11 @@ function getTintedTip(type: BrushType, color: string, grain = 1): HTMLCanvasElem
     levels.push(half);
   }
 
+  const data = ctx.getImageData(0, 0, cvs.width, cvs.height).data;
+  const alpha = new Uint8ClampedArray(cvs.width * cvs.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = data[i * 4 + 3];
+  tintedProfile = discProfile(alpha, cvs.width);
+
   tintedTip = levels;
   tintedColor = color;
   tintedType = type;
@@ -160,7 +204,30 @@ export function drawStampStrokeIncremental(
   // Stamps are sized in document units; the layer's transform scales them to device pixels.
   const m = ctx.getTransform();
   const toDevice = Math.hypot(m.a, m.b);
-  const tipFor = (drawSize: number) => tips[mipIndex(drawSize * toDevice, tipSizes)];
+  const profile = tintedProfile;
+  // The outer disc at the ring's darkness, then the inner one adding up to the centre's.
+  const innerOver =
+    profile.outer < 1 ? Math.max(0, (profile.inner - profile.outer) / (1 - profile.outer)) : 0;
+  ctx.fillStyle = settings.color;
+  /** One stamp, at the alpha already set: small ones as two soft discs, larger ones from the
+   *  tip's mip level. */
+  const stamp = (x: number, y: number, drawSize: number) => {
+    if (drawSize * toDevice > SMALL_STAMP_PX) {
+      const tip = tips[mipIndex(drawSize * toDevice, tipSizes)];
+      ctx.drawImage(tip, x - drawSize / 2, y - drawSize / 2, drawSize, drawSize);
+      return;
+    }
+    const a = ctx.globalAlpha;
+    ctx.globalAlpha = a * profile.outer;
+    ctx.beginPath();
+    ctx.arc(x, y, drawSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = a * innerOver;
+    ctx.beginPath();
+    ctx.arc(x, y, drawSize * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = a;
+  };
   // A mouse has no pressure (reported 0): its width is already the nominal one, and its alpha
   // mustn't take the light-pressure half either — mouse stamps drew at half the chosen opacity.
   const hasPressure = points[0].hasPressure ?? true;
@@ -192,7 +259,7 @@ export function drawStampStrokeIncremental(
     const p = newPoints[0];
     const { drawSize, alphaScale } = stampFootprint(minSize + p.pressure * (maxSize - minSize));
     ctx.globalAlpha = (settings.opacity / 100) * pressureAlpha(p.pressure) * alphaScale;
-    ctx.drawImage(tipFor(drawSize), p.x - drawSize / 2, p.y - drawSize / 2, drawSize, drawSize);
+    stamp(p.x, p.y, drawSize);
     sinceLastStamp = 0;
   }
 
@@ -216,7 +283,7 @@ export function drawStampStrokeIncremental(
       const p = prev.pressure + (curr.pressure - prev.pressure) * t;
       const { drawSize, alphaScale } = stampFootprint(minSize + p * (maxSize - minSize));
       ctx.globalAlpha = (settings.opacity / 100) * pressureAlpha(p) * alphaScale;
-      ctx.drawImage(tipFor(drawSize), x - drawSize / 2, y - drawSize / 2, drawSize, drawSize);
+      stamp(x, y, drawSize);
     }
     sinceLastStamp = spaced.since;
   }
