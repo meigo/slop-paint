@@ -7,6 +7,7 @@ import {
   noise1,
   resample,
   rng,
+  taperedRibbon,
 } from "../dry-brush";
 import type { InputPoint } from "../input";
 
@@ -109,6 +110,23 @@ describe("dry brush", () => {
       // And no hair is thinner than a pixel's worth (a faint grey line).
       expect(Math.min(...hairs.map((h) => h.width))).toBeGreaterThanOrEqual(0.9);
     }
+  });
+
+  it("tapers each hair run to a point at both ends, full width in the middle", () => {
+    // A straight run along x, 0 to 40, 4 px wide, tapering over 10 px.
+    const run = Array.from({ length: 21 }, (_, i) => [i * 2, 0]).flat();
+    const out = taperedRibbon(run, 4, 10);
+    expect(out.length).toBe(run.length * 2); // down one side, back up the other
+    const n = run.length / 2;
+    const widthAt = (i: number) => Math.abs(out[2 * i + 1] - out[2 * (2 * n - 1 - i) + 1]);
+    expect(widthAt(0)).toBeCloseTo(0, 6);
+    expect(widthAt(n - 1)).toBeCloseTo(0, 6);
+    expect(widthAt(10)).toBeCloseTo(4, 6);
+    expect(widthAt(2)).toBeLessThan(widthAt(4));
+    // A run shorter than two tapers peaks in the middle, below full width.
+    const short = taperedRibbon([0, 0, 4, 0, 8, 0], 4, 10);
+    expect(Math.abs(short[3] - short[(2 * 3 - 1 - 1) * 2 + 1])).toBeLessThan(4);
+    expect(taperedRibbon([0, 0], 4, 10)).toEqual([]);
   });
 
   it("draws nothing for fewer than two points", () => {

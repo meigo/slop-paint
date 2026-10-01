@@ -76,7 +76,8 @@ export function makeBristles(count: number, seed: number): Bristle[] {
       load: Math.max(0, 0.55 + r() * 0.45 - edge ** 3 * 0.35 * Math.min(1, count / 12)),
       lag: r() * (0.15 + edge * 0.6),
       tail: r() * (0.15 + edge * 0.6),
-      tone: 0.85 + r() * 0.15,
+      // The outer hairs lighter, so the stroke fades a little at its edges (2026-10-01).
+      tone: (0.85 + r() * 0.15) * (1 - 0.3 * edge * edge),
       key: Math.floor(r() * 2 ** 31),
     });
   }
@@ -222,6 +223,43 @@ export function bristleRuns(
   });
 }
 
+/**
+ * One painted run of a hair as a closed outline (x, y pairs: down one side, back up the other)
+ * whose width narrows to a point at both ends (2026-10-01): drawn as constant-width round-capped
+ * lines, every run was a uniform bar. The taper runs over `taper` px from each end (a run shorter
+ * than twice that tapers all the way, so it peaks in the middle), following a sine ease so it
+ * fades in rather than starting as a wedge. Pure.
+ */
+export function taperedRibbon(run: readonly number[], width: number, taper: number): number[] {
+  const n = run.length / 2;
+  if (n < 2) return [];
+  const along = [0];
+  for (let i = 1; i < n; i++) {
+    along.push(
+      along[i - 1] + Math.hypot(run[2 * i] - run[2 * i - 2], run[2 * i + 1] - run[2 * i - 1]),
+    );
+  }
+  const total = along[n - 1];
+  const left: number[] = [];
+  const right: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = 2 * Math.max(0, i - 1);
+    const b = 2 * Math.min(n - 1, i + 1);
+    const dx = run[b] - run[a];
+    const dy = run[b + 1] - run[a + 1];
+    const len = Math.hypot(dx, dy) || 1;
+    const nearEnd = Math.min(along[i], total - along[i]);
+    const k = taper > 0 ? Math.min(1, nearEnd / taper) : 1;
+    const half = (width / 2) * Math.sin((k * Math.PI) / 2);
+    const ox = (-dy / len) * half;
+    const oy = (dx / len) * half;
+    left.push(run[2 * i] + ox, run[2 * i + 1] + oy);
+    right.push(run[2 * i] - ox, run[2 * i + 1] - oy);
+  }
+  for (let i = n - 1; i >= 0; i--) left.push(right[2 * i], right[2 * i + 1]);
+  return left;
+}
+
 /** Scratch for a translucent stroke: the hairs overlap, so they're drawn opaque here and the
  *  whole stroke composited once at the opacity (as Ink does). */
 let scratch: HTMLCanvasElement | null = null;
@@ -244,18 +282,20 @@ export function drawDryStroke(
         : "source-over";
 
   const paint = (c: CanvasRenderingContext2D) => {
-    c.strokeStyle = settings.color;
-    c.lineCap = "round";
-    c.lineJoin = "round";
+    c.fillStyle = settings.color;
     for (const h of hairs) {
-      c.lineWidth = h.width;
       c.globalAlpha = h.tone;
+      // Each run tapers over a few hair widths at either end (at least 6 px).
+      const taper = Math.max(6, h.width * 4);
       c.beginPath();
       for (const r of h.runs) {
-        c.moveTo(r[0], r[1]);
-        for (let i = 2; i < r.length; i += 2) c.lineTo(r[i], r[i + 1]);
+        const outline = taperedRibbon(r, h.width, taper);
+        if (outline.length < 6) continue;
+        c.moveTo(outline[0], outline[1]);
+        for (let i = 2; i < outline.length; i += 2) c.lineTo(outline[i], outline[i + 1]);
+        c.closePath();
       }
-      c.stroke();
+      c.fill();
     }
   };
 
