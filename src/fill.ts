@@ -13,21 +13,18 @@ export interface FillOptions {
   gap?: number;
   /** Expand fill by this many pixels to cover antialiased edges. Fill draws behind existing content. */
   expand?: number;
-  /** Soft edge: above 0 the fill runs under the lines to their darkest middle and fades out over
-   *  this many pixels there (0 = the hard pixel edge; `climbToRidge`, `fillCoverage`). */
+  /** Soft edge: how many pixels (fractions too) the fill runs under the surrounding lines,
+   *  behind them; 0 = the hard pixel edge (`climbDepth`, `fillCoverage`). */
   softEdge?: number;
 }
 
 /** The most Soft edge goes to, in device px. */
 export const MAX_SOFT_EDGE = 4;
 
-/** How far the fill may run under a line, in device px (`climbToRidge`). */
-export const MAX_CLIMB = 16;
-
 /**
  * Each pixel's distance from the tapped colour, 0–255: the largest channel difference, or the
  * alpha alone when the tap was on an empty pixel (an empty pixel's colour means nothing). What
- * `climbToRidge` climbs. Pure.
+ * `climbDepth` climbs. Pure.
  */
 export function colourDistance(
   data: Uint8ClampedArray,
@@ -53,36 +50,35 @@ export function colourDistance(
 }
 
 /**
- * The region grown UNDER the lines around it, up to their darkest middle (2026-10-02): from the
- * region's edge, step into a neighbouring wall pixel while it is at least as far from the tapped
- * colour as the pixel it came from (`dist`, 0 never counts), at most `maxSteps` px. The region
- * stops where a soft line's fringe gets past the colour tolerance — a pixel staircase inside the
- * line's gradient; filling on to the line's ridge, behind the line, puts that edge where the line
- * is most opaque. Climbing only uphill means it never crosses a line into the space beyond, nor
- * leaks through a break (an empty pixel is 0). Pure; returns region ∪ the climbed pixels.
+ * How deep under the surrounding lines each pixel is (2026-10-02): 1 for the region itself, k + 1
+ * for a pixel k steps into a line, 0 elsewhere. From the region's edge it steps to a neighbouring
+ * pixel at least as far from the tapped colour as the one it came from (`dist`; 0 never counts),
+ * at most `maxSteps` deep — so it climbs into a line only up to its darkest middle, never past it
+ * into the space beyond, nor through a break (an empty pixel is 0). Pure.
  */
-export function climbToRidge(
+export function climbDepth(
   dist: Uint8Array,
   w: number,
   h: number,
   region: Uint8Array,
-  maxSteps = MAX_CLIMB,
+  maxSteps: number,
 ): Uint8Array {
-  const out = region.slice();
-  const steps = new Uint8Array(w * h);
+  const depth = new Uint8Array(w * h);
   const queue = new Int32Array(w * h);
-  let head = 0;
   let tail = 0;
-  for (let i = 0; i < w * h; i++) if (region[i]) queue[tail++] = i;
-  while (head < tail) {
-    const p = queue[head++];
-    if (steps[p] >= maxSteps) continue;
+  for (let i = 0; i < w * h; i++) {
+    if (!region[i]) continue;
+    depth[i] = 1;
+    queue[tail++] = i;
+  }
+  for (let head = 0; head < tail; head++) {
+    const p = queue[head];
+    if (depth[p] > maxSteps) continue;
     const x = p % w;
     const floor = Math.max(dist[p], 1);
     const visit = (q: number) => {
-      if (out[q] || dist[q] < floor) return;
-      out[q] = 1;
-      steps[q] = steps[p] + 1;
+      if (depth[q] || dist[q] < floor) return;
+      depth[q] = depth[p] + 1;
       queue[tail++] = q;
     };
     if (x > 0) visit(p - 1);
@@ -90,52 +86,21 @@ export function climbToRidge(
     if (p >= w) visit(p - w);
     if (p < w * (h - 1)) visit(p + w);
   }
-  return out;
+  return depth;
 }
 
 /**
- * The fill's coverage, 0–255 (2026-10-02): `solid` pixels 255; the rest of `grown` (what
- * `climbToRidge` added under the lines) a box blur of `grown` over `radius` px, so the fill fades
- * out toward the line's ridge instead of stopping in a pixel step; nothing outside `grown`, so
- * no halo past the line. Radius 0: `solid` alone (the old hard edge). Pure.
+ * The fill's coverage, 0–255, from `climbDepth`: the region solid, then `soft` px of the line
+ * beside it — a pixel k steps in gets clamp(soft − k + 1, 0, 1), so 1 fills the line's first
+ * pixel, 0.5 half of it, 1.5 one and a half. Drawn BEHIND the line, so its own antialiased edge
+ * blends the two (the flood alone stops in a pixel staircase inside the line's soft edge). Pure.
  */
-export function fillCoverage(
-  solid: Uint8Array,
-  grown: Uint8Array,
-  w: number,
-  h: number,
-  radius: number,
-): Uint8ClampedArray {
-  const r = Math.max(0, Math.min(MAX_SOFT_EDGE, Math.round(radius)));
-  const out = new Uint8ClampedArray(w * h);
-  for (let i = 0; i < w * h; i++) if (solid[i]) out[i] = 255;
-  if (r === 0) return out;
-  // Separable box blur of `grown`: rows into `tmp`, then columns, written only where grown.
-  const tmp = new Uint16Array(w * h);
-  for (let y = 0; y < h; y++) {
-    let sum = 0;
-    const row = y * w;
-    for (let x = -r; x <= r; x++) if (x >= 0 && x < w) sum += grown[row + x] ? 1 : 0;
-    for (let x = 0; x < w; x++) {
-      tmp[row + x] = sum;
-      const add = x + r + 1;
-      const drop = x - r;
-      if (add < w && grown[row + add]) sum++;
-      if (drop >= 0 && grown[row + drop]) sum--;
-    }
-  }
-  const full = (2 * r + 1) * (2 * r + 1);
-  for (let x = 0; x < w; x++) {
-    let sum = 0;
-    for (let y = -r; y <= r; y++) if (y >= 0 && y < h) sum += tmp[y * w + x];
-    for (let y = 0; y < h; y++) {
-      const i = y * w + x;
-      if (grown[i] && !solid[i]) out[i] = Math.round((sum * 255) / full);
-      const add = y + r + 1;
-      const drop = y - r;
-      if (add < h) sum += tmp[add * w + x];
-      if (drop >= 0) sum -= tmp[drop * w + x];
-    }
+export function fillCoverage(depth: Uint8Array, soft: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(depth.length);
+  for (let i = 0; i < depth.length; i++) {
+    const d = depth[i];
+    if (d === 1) out[i] = 255;
+    else if (d > 1) out[i] = Math.round(255 * Math.max(0, Math.min(1, soft - d + 2)));
   }
   return out;
 }
@@ -295,9 +260,14 @@ export function floodFill(
     b: data[startIdx + 2],
     a: data[startIdx + 3],
   };
-  const grown =
-    soft > 0 ? climbToRidge(colourDistance(data, w, h, seed), w, h, finalMask) : finalMask;
-  const cover = fillCoverage(finalMask, grown, w, h, soft);
+  const depth = climbDepth(
+    soft > 0 ? colourDistance(data, w, h, seed) : new Uint8Array(w * h),
+    w,
+    h,
+    finalMask,
+    Math.ceil(soft),
+  );
+  const cover = fillCoverage(depth, soft);
 
   // --- Pass 3: Apply fill behind existing content ---
   if (expand > 0) {
@@ -420,17 +390,11 @@ export function fillRegionBehind(
   const td = img.data;
   // Soft edge, as the bucket's: run under the lines to their ridge (climbing the alpha, as the
   // enclosed areas are empty) and fade out there.
-  let cover: Uint8ClampedArray;
-  if (softEdge > 0) {
-    const { data } = ctx.getImageData(0, 0, w, h);
-    const grown = climbToRidge(
-      colourDistance(data, w, h, { r: 0, g: 0, b: 0, a: 0 }),
-      w,
-      h,
-      region,
-    );
-    cover = fillCoverage(region, grown, w, h, softEdge);
-  } else cover = fillCoverage(region, region, w, h, 0);
+  const dist =
+    softEdge > 0
+      ? colourDistance(ctx.getImageData(0, 0, w, h).data, w, h, { r: 0, g: 0, b: 0, a: 0 })
+      : new Uint8Array(w * h);
+  const cover = fillCoverage(climbDepth(dist, w, h, region, Math.ceil(softEdge)), softEdge);
   for (let i = 0; i < w * h; i++) {
     if (!cover[i]) continue;
     const pi = i * 4;

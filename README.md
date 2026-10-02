@@ -38,9 +38,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - The bucket has its own colour and opacity, so line colour and flat colour stay separate
 - Paint bucket with **Bridge** (small breaks in the lines count as closed, so the fill doesn't leak
-  out), expand (grows the fill under the outline so no seam shows) and **Soft** (the fill runs under the
-  line to its darkest middle and fades out there, so no pixel steps show; 0 for a hard pixel
-  edge, higher for a softer blend — Fill enclosed too)
+  out), expand (grows the fill under the outline so no seam shows) and **Soft** (how many pixels the fill
+  runs under the line, behind it, so the line's soft edge hides the pixel steps; quarter steps,
+  0 for a hard pixel edge — Fill enclosed too)
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
   it uses the same Bridge
 
