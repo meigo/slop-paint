@@ -9,7 +9,7 @@ import {
 
 describe("clampPanelWidth", () => {
   it("returns a value within range unchanged", () => {
-    expect(clampPanelWidth(300, 1400)).toBe(300); // 184 <= 300 <= 700
+    expect(clampPanelWidth(300, 1400)).toBe(300); // 264 <= 300 <= 700
   });
 
   it("floors at MIN below the minimum", () => {
@@ -22,7 +22,7 @@ describe("clampPanelWidth", () => {
 
   it("keeps MIN even when 50% of a tiny viewport is below MIN", () => {
     // The panel would rather overflow a very narrow window than collapse to nothing.
-    expect(clampPanelWidth(500, 200)).toBe(MIN_PANEL_WIDTH); // 0.5*200=100 < 184 → MIN wins
+    expect(clampPanelWidth(500, 200)).toBe(MIN_PANEL_WIDTH); // 0.5*200=100 < 264 → MIN wins
   });
 
   it("rounds the max to a whole pixel", () => {
@@ -33,7 +33,7 @@ describe("clampPanelWidth", () => {
     expect(DEFAULT_PANEL_WIDTH).toBeGreaterThanOrEqual(MIN_PANEL_WIDTH);
     expect(DEFAULT_PANEL_WIDTH).toBe(280); // Tailwind w-70 — first run must look unchanged
     // The floor is 180 of usable content plus the grip's reserved 4px strip.
-    expect(MIN_PANEL_WIDTH).toBe(184);
+    expect(MIN_PANEL_WIDTH).toBe(264);
     expect(clampPanelWidth(DEFAULT_PANEL_WIDTH, 1400)).toBe(DEFAULT_PANEL_WIDTH);
   });
 });
