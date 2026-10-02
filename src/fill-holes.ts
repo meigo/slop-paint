@@ -165,26 +165,6 @@ export function fillEnclosed(
   };
 }
 
-/**
- * The pixels a "fill all enclosed" should PAINT: inside the shape but not ink themselves.
- *
- * Derived from `fillEnclosed`, so it inherits the property that makes a one-press whole-cell fill
- * safe — the flood starts at the border, so an outline with a gap encloses nothing and this returns
- * an empty region. A leak can never paint the canvas; worst case it paints nothing.
- *
- * That safety is NOT free at `gap >= 1`, which is why the gate below exists: `mask` is
- * `erode(dilate(ink))`, the morphological CLOSING, and a closing fills a narrow channel between two
- * OPEN strokes just as readily as a genuinely enclosed pocket (two parallel 1px strokes 3px apart,
- * open at both ends, closed 37 px at gap 2). Painting that is the worst possible answer to the
- * "Nothing enclosed" message, whose advertised remedy is to RAISE gap: the advice would start
- * painting a fringe inside an outline that encloses nothing and report success. So the region is
- * gated on genuinely-enclosed space — what the FLOOD found beyond the dilation's reach
- * (`enclosedArea`), or what the raw ink encloses with no bridging at all (`rawEnclosedArea`).
- *
- * `expand` grows the region so it tucks UNDER an anti-aliased stroke. The mask stops at the alpha
- * threshold, so without it the fringe stays unpainted and leaves a one-pixel halo. Safe to grow
- * because the caller composites behind the ink.
- */
 /** The 8-connected areas of `region` that contain at least one `core` pixel. */
 function keepAreasWith(
   region: Uint8Array,
@@ -226,6 +206,26 @@ function keepAreasWith(
   return out;
 }
 
+/**
+ * The pixels a "fill all enclosed" should PAINT: inside the shape but not ink themselves.
+ *
+ * Derived from `fillEnclosed`, so it inherits the property that makes a one-press whole-cell fill
+ * safe — the flood starts at the border, so an outline with a gap encloses nothing and this returns
+ * an empty region. A leak can never paint the canvas; worst case it paints nothing.
+ *
+ * That safety is NOT free at `gap >= 1`, which is why the gate below exists: `mask` is
+ * `erode(dilate(ink))`, the morphological CLOSING, and a closing fills a narrow channel between two
+ * OPEN strokes just as readily as a genuinely enclosed pocket (two parallel 1px strokes 3px apart,
+ * open at both ends, closed 37 px at gap 2). Painting that is the worst possible answer to the
+ * "Nothing enclosed" message, whose advertised remedy is to RAISE gap: the advice would start
+ * painting a fringe inside an outline that encloses nothing and report success. So the region is
+ * gated on genuinely-enclosed space — what the FLOOD found beyond the dilation's reach
+ * (`enclosedArea`), or what the raw ink encloses with no bridging at all (`rawEnclosedArea`).
+ *
+ * `expand` grows the region so it tucks UNDER an anti-aliased stroke. The mask stops at the alpha
+ * threshold, so without it the fringe stays unpainted and leaves a one-pixel halo. Safe to grow
+ * because the caller composites behind the ink.
+ */
 export function enclosedRegion(
   alpha: Uint8ClampedArray,
   w: number,
