@@ -1,43 +1,52 @@
 import { describe, it, expect } from "vitest";
-import { featherMask } from "../fill";
+import { climbToRidge, colourDistance, fillCoverage } from "../fill";
 
-/** A w×h mask with a filled rect [x0, x1) × [y0, y1). */
-function rect(w: number, h: number, x0: number, y0: number, x1: number, y1: number) {
-  const m = new Uint8Array(w * h);
-  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) m[y * w + x] = 1;
-  return m;
-}
+/** One row: region pixels marked 1, distances as given. */
+const row = (bits: number[]) => Uint8Array.from(bits);
 
-describe("featherMask", () => {
-  it("is the mask as 0/255 at radius 0", () => {
-    const m = rect(6, 6, 1, 1, 4, 4);
-    const c = featherMask(m, 6, 6, 0);
-    expect(c[2 * 6 + 2]).toBe(255);
-    expect(c[0]).toBe(0);
+describe("climbToRidge", () => {
+  it("runs uphill into a soft line and stops at its darkest pixel", () => {
+    // region | fringe rising to the ridge at x=5 | falling side | empty beyond
+    const dist = row([0, 0, 40, 90, 160, 230, 150, 60, 0, 0]);
+    const region = row([1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect([...climbToRidge(dist, 10, 1, region)]).toEqual([1, 1, 1, 1, 1, 1, 0, 0, 0, 0]);
   });
 
-  it("keeps the whole region solid and softens only outside it, at radius 1", () => {
-    const w = 20;
-    const c = featherMask(rect(w, w, 5, 5, 15, 15), w, w, 1);
-    expect(c[10 * w + 10]).toBe(255); // deep inside
-    expect(c[10 * w + 5]).toBe(255); // the region's own edge pixel: no pale ring by the line
-    expect(c[10 * w + 4]).toBe(85); // just outside: 1/3
-    expect(c[10 * w + 3]).toBe(0);
-    expect(c[4 * w + 4]).toBe(28); // the corner outside: 1/9
+  it("crosses a flat, opaque line but not into the space past it", () => {
+    const dist = row([0, 0, 255, 255, 255, 0, 0]);
+    expect([...climbToRidge(dist, 7, 1, row([1, 1, 0, 0, 0, 0, 0]))]).toEqual([
+      1, 1, 1, 1, 1, 0, 0,
+    ]);
   });
 
-  it("spreads further at a larger radius", () => {
-    const w = 30;
-    const m = rect(w, w, 10, 10, 20, 20);
-    const one = featherMask(m, w, w, 1);
-    const three = featherMask(m, w, w, 3);
-    expect(one[15 * w + 8]).toBe(0);
-    expect(three[15 * w + 8]).toBeGreaterThan(0);
-    expect(three[15 * w + 15]).toBe(255);
+  it("never leaks through a break (empty pixels don't count) and keeps to maxSteps", () => {
+    expect([...climbToRidge(row([0, 0, 0, 0]), 4, 1, row([1, 0, 0, 0]))]).toEqual([1, 0, 0, 0]);
+    const ramp = row([0, 10, 20, 30, 40, 50]);
+    expect([...climbToRidge(ramp, 6, 1, row([1, 0, 0, 0, 0, 0]), 3)]).toEqual([1, 1, 1, 1, 0, 0]);
+  });
+});
+
+describe("fillCoverage", () => {
+  it("keeps the tapped region solid and fades toward the ridge, nothing past it", () => {
+    const solid = row([1, 1, 1, 0, 0, 0, 0, 0]);
+    const grown = row([1, 1, 1, 1, 1, 1, 0, 0]);
+    const c = [...fillCoverage(solid, grown, 8, 1, 1)];
+    expect(c.slice(0, 3)).toEqual([255, 255, 255]);
+    // A 1-px-high row sees 3 of the 9 pixels a radius-1 box covers when all three are grown.
+    expect(c[3]).toBe(85);
+    expect(c[5]).toBe(57); // 2 of 9: the last grown pixel, at the ridge
+    expect(c.slice(6)).toEqual([0, 0]);
   });
 
-  it("handles the canvas edge (pixels past it count as unfilled)", () => {
-    const c = featherMask(rect(6, 1, 0, 0, 3, 1), 6, 1, 1);
-    expect([...c]).toEqual([255, 255, 255, 28, 0, 0]); // a 1-px-high strip sees 1 of 9
+  it("is the solid region alone at radius 0", () => {
+    expect([...fillCoverage(row([1, 0]), row([1, 1]), 2, 1, 0)]).toEqual([255, 0]);
+  });
+});
+
+describe("colourDistance", () => {
+  it("uses alpha alone from an empty seed, every channel otherwise", () => {
+    const data = Uint8ClampedArray.from([255, 0, 0, 100, 0, 0, 0, 0]);
+    expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 0 })]).toEqual([100, 0]);
+    expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 255 })]).toEqual([255, 255]);
   });
 });
