@@ -871,18 +871,37 @@ export class Selection {
     return inside;
   }
 
+  /** The Move tool's box (2026-10-02): the bounds of what a drag would move, in page units, drawn
+   *  with the same ants as a selection but no handles (Move only shifts). Null hides it. */
+  private moveBox: { x: number; y: number; w: number; h: number } | null = null;
+
+  setMoveBox(box: { x: number; y: number; w: number; h: number } | null) {
+    this.moveBox = box;
+    this.drawOverlay();
+  }
+
+  private drawMoveBox(ctx: CanvasRenderingContext2D) {
+    if (!this.moveBox) return;
+    ctx.beginPath();
+    ctx.rect(this.moveBox.x, this.moveBox.y, this.moveBox.w, this.moveBox.h);
+    this.strokeMarchingAnts(ctx);
+  }
+
   drawOverlay() {
     const ctx = this.overlayCtx;
     const cvs = this.overlayCanvas;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cvs.width, cvs.height);
-    if (!this.rect || this.state === "idle") return;
+    if ((!this.rect || this.state === "idle") && !this.moveBox) return;
     ctx.setTransform(this.viewTransform()); // everything below draws in page units
 
     // Animation re-trigger
     this.marchOffset = (this.marchOffset + 0.3) % 8;
     cancelAnimationFrame(this.animFrame);
     this.animFrame = requestAnimationFrame(() => this.drawOverlay());
+
+    this.drawMoveBox(ctx);
+    if (!this.rect || this.state === "idle") return;
 
     // 'selected' state OR mid-creation: draw the actual selection shape with marching ants.
     if (this.state === "selected" || this.isCreating) {
