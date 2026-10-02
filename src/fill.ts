@@ -13,6 +13,62 @@ export interface FillOptions {
   gap?: number;
   /** Expand fill by this many pixels to cover antialiased edges. Fill draws behind existing content. */
   expand?: number;
+  /** Soften the fill's edge over this many pixels (0 = hard, 1 = antialiased; `featherMask`). */
+  softEdge?: number;
+}
+
+/** The most Soft edge goes to, in device px. */
+export const MAX_SOFT_EDGE = 4;
+
+/**
+ * A 0/1 region as COVERAGE, 0–255, softened OUTWARD over `radius` px (2026-10-02): every pixel of
+ * the region stays 255, and the pixels around it get a box blur's partial coverage, fading over
+ * about `radius` px. Radius 1 is an antialiased edge — the fill was all-or-nothing per pixel, a
+ * staircase that showed through soft, see-through lines. Outward only: a blur centred on the edge
+ * also faded the region's own edge pixels, a pale ring between the fill and its outline. 0 returns
+ * the mask as 0/255. Pure.
+ */
+export function featherMask(
+  mask: Uint8Array,
+  w: number,
+  h: number,
+  radius: number,
+): Uint8ClampedArray {
+  const r = Math.max(0, Math.min(MAX_SOFT_EDGE, Math.round(radius)));
+  const out = new Uint8ClampedArray(w * h);
+  if (r === 0) {
+    for (let i = 0; i < w * h; i++) out[i] = mask[i] ? 255 : 0;
+    return out;
+  }
+  const n = 2 * r + 1;
+  // Separable box blur: rows into `tmp` (sums 0…n), then columns into `out` (scaled to 255).
+  const tmp = new Uint16Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let sum = 0;
+    const row = y * w;
+    for (let x = -r; x <= r; x++) if (x >= 0 && x < w) sum += mask[row + x] ? 1 : 0;
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = sum;
+      const add = x + r + 1;
+      const drop = x - r;
+      if (add < w && mask[row + add]) sum++;
+      if (drop >= 0 && mask[row + drop]) sum--;
+    }
+  }
+  const full = n * n;
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let y = -r; y <= r; y++) if (y >= 0 && y < h) sum += tmp[y * w + x];
+    for (let y = 0; y < h; y++) {
+      const i = y * w + x;
+      out[i] = mask[i] ? 255 : Math.round((sum * 255) / full);
+      const add = y + r + 1;
+      const drop = y - r;
+      if (add < h) sum += tmp[add * w + x];
+      if (drop >= 0) sum -= tmp[drop * w + x];
+    }
+  }
+  return out;
 }
 
 /**
@@ -161,6 +217,9 @@ export function floodFill(
     finalMask = dilateMask(mask, w, h, expand);
   }
 
+  // Coverage per pixel, 0–255: the mask with its edge softened by Soft edge (0 = hard).
+  const cover = featherMask(finalMask, w, h, options.softEdge ?? 0);
+
   // --- Pass 3: Apply fill behind existing content ---
   if (expand > 0) {
     // Draw fill to a temp canvas, then composite behind existing content
@@ -172,12 +231,12 @@ export function floodFill(
     const td = tempData.data;
 
     for (let i = 0; i < w * h; i++) {
-      if (finalMask[i]) {
+      if (cover[i]) {
         const pi = i * 4;
         td[pi] = fillColor.r;
         td[pi + 1] = fillColor.g;
         td[pi + 2] = fillColor.b;
-        td[pi + 3] = fillColor.a;
+        td[pi + 3] = Math.round((fillColor.a * cover[i]) / 255);
       }
     }
     tempCtx.putImageData(tempData, 0, 0);
@@ -189,15 +248,27 @@ export function floodFill(
     ctx.drawImage(tempCanvas, 0, 0);
     ctx.restore();
   } else {
-    // No expand — write directly to the image data (original behavior)
+    // No expand — write directly to the image data: a fully covered pixel takes the fill colour,
+    // a partly covered edge pixel (Soft edge) blends it OVER what is there.
     for (let i = 0; i < w * h; i++) {
-      if (finalMask[i]) {
-        const pi = i * 4;
+      const c = cover[i];
+      if (!c) continue;
+      const pi = i * 4;
+      if (c === 255) {
         data[pi] = fillColor.r;
         data[pi + 1] = fillColor.g;
         data[pi + 2] = fillColor.b;
         data[pi + 3] = fillColor.a;
+        continue;
       }
+      const a = (fillColor.a / 255) * (c / 255);
+      const da = data[pi + 3] / 255;
+      const oa = a + da * (1 - a);
+      if (oa <= 0) continue;
+      data[pi] = Math.round((fillColor.r * a + data[pi] * da * (1 - a)) / oa);
+      data[pi + 1] = Math.round((fillColor.g * a + data[pi + 1] * da * (1 - a)) / oa);
+      data[pi + 2] = Math.round((fillColor.b * a + data[pi + 2] * da * (1 - a)) / oa);
+      data[pi + 3] = Math.round(oa * 255);
     }
     ctx.putImageData(imageData, 0, 0);
   }
@@ -256,6 +327,7 @@ export function fillRegionBehind(
   ctx: CanvasRenderingContext2D,
   region: Uint8Array,
   fillColor: { r: number; g: number; b: number; a: number },
+  softEdge = 0,
 ): void {
   const w = ctx.canvas.width,
     h = ctx.canvas.height;
@@ -267,13 +339,15 @@ export function fillRegionBehind(
   const tctx = temp.getContext("2d")!;
   const img = tctx.createImageData(w, h);
   const td = img.data;
+  // Soft edge, as the bucket's (`featherMask`).
+  const cover = featherMask(region, w, h, softEdge);
   for (let i = 0; i < w * h; i++) {
-    if (!region[i]) continue;
+    if (!cover[i]) continue;
     const pi = i * 4;
     td[pi] = fillColor.r;
     td[pi + 1] = fillColor.g;
     td[pi + 2] = fillColor.b;
-    td[pi + 3] = fillColor.a;
+    td[pi + 3] = Math.round((fillColor.a * cover[i]) / 255);
   }
   tctx.putImageData(img, 0, 0);
 

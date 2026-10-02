@@ -54,6 +54,7 @@
     fillRegionBehind,
     floodFill,
     hexToRgba,
+    MAX_SOFT_EDGE,
     rgbToHex,
     sameImageData,
   } from "./fill";
@@ -421,6 +422,7 @@
     sharpCorners?: boolean;
     drawBehind?: boolean;
     fillExpand?: number;
+    fillSoftEdge?: number;
     keepProportions?: boolean;
     spineTools?: boolean;
     hiResLayers?: boolean;
@@ -469,6 +471,7 @@
       sharpCorners: app.brushSettings.sharpCorners,
       drawBehind: app.brushSettings.drawBehind,
       fillExpand: app.fillSettings.expand,
+      fillSoftEdge: app.fillSettings.softEdge,
       keepProportions: app.keepProportions,
       spineTools: app.spineTools,
       hiResLayers: app.hiResLayers,
@@ -515,6 +518,8 @@
       if (data.streamline != null) app.streamline = data.streamline;
       if (data.drawBehind != null) app.brushSettings.drawBehind = data.drawBehind;
       if (data.fillExpand != null) app.fillSettings.expand = data.fillExpand;
+      if (typeof data.fillSoftEdge === "number")
+        app.fillSettings.softEdge = Math.max(0, Math.min(MAX_SOFT_EDGE, data.fillSoftEdge));
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (typeof data.spineTools === "boolean") app.spineTools = data.spineTools;
       if (typeof data.hiResLayers === "boolean") app.hiResLayers = data.hiResLayers;
@@ -1866,7 +1871,7 @@
       tmp.height = layer.canvas.height;
       const tctx = tmp.getContext("2d", { willReadFrequently: true })!;
       tctx.drawImage(layer.canvas, 0, 0);
-      fillRegionBehind(tctx, region, color);
+      fillRegionBehind(tctx, region, color, app.fillSettings.softEdge);
       layer.ctx.save();
       try {
         selection.applyClip(layer.ctx);
@@ -1876,7 +1881,7 @@
         layer.ctx.restore();
       }
     } else {
-      fillRegionBehind(layer.ctx, region, color);
+      fillRegionBehind(layer.ctx, region, color, app.fillSettings.softEdge);
     }
     if (sameImageData(before, layers.getSnapshot())) {
       return flashStatus("Nothing filled — the enclosed areas are outside the selection");
