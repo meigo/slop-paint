@@ -38,7 +38,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - The bucket has its own colour and opacity, so line colour and flat colour stay separate
 - Paint bucket with **Bridge** (small breaks in the lines count as closed, so the fill doesn't leak
-  out) and expand (grows the fill under the outline so no seam shows)
+  out), expand (grows the fill under the outline so no seam shows) and **Soft** (an antialiased
+  edge by default; 0 for a hard pixel edge, higher to feather it — Fill enclosed too)
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
   it uses the same Bridge
 
@@ -97,7 +98,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   drag a row by its grip to reorder it (onto the lower half of a group's row to put it in the group,
   past the last row to take it out at the bottom; a locked group takes nothing in or out; a hidden one takes layers and hides them with it),
   double-tap (or double-click) a name to rename; **Select** in the panel's header picks several
-  rows (or Cmd/Ctrl+click, Shift+click) to **group** or **delete** them together
+  rows (or Cmd/Ctrl+click, Shift+click) to **group** or **delete** them together, or drag them
+  as one block by any picked row's grip
 - **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
   other modes are kept too)
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
