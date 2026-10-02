@@ -24,7 +24,7 @@
     layersLeftAfter,
     rowOrder,
     topSelection,
-    moveNode,
+    moveNodes,
     type LayerManager,
     type LayerNode,
     type Layer as AppLayer,
@@ -111,12 +111,16 @@
     return new Set(app.layerSelection.filter((id) => layers.findNode(id)));
   });
   /** What Group and Delete act on: the picked rows, or the active one. */
-  const targets = () => (picked.size > 0 ? [...picked] : [layers.activeId]);
+  /** What Group and Delete act on: in Select mode exactly the checked rows (maybe none), else the
+   *  picked rows, or the active one. */
+  const targets = () => (app.layerSelecting || picked.size > 0 ? [...picked] : [layers.activeId]);
   const several = $derived(picked.size > 1);
+  /** Group and Delete act on the pick: in Select mode always, and whenever several are picked. */
+  const onPick = $derived(app.layerSelecting || several);
   /** Whether a row shows as selected: picked rows while picking, else the active one. */
   const shown = (id: number) =>
     app.layerSelecting || picked.size > 0 ? picked.has(id) : id === layers.activeId;
-  const ONE_ROW = "works on one row — tap Done, or pick one";
+  const ONE_ROW = "works on the active row — tap Done first";
 
   function toggleSelecting() {
     app.layerSelecting = !app.layerSelecting;
@@ -129,7 +133,10 @@
 
   function tapRow(node: LayerNode, e: MouseEvent) {
     if (performance.now() < ignoreClicksUntil) return;
-    const cur = picked.size > 0 ? [...picked] : [layers.activeId];
+    // In Select mode the pick is exactly what the checks show, even empty; a Cmd/Ctrl+click starts
+    // from the active row (2026-10-02: unpicking the active row in Select mode didn't stick — the
+    // next tap brought it back, as an empty pick fell back to it).
+    const cur = app.layerSelecting || picked.size > 0 ? [...picked] : [layers.activeId];
     if (app.layerSelecting || e.metaKey || e.ctrlKey) {
       app.layerSelection = cur.includes(node.id)
         ? cur.filter((id) => id !== node.id)
@@ -155,7 +162,7 @@
   }
 
   function addGroup() {
-    if (several) return groupPicked();
+    if (onPick) return groupPicked();
     structuralEdit(layers, () => layers.groupActive());
     bumpLayerVersion();
   }
@@ -164,6 +171,7 @@
    *  of a locked group can't leave it (as dragging). */
   function groupPicked() {
     const ids = targets();
+    if (ids.length === 0) return flashStatus("Pick the rows to group first");
     for (const id of topSelection(layers.tree, ids)) {
       const why = dragBlock(layers.tree, id);
       if (why) return flashStatus(why);
@@ -177,6 +185,7 @@
   /** Delete the picked rows: one undo step, keeping at least one drawing layer. */
   function deletePicked() {
     const ids = targets();
+    if (ids.length === 0) return flashStatus("Pick the rows to delete first");
     if (layersLeftAfter(layers.tree, ids) < 1)
       return flashStatus("The document needs at least one layer");
     structuralEdit(layers, () => layers.removeSelected(ids));
@@ -186,7 +195,7 @@
   }
 
   function removeNode() {
-    if (several) return deletePicked();
+    if (onPick) return deletePicked();
     const node = layers.findNode(layers.activeId);
     const members = (n: LayerNode): number =>
       n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
@@ -198,7 +207,7 @@
   }
 
   function duplicateLayer() {
-    if (several) return flashStatus(`Duplicate ${ONE_ROW}`);
+    if (onPick) return flashStatus(`Duplicate ${ONE_ROW}`);
     settlePending();
     // The selected row decides: a group duplicates with everything in it.
     const node = layers.findNode(layers.activeId);
@@ -212,7 +221,7 @@
   }
 
   function mergeDown() {
-    if (several) return flashStatus(`Merge down ${ONE_ROW}`);
+    if (onPick) return flashStatus(`Merge down ${ONE_ROW}`);
     // A reference is re-drawn from its original, which would wipe what was merged onto it.
     const loc = layers.findParent(layers.activeId);
     const target = loc && loc.index > 0 ? loc.parent[loc.index - 1] : null;
@@ -247,14 +256,16 @@
   // --- Drag reorder (2026-10-01, as slop-vector-editor; ../SLOP-LAYER-DRAG.md) ---
   // Pointer events on the grip; `layer-drop.ts` decides where a drop lands; the panel only draws
   // that (the rows' slides, the floating row, the destination group's lines); the tree changes once, on release,
-  // through `moveNode` as one undo step. Nothing moves a DOM node. It replaced SortableJS, which
+  // through `moveNodes` as one undo step. Grabbing a PICKED row drags every picked row as one
+  // block (2026-10-02); any other row drags alone. Nothing moves a DOM node. It replaced SortableJS, which
   // moved Svelte's nodes and had the order read back from the DOM (a duplicate row, a double-fired
   // drop, and no say in locks).
 
   /** A press on a grip; `live` once it has travelled past the threshold and become a drag. The
    *  rows, the grab offset and the content height are measured then, once. */
   let dragging: {
-    id: number;
+    /** The rows being dragged, top first: the picked ones, or the grabbed row alone. */
+    ids: number[];
     pointerId: number;
     row: HTMLElement;
     startX: number;
@@ -268,7 +279,13 @@
   } | null = null;
   let drop = $state<Drop | null>(null);
   /** The floating copy of the grabbed row, in content coordinates. */
-  let ghost = $state<{ top: number; label: string; pad: string; height: number } | null>(null);
+  let ghost = $state<{
+    top: number;
+    label: string;
+    pad: string;
+    height: number;
+    count: number;
+  } | null>(null);
   /** How far each row slides (2026-10-01, as slop-spine): the dragged row's own place — a group
    *  with its members — moves to the drop slot, dimmed, and the rows it passes close up; no extra
    *  gap, so the list keeps its height. And the rows being dragged, dimmed. */
@@ -294,8 +311,13 @@
     if (e.button !== 0 || dragging) return;
     const row = (e.currentTarget as Element).closest<HTMLElement>("[data-row-id]");
     if (!row) return;
-    const why = dragBlock(layers.tree, node.id);
-    if (why) return flashStatus(why);
+    // A picked row takes every picked row along; another row goes alone.
+    const ids =
+      picked.size > 1 && picked.has(node.id) ? topSelection(layers.tree, picked) : [node.id];
+    for (const id of ids) {
+      const why = dragBlock(layers.tree, id);
+      if (why) return flashStatus(why);
+    }
     e.preventDefault();
     try {
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -303,7 +325,7 @@
       // Capture is a convenience (and refused for a simulated pointer); the window still hears it.
     }
     dragging = {
-      id: node.id,
+      ids,
       pointerId: e.pointerId,
       row,
       startX: e.clientX,
@@ -327,19 +349,24 @@
     d.grab = d.startY - r.top;
     d.rowPx = r.height;
     d.contentHeight = listEl.scrollHeight;
-    const node = layers.findNode(d.id);
+    // The grabbed row's name on the floating copy, with the count when several go.
+    const grabbed = layers.findNode(Number(d.row.dataset.rowId));
     const ids = new Set<number>();
     const collect = (n: LayerNode) => {
       ids.add(n.id);
       if (n.type === "group") n.children.forEach(collect);
     };
-    if (node) collect(node);
+    for (const id of d.ids) {
+      const n = layers.findNode(id);
+      if (n) collect(n);
+    }
     dimmed = ids;
     ghost = {
       top: 0,
-      label: node ? parseTags(node.name).baseName || "(unnamed)" : "",
+      label: grabbed ? parseTags(grabbed.name).baseName || "(unnamed)" : "",
       pad: d.row.style.paddingLeft,
       height: r.height,
+      count: d.ids.length,
     };
     document.documentElement.classList.add("layer-dragging");
     scrollFrame = requestAnimationFrame(edgeScroll);
@@ -348,8 +375,8 @@
   function update(d: NonNullable<typeof dragging>) {
     if (!ghost) return;
     const y = d.clientY - listEl.getBoundingClientRect().top + listEl.scrollTop;
-    drop = dropTarget(layers.tree, d.boxes, y, d.id);
-    shifted = slideOffsets(d.boxes, drop ? rowOrderAfter(layers.tree, d.id, drop) : []);
+    drop = dropTarget(layers.tree, d.boxes, y, d.ids);
+    shifted = slideOffsets(d.boxes, drop ? rowOrderAfter(layers.tree, d.ids, drop) : []);
     ghost = { ...ghost, top: ghostTop(y, d.grab, d.contentHeight, d.rowPx) };
     document.documentElement.classList.toggle("layer-drop-refused", drop === null);
   }
@@ -404,12 +431,12 @@
     const target = apply && d.live ? drop : null;
     // The release's click lands on the row: don't let it pick or unpick it.
     if (d.live) ignoreClicksUntil = performance.now() + 400;
-    const id = d.id;
+    const ids = d.ids;
     // Clear the slides first, in the same tick as the commit, or the re-ordered rows would
     // animate back from their slides.
     finishDrag();
     if (!target) return;
-    structuralEdit(layers, () => moveNode(layers.tree, id, target.parentId, target.index));
+    structuralEdit(layers, () => moveNodes(layers.tree, ids, target.parentId, target.index));
     layers.composite();
     bumpLayerVersion();
   }
@@ -800,8 +827,8 @@
       <button
         class={headerBtn}
         onclick={addGroup}
-        title={several
-          ? `Group the ${picked.size} picked rows (Ctrl+G)`
+        title={onPick
+          ? `Group the ${picked.size} picked ${picked.size === 1 ? "row" : "rows"} (Ctrl+G)`
           : "Group the selected layer or group (Ctrl+G)"}
       >
         <FolderPlus size={16} />
@@ -815,18 +842,18 @@
       </button>
       <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
       <button
-        class="{headerBtn} {several ? 'opacity-40' : ''}"
-        aria-disabled={several}
+        class="{headerBtn} {onPick ? 'opacity-40' : ''}"
+        aria-disabled={onPick}
         onclick={duplicateLayer}
-        title={several ? `Duplicate ${ONE_ROW}` : "Duplicate layer or group"}
+        title={onPick ? `Duplicate ${ONE_ROW}` : "Duplicate layer or group"}
       >
         <Copy size={16} />
       </button>
       <button
-        class="{headerBtn} {several ? 'opacity-40' : ''}"
-        aria-disabled={several}
+        class="{headerBtn} {onPick ? 'opacity-40' : ''}"
+        aria-disabled={onPick}
         onclick={mergeDown}
-        title={several ? `Merge down ${ONE_ROW}` : "Merge down onto the layer below"}
+        title={onPick ? `Merge down ${ONE_ROW}` : "Merge down onto the layer below"}
       >
         <ArrowDownToLine size={16} />
       </button>
@@ -834,7 +861,9 @@
       <button
         class={headerBtn}
         onclick={removeNode}
-        title={several ? `Delete the ${picked.size} picked rows` : "Delete layer or group"}
+        title={onPick
+          ? `Delete the ${picked.size} picked ${picked.size === 1 ? "row" : "rows"}`
+          : "Delete layer or group"}
       >
         <Trash2 size={16} />
       </button>
@@ -863,6 +892,11 @@
         >
           <span class="shrink-0 text-text-muted"><GripVertical size={14} /></span>
           <span class="min-w-0 flex-1 truncate">{ghost.label}</span>
+          {#if ghost.count > 1}
+            <span class="shrink-0 rounded bg-accent px-1.5 text-[10px] text-accent-text"
+              >{ghost.count}</span
+            >
+          {/if}
         </div>
       {/if}
     </div>

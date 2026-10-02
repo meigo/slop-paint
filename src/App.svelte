@@ -1606,7 +1606,10 @@
       e.preventDefault();
       if (!layers) return;
       const ids = app.layerSelection.filter((id) => layers!.findNode(id));
-      if (ids.length > 1) {
+      // As the panel's button: the pick in Select mode (any count), or several picked rows.
+      if (app.layerSelecting && ids.length === 0)
+        return flashStatus("Pick the rows to group first");
+      if (app.layerSelecting || ids.length > 1) {
         for (const id of topSelection(layers.tree, ids)) {
           const why = dragBlock(layers.tree, id);
           if (why) return flashStatus(why);

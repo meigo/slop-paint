@@ -127,39 +127,103 @@ export function isWithin(tree: LayerNode[], id: number, ancestorId: number): boo
   return has(node);
 }
 
-/** Whether `moveNode(tree, id, parentId, index)` would move anything (it changes nothing here):
- *  false when either id is missing, the parent isn't a group, a group would go inside itself, the
- *  index is out of range, or the node would land where it is. */
+/** Whether `moveNodes(tree, ids, parentId, index)` would change anything (it changes nothing
+ *  here): false when nothing given is in the tree, the parent isn't a group, a group would go
+ *  inside itself, the index is out of range, or the nodes would land where they are. */
+export function moveNodesAllowed(
+  tree: LayerNode[],
+  ids: Iterable<number>,
+  parentId: number | null,
+  index: number,
+): boolean {
+  const top = topSelection(tree, ids);
+  if (top.length === 0) return false;
+  const to = childrenOf(tree, parentId);
+  if (!to || index < 0 || index > to.length) return false;
+  if (parentId !== null && top.some((id) => isWithin(tree, parentId, id))) return false;
+  // Whether anything changes: try it on a copy of the tree's shape.
+  const copy = shapeCopy(tree);
+  applyMove(copy, top, parentId, index);
+  return shapeKey(copy) !== shapeKey(tree);
+}
+
+/** Move node `id` (see `moveNodes`). */
 export function moveAllowed(
   tree: LayerNode[],
   id: number,
   parentId: number | null,
   index: number,
 ): boolean {
-  const from = locateNode(tree, id);
-  if (!from) return false;
-  const to = childrenOf(tree, parentId);
-  if (!to || (parentId !== null && isWithin(tree, parentId, id))) return false;
-  if (index < 0 || index > to.length) return false;
-  return !(to === from.siblings && (index === from.index || index === from.index + 1));
+  return moveNodesAllowed(tree, [id], parentId, index);
 }
 
-/** Move node `id` into `parentId`'s children (null = the root) at `index`, counted in that array
- *  AS IT IS NOW (bottom-first, 0 = the bottom; `length` = the top), so the caller needn't allow for
- *  the node leaving it. The layer panel's drag commits through this (2026-10-01; it used to read
- *  the order back from SortableJS's DOM). False, and the tree untouched, when `moveAllowed` is. */
+/**
+ * Move nodes into `parentId`'s children (null = the root) at `index`, counted in that array AS IT
+ * IS NOW (bottom-first, 0 = the bottom; `length` = the top), so the caller needn't allow for them
+ * leaving it. They land together as a block in their stacking order, from wherever they were — the
+ * layer panel's drag of several picked rows (2026-10-02); a picked group takes its members along.
+ * False, and the tree untouched, when `moveNodesAllowed` is.
+ */
+export function moveNodes(
+  tree: LayerNode[],
+  ids: Iterable<number>,
+  parentId: number | null,
+  index: number,
+): boolean {
+  const list = [...ids];
+  if (!moveNodesAllowed(tree, list, parentId, index)) return false;
+  applyMove(tree, topSelection(tree, list), parentId, index);
+  return true;
+}
+
+/** Move node `id` alone (see `moveNodes`). The panel's single-row drag (2026-10-01). */
 export function moveNode(
   tree: LayerNode[],
   id: number,
   parentId: number | null,
   index: number,
 ): boolean {
-  if (!moveAllowed(tree, id, parentId, index)) return false;
-  const from = locateNode(tree, id)!;
+  return moveNodes(tree, [id], parentId, index);
+}
+
+/** The move itself, already checked: `top` is top first (`topSelection`). */
+function applyMove(tree: LayerNode[], top: number[], parentId: number | null, index: number) {
   const to = childrenOf(tree, parentId)!;
-  const [node] = from.siblings.splice(from.index, 1);
-  to.splice(to === from.siblings && index > from.index ? index - 1 : index, 0, node);
-  return true;
+  // The index counts the destination as it is: the moving nodes below it there shift it down.
+  let at = index;
+  for (const id of top) {
+    const where = locateNode(tree, id)!;
+    if (where.siblings === to && where.index < index) at--;
+  }
+  const nodes = top.map((id) => {
+    const where = locateNode(tree, id)!;
+    return where.siblings[where.index];
+  });
+  for (const n of nodes) {
+    const where = locateNode(tree, n.id)!;
+    where.siblings.splice(where.index, 1);
+  }
+  to.splice(at, 0, ...nodes.reverse()); // top first → bottom first, as every array in the tree
+}
+
+type Shape = { type: LayerNode["type"]; id: number; collapsed: boolean; children: Shape[] };
+
+/** The tree's shape alone (ids, nesting, collapsed), cheap to change and compare. */
+export function shapeCopy(nodes: readonly LayerNode[]): LayerNode[] {
+  const copy = (ns: readonly LayerNode[]): Shape[] =>
+    ns.map((n) => ({
+      type: n.type,
+      id: n.id,
+      collapsed: n.type === "group" && n.collapsed,
+      children: n.type === "group" ? copy(n.children) : [],
+    }));
+  return copy(nodes) as unknown as LayerNode[];
+}
+
+function shapeKey(nodes: readonly LayerNode[]): string {
+  const key = (ns: readonly LayerNode[]): string =>
+    ns.map((n) => (n.type === "group" ? `${n.id}[${key(n.children)}]` : `${n.id}`)).join(",");
+  return key(nodes);
 }
 
 /** The array a node dropped into `parentId` joins: the root, or that group's children; null when

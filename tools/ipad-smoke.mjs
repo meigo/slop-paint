@@ -892,6 +892,56 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Drag two picked rows by one grip: they land together at the top in their order; the floating
+    // row carries a "2"; one Undo.
+    const names = () => page.$$eval("[data-row-id]", (els) => els.map((e) => e.textContent.trim()));
+    const n0 = await names();
+    const [a, b] = [n0[1], n0[3]]; // two rows that aren't neighbours
+    await page.getByRole("button", { name: "Select", exact: true }).tap();
+    await page.waitForTimeout(150);
+    // Unpick whatever starts picked (the active row), so exactly the two below are.
+    for (const name of await page.$$eval("[data-row-id].ui-selected", (els) =>
+      els.map((e) => e.textContent.trim()),
+    )) {
+      await page.locator("[data-row-id]", { hasText: name }).first().tap();
+    }
+    await page.locator("[data-row-id]", { hasText: a }).first().tap();
+    await page.locator("[data-row-id]", { hasText: b }).first().tap();
+    const grip = await page
+      .locator("[data-row-id]", { hasText: b })
+      .first()
+      .locator('[title^="Drag to move"]')
+      .boundingBox();
+    const top = await page.locator("[data-row-id]").first().boundingBox();
+    const from = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+    const steps = pathSteps("touch", 81, line(from, { x: from.x, y: top.y + 3 }), {
+      n: 12,
+      wait: 16,
+    });
+    const liftStep = steps.pop();
+    await gesture(steps);
+    await page.waitForTimeout(200);
+    const badge = await page.locator("[data-drag-ghost]").innerText();
+    await shot(`${String(n).padStart(2, "0")}-drag-picked`);
+    await gesture([liftStep]);
+    await page.waitForTimeout(300);
+    const n1 = await names();
+    await undo();
+    await page.waitForTimeout(300);
+    const n2 = await names();
+    await page.getByRole("button", { name: "Done", exact: true }).tap();
+    return [
+      /2/.test(badge) &&
+        n1[0] === a &&
+        n1[1] === b &&
+        n1.length === n0.length &&
+        n2.join("|") === n0.join("|"),
+      `[sim] dragging one of 2 picked rows (${a}, ${b}) moves both to the top in order (${n1.join(", ")}); the floating row says "${badge.replace(/\s+/g, " ")}"; Undo restores`,
+      "drag-picked",
+    ];
+  });
+
+  await step(async () => {
     // Move tool: pick two rows, drag with the pen; the ink's centre shifts by the drag, one Undo
     // puts it back exactly.
     const centre = () =>
