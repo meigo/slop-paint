@@ -24,6 +24,7 @@
     eraser: "Eraser",
     select: "Rect select",
     lasso: "Lasso",
+    move: "Move",
     fill: "Fill",
     eyedropper: "Eyedropper",
     outline: "Outline",

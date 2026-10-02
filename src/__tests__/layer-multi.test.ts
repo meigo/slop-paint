@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   groupNodes,
+  layersToMove,
   layersLeftAfter,
   removeNodes,
   rowOrder,
@@ -68,5 +69,41 @@ describe("groupNodes", () => {
     const tree = make();
     expect(groupNodes(tree, [42], newGroup())).toBe(false);
     expect(shape(tree)).toEqual(shape(make()));
+  });
+});
+
+describe("layersToMove", () => {
+  // Plain nodes with lock/visible flags: [1, 2, G10[3, 4], 5].
+  const node = (id: number, flags: { locked?: boolean; visible?: boolean } = {}) =>
+    ({ type: "layer", id, locked: false, visible: true, ...flags }) as unknown as LayerNode;
+  const grp = (
+    id: number,
+    children: LayerNode[],
+    flags: { locked?: boolean; visible?: boolean } = {},
+  ) =>
+    ({
+      type: "group",
+      id,
+      children,
+      locked: false,
+      visible: true,
+      ...flags,
+    }) as unknown as LayerNode;
+
+  it("takes the picked layers, and every layer inside a picked group, top first", () => {
+    const tree = [node(1), node(2), grp(10, [node(3), node(4)]), node(5)];
+    expect(layersToMove(tree, [10, 1])).toEqual({ ids: [4, 3, 1], locked: 0, hidden: 0 });
+    expect(layersToMove(tree, [5])).toEqual({ ids: [5], locked: 0, hidden: 0 });
+  });
+
+  it("leaves locked and hidden layers, by their own flag or their group's, and counts them", () => {
+    const tree = [
+      node(1, { locked: true }),
+      node(2, { visible: false }),
+      grp(10, [node(3), node(4)], { locked: true }),
+      grp(20, [node(6)], { visible: false }),
+      node(5),
+    ];
+    expect(layersToMove(tree, [1, 2, 10, 20, 5])).toEqual({ ids: [5], locked: 3, hidden: 2 });
   });
 });

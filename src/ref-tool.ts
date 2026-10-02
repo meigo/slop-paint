@@ -8,8 +8,9 @@
 /** Tools a switch never hands back to: both are one-shots that hand themselves back when done, so
  *  returning to one would re-arm a finished command. */
 const ONE_SHOT = new Set(["eyedropper", "outline"]);
-/** Tools whose options row already holds the transform controls: nothing to switch. */
-const TRANSFORM_ROW = new Set(["select", "lasso"]);
+/** Tools whose options row already holds the transform controls — or, Move (2026-10-02), that
+ *  move the whole layer, reference or not: nothing to switch. */
+const TRANSFORM_ROW = new Set(["select", "lasso", "move"]);
 
 export interface RefToolState<T extends string> {
   tool: T;
