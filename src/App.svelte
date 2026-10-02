@@ -1997,10 +1997,13 @@
   });
 
   // A reference's handles follow the active layer (see syncRefHandles). Selection changes too: a
-  // Select all or Esc clears the handles, and they come straight back.
+  // Select all or Esc clears the handles, and they come straight back. And the tool (2026-10-02):
+  // Move hides them, as a drag there moves the whole layer — without this, switching between Move
+  // and Select left them up under Move and missing under Select until the layers next changed.
   $effect(() => {
     void app.layerVersion;
     void app.selectionVersion;
+    void app.currentTool;
     untrack(syncRefHandles);
   });
 

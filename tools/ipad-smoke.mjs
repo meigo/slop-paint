@@ -1014,12 +1014,29 @@ async function main(page) {
     await redo();
     await page.waitForTimeout(300);
     const moved = c1 !== c0 && c2 === c0;
+    // Switching between Select (the reference's handles) and Move (a drag moves the whole layer)
+    // must show and hide the handles at once; the status bar names the tool, "Reference" while the
+    // handles are up. It used to re-check them only when the layers changed.
+    const toolLabel = () => page.locator("div.h-7.border-t > span").last().innerText();
+    const onSelect = await toolLabel();
+    await tapTool("Move (V)");
+    await page.waitForTimeout(200);
+    const onMove = await toolLabel();
+    const m0 = (await pixels(spot)).avg;
+    await pen(line(c, { x: c.x - 50, y: c.y - 20 }), { n: 10 }); // the Move tool drags it back
+    await page.waitForTimeout(300);
+    const m1 = (await pixels(spot)).avg;
+    await tapTool("Rect Select");
+    await page.waitForTimeout(200);
+    const backOnSelect = await toolLabel();
+    const switching =
+      onSelect === "Reference" && onMove === "Move" && m1 !== m0 && backOnSelect === "Reference";
     await page.locator('button[title^="Bake the reference"]').tap();
     await page.waitForTimeout(300);
     const refs1 = await page.locator('.layer-item [title^="Reference —"]').count();
     return [
-      added && isRef && moved && refs0 === 1 && refs1 === 0,
-      `File ▸ Import image… adds a reference layer, a pen drag moves it (${c0} → ${c1}, Undo ${c2}), Bake makes it plain pixels`,
+      added && isRef && moved && switching && refs0 === 1 && refs1 === 0,
+      `File ▸ Import image… adds a reference layer, a pen drag moves it (${c0} → ${c1}, Undo ${c2}); tool label Select "${onSelect}" → Move "${onMove}" (a drag moves it: ${m0} → ${m1}) → Select "${backOnSelect}"; Bake makes it plain pixels`,
       "import-ref",
     ];
   });
