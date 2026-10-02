@@ -1,35 +1,38 @@
 import { describe, it, expect } from "vitest";
-import { climbDepth, colourDistance, fillCoverage } from "../fill";
+import { colourDistance, softCoverage, SOFT_RANGE_PER_PX } from "../fill";
 
 const row = (bits: number[]) => Uint8Array.from(bits);
+const cover = (dist: number[], region: number[], tol: number, soft: number) => [
+  ...softCoverage(row(dist), dist.length, 1, row(region), tol, soft),
+];
 
-describe("climbDepth", () => {
-  it("steps into a soft line as deep as allowed, numbering each step", () => {
-    const dist = row([0, 0, 40, 90, 160, 230, 150, 60, 0]);
-    const region = row([1, 1, 0, 0, 0, 0, 0, 0, 0]);
-    expect([...climbDepth(dist, 9, 1, region, 2)]).toEqual([1, 1, 2, 3, 0, 0, 0, 0, 0]);
+describe("softCoverage", () => {
+  it("fades into a line's soft edge by how faint it is there", () => {
+    // region | line edge getting darker | ridge | far side | empty
+    const c = cover([0, 0, 40, 96, 200, 120, 0], [1, 1, 0, 0, 0, 0, 0], 32, 1);
+    expect(c.slice(0, 2)).toEqual([255, 255]);
+    expect(c[2]).toBe(Math.round(255 * (1 - 8 / SOFT_RANGE_PER_PX))); // faint: mostly filled
+    expect(c[3]).toBe(0); // at tol + range: none
+    expect(c.slice(4)).toEqual([0, 0, 0]);
   });
 
-  it("never passes the line's darkest pixel, however deep it may go", () => {
-    const dist = row([0, 40, 230, 150, 60, 0]);
-    expect([...climbDepth(dist, 6, 1, row([1, 0, 0, 0, 0, 0]), 4)]).toEqual([1, 2, 3, 0, 0, 0]);
+  it("follows sub-pixel position: a fainter edge pixel gets more fill", () => {
+    const a = cover([0, 40], [1, 0], 32, 1)[1];
+    const b = cover([0, 70], [1, 0], 32, 1)[1];
+    expect(a).toBeGreaterThan(b);
+    expect(b).toBeGreaterThan(0);
   });
 
-  it("crosses a flat line but never an empty pixel (a break)", () => {
-    expect([...climbDepth(row([0, 255, 255, 0, 0]), 5, 1, row([1, 0, 0, 0, 0]), 4)]).toEqual([
-      1, 2, 3, 0, 0,
-    ]);
-    expect([...climbDepth(row([0, 0, 0]), 3, 1, row([1, 0, 0]), 4)]).toEqual([1, 0, 0]);
+  it("never passes the line's darkest pixel nor crosses a break", () => {
+    // Falling side past the ridge is out, even when faint.
+    expect(cover([0, 60, 50, 40], [1, 0, 0, 0], 32, 2).slice(2)).toEqual([0, 0]);
+    expect(cover([0, 0, 0], [1, 0, 0], 32, 2)).toEqual([255, 0, 0]);
   });
-});
 
-describe("fillCoverage", () => {
-  const depth = row([1, 2, 3, 4, 0]);
-  it("fills the region solid and `soft` px of the line, fractions partly", () => {
-    expect([...fillCoverage(depth, 1)]).toEqual([255, 255, 0, 0, 0]);
-    expect([...fillCoverage(depth, 0.5)]).toEqual([255, 128, 0, 0, 0]);
-    expect([...fillCoverage(depth, 1.75)]).toEqual([255, 255, 191, 0, 0]);
-    expect([...fillCoverage(depth, 0)]).toEqual([255, 0, 0, 0, 0]);
+  it("is the region alone at Soft 0, and reaches further at a higher Soft", () => {
+    expect(cover([0, 40, 60], [1, 0, 0], 32, 0)).toEqual([255, 0, 0]);
+    expect(cover([0, 40, 120], [1, 0, 0], 32, 1)[2]).toBe(0);
+    expect(cover([0, 40, 120], [1, 0, 0], 32, 2)[2]).toBeGreaterThan(0);
   });
 });
 
