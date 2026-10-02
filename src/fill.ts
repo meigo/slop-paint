@@ -18,8 +18,20 @@ export interface FillOptions {
   softEdge?: number;
 }
 
-/** The most Soft edge goes to, in device px. */
-export const MAX_SOFT_EDGE = 2;
+/** The values the Soft slider stops at (2026-10-02): quarters up to 2, where it antialiases a
+ *  line, then coarser for wide feathers (with Expand, 8 fades over 16 px). Uneven so 0.5 is still
+ *  easy to hit on a 96 px slider (an even 0–8 in quarters would be ~3 px a step). */
+export const SOFT_STEPS = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8];
+/** The most Soft goes to. */
+export const MAX_SOFT_EDGE = SOFT_STEPS[SOFT_STEPS.length - 1];
+
+/** The slider position (an index into `SOFT_STEPS`) for a Soft value: the nearest stop. */
+export function softStepIndex(soft: number): number {
+  let best = 0;
+  for (let i = 1; i < SOFT_STEPS.length; i++)
+    if (Math.abs(SOFT_STEPS[i] - soft) < Math.abs(SOFT_STEPS[best] - soft)) best = i;
+  return best;
+}
 
 /**
  * Each pixel's distance from the tapped colour, 0–255: the largest channel difference, or the

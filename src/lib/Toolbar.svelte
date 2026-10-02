@@ -36,7 +36,7 @@
   import { clickOutside } from "./click-outside";
   import ToolbarMenu from "./ToolbarMenu.svelte";
   import { MAX_GAP } from "../fill-holes";
-  import { MAX_SOFT_EDGE } from "../fill";
+  import { SOFT_STEPS, softStepIndex } from "../fill";
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
   import { MAX_THICKNESS } from "../outline";
   import { PRESS_MAX, PRESS_MIN } from "../brush";
@@ -176,6 +176,8 @@
     else app.brushSettings.opacity = value;
     onSettingsChange();
   }
+  /** The Soft slider's position: its stops are uneven (`SOFT_STEPS`). */
+  let softIndex = $derived(softStepIndex(app.fillSettings.softEdge ?? 0));
   let fillExpandDisplay = $derived((app.fillSettings.expand ?? 0) + "px");
 
   let activeTool = $derived(app.currentTool);
@@ -1048,17 +1050,20 @@
     </label>
     <label
       class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
-      title="Soft edge: how far the fill runs under the line, behind it, in pixels (quarters too) — hides the pixel steps where it meets a soft line; 0 = hard pixel edge"
+      title="Soft edge: antialiases the fill where it meets a soft line (0.5–1), higher fades further into it; with Expand it feathers the grown edge (up to 16 px at 8); 0 = hard pixel edge"
     >
       Soft
       <input
         type="range"
         min="0"
-        max={MAX_SOFT_EDGE}
-        step="0.25"
-        style={sliderFill(app.fillSettings.softEdge ?? 0, 0, MAX_SOFT_EDGE)}
-        bind:value={app.fillSettings.softEdge}
-        oninput={onSettingsChange}
+        max={SOFT_STEPS.length - 1}
+        step="1"
+        value={softIndex}
+        style={sliderFill(softIndex, 0, SOFT_STEPS.length - 1)}
+        oninput={(e) => {
+          app.fillSettings.softEdge = SOFT_STEPS[Number(e.currentTarget.value)];
+          onSettingsChange();
+        }}
         class="w-24"
       />
       <span class="min-w-7 text-[11px] text-text-muted">{app.fillSettings.softEdge ?? 0}px</span>

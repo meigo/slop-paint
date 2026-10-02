@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { colourDistance, expandedCoverage, softCoverage, SOFT_RANGE_PER_PX } from "../fill";
+import {
+  colourDistance,
+  expandedCoverage,
+  softCoverage,
+  softStepIndex,
+  SOFT_RANGE_PER_PX,
+  SOFT_STEPS,
+} from "../fill";
 import { distanceToMask } from "../mask-ops";
 
 const row = (bits: number[]) => Uint8Array.from(bits);
@@ -68,5 +75,15 @@ describe("expandedCoverage / distanceToMask", () => {
   it("is the old whole-pixel dilation at Soft 0", () => {
     const m = row([1, 0, 0, 0]);
     expect([...expandedCoverage(m, 4, 1, 2, 0)]).toEqual([255, 255, 255, 0]);
+  });
+});
+
+describe("SOFT_STEPS / softStepIndex", () => {
+  it("snaps a value to the nearest stop, quarters up to 2 then coarser to 8", () => {
+    expect(SOFT_STEPS[softStepIndex(0.5)]).toBe(0.5);
+    expect(SOFT_STEPS[softStepIndex(2.2)]).toBe(2);
+    expect(SOFT_STEPS[softStepIndex(7)]).toBe(6); // a tie goes to the lower stop
+    expect(SOFT_STEPS[softStepIndex(99)]).toBe(8);
+    expect(softStepIndex(0)).toBe(0);
   });
 });
