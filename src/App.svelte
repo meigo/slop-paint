@@ -1041,7 +1041,37 @@
   // release shifts their pixels by whole device pixels (no resampling) and moves references by
   // their corners, one undo step for all. Not the marquee machinery, which is built around one
   // layer. Content dragged past the canvas edge is cut off at the release (undo brings it back).
-  let moveGesture: { start: { x: number; y: number }; layers: Layer[] } | null = null;
+  let moveGesture: {
+    start: { x: number; y: number };
+    layers: Layer[];
+    /** References among them, with their pixels and placement from before the press: the preview
+     *  re-draws them, so undo can't read "before" at the release. */
+    refs: { layer: Layer; before: ImageData; refBefore: RefPlacement }[];
+    dx: number;
+    dy: number;
+  } | null = null;
+  let moveFrame = 0;
+
+  /** A reference's corners moved by (dx, dy). */
+  const shiftedCorners = (ref: RefPlacement, dx: number, dy: number) =>
+    ref.corners.map((c) => ({ x: c.x + dx, y: c.y + dy })) as Corners;
+
+  /** Draw the drag as it stands: plain layers just drawn offset; references RE-DRAWN from their
+   *  originals at the moved corners (fast) — their pixels are cut at the canvas edge, so shifting
+   *  them lost whatever had been dragged off the page until the release re-drew it (2026-10-02). */
+  function drawMovePreview() {
+    moveFrame = 0;
+    const g = moveGesture;
+    if (!g || !layers) return;
+    for (const r of g.refs)
+      layers.renderRef(r.layer, shiftedCorners(r.refBefore, g.dx, g.dy), true);
+    layers.moveOffset = {
+      ids: new Set(g.layers.filter((l) => !l.ref).map((l) => l.id)),
+      dx: g.dx,
+      dy: g.dy,
+    };
+    layers.composite();
+  }
 
   function moveStroke(points: InputPoint[], done: boolean) {
     if (!layers) return;
@@ -1062,46 +1092,57 @@
       // A lifted selection or an Outline preview is unfinished pixels on one of them: settle first.
       if (selection?.hasFloating) resolveFloat(true);
       if (outlineActive()) cancelOutline();
-      moveGesture = { start: p, layers: found.ids.map((id) => layers!.findLayer(id)!) };
+      const moving = found.ids.map((id) => layers!.findLayer(id)!);
+      moveGesture = {
+        start: p,
+        layers: moving,
+        refs: moving
+          .filter((l) => l.ref)
+          .map((l) => ({ layer: l, before: layers!.snapshotOf(l), refBefore: l.ref! })),
+        dx: 0,
+        dy: 0,
+      };
       return;
     }
     // Whole device pixels, so the release shifts pixels without resampling them.
     const dpr = docDpr();
-    const dx = Math.round((p.x - moveGesture.start.x) * dpr) / dpr;
-    const dy = Math.round((p.y - moveGesture.start.y) * dpr) / dpr;
+    const g = moveGesture;
+    g.dx = Math.round((p.x - g.start.x) * dpr) / dpr;
+    g.dy = Math.round((p.y - g.start.y) * dpr) / dpr;
     if (!done) {
-      layers.moveOffset = { ids: new Set(moveGesture.layers.map((l) => l.id)), dx, dy };
-      scheduleComposite();
+      if (!moveFrame) moveFrame = requestAnimationFrame(drawMovePreview);
       return;
     }
-    const moved = moveGesture.layers;
+    cancelAnimationFrame(moveFrame);
+    moveFrame = 0;
     moveGesture = null;
     layers.moveOffset = null;
+    const { dx, dy } = g;
     if (dx === 0 && dy === 0) {
+      // Put back the references the preview may have re-drawn (fast) at their own place.
+      for (const r of g.refs) layers.renderRef(r.layer);
       layers.composite();
       return;
     }
-    const edits = moved.map((layer) => {
-      const before = layers!.snapshotOf(layer);
-      const refBefore = layer.ref;
-      if (layer.ref) {
-        layer.ref = {
-          src: layer.ref.src,
-          corners: layer.ref.corners.map((c) => ({ x: c.x + dx, y: c.y + dy })) as Corners,
-        };
+    const refs = new Map(g.refs.map((r) => [r.layer, r]));
+    const edits = g.layers.map((layer) => {
+      const r = refs.get(layer);
+      if (r) {
+        layer.ref = { src: r.refBefore.src, corners: shiftedCorners(r.refBefore, dx, dy) };
         layers!.renderRef(layer);
-      } else {
-        const tmp = document.createElement("canvas");
-        tmp.width = layer.canvas.width;
-        tmp.height = layer.canvas.height;
-        tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
-        layer.ctx.save();
-        layer.ctx.resetTransform();
-        layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-        layer.ctx.drawImage(tmp, Math.round(dx * dpr), Math.round(dy * dpr));
-        layer.ctx.restore();
+        return { layer, before: r.before, refBefore: r.refBefore };
       }
-      return { layer, before, refBefore };
+      const before = layers!.snapshotOf(layer);
+      const tmp = document.createElement("canvas");
+      tmp.width = layer.canvas.width;
+      tmp.height = layer.canvas.height;
+      tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+      layer.ctx.save();
+      layer.ctx.resetTransform();
+      layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+      layer.ctx.drawImage(tmp, Math.round(dx * dpr), Math.round(dy * dpr));
+      layer.ctx.restore();
+      return { layer, before };
     });
     pushLayersEdit(layers, edits);
     layers.composite();

@@ -1026,17 +1026,34 @@ async function main(page) {
     await pen(line(c, { x: c.x - 50, y: c.y - 20 }), { n: 10 }); // the Move tool drags it back
     await page.waitForTimeout(300);
     const m1 = (await pixels(spot)).avg;
+    // Half off the page and RELEASED (its pixels are then cut at the edge), then dragged back:
+    // mid-drag, before the second release, the reference must be whole again — its preview is
+    // re-drawn from the original. Shifting its cut pixels showed the missing half until the release.
+    const home = { x: c.x - 4, y: c.y - 4, w: 8, h: 8 };
+    const h0 = (await pixels(home)).avg;
+    const away = { x: pb.x + 2, y: c.y }; // the reference's centre on the page's left edge
+    await pen(line(c, away), { n: 10 });
+    await page.waitForTimeout(250);
+    const back = pathSteps("pen", 2, line(away, c), { n: 10, wait: 16 });
+    const lift = back.pop();
+    await gesture(back);
+    await page.waitForTimeout(150);
+    const hMid = (await pixels(home)).avg;
+    await gesture([lift]);
+    await page.waitForTimeout(250);
+    const h1 = (await pixels(home)).avg;
     await tapTool("Rect Select");
     await page.waitForTimeout(200);
     const backOnSelect = await toolLabel();
     const switching =
       onSelect === "Reference" && onMove === "Move" && m1 !== m0 && backOnSelect === "Reference";
+    const wholeMidDrag = hMid === h0 && h1 === h0 && h0 !== "#ffffff";
     await page.locator('button[title^="Bake the reference"]').tap();
     await page.waitForTimeout(300);
     const refs1 = await page.locator('.layer-item [title^="Reference —"]').count();
     return [
-      added && isRef && moved && switching && refs0 === 1 && refs1 === 0,
-      `File ▸ Import image… adds a reference layer, a pen drag moves it (${c0} → ${c1}, Undo ${c2}); tool label Select "${onSelect}" → Move "${onMove}" (a drag moves it: ${m0} → ${m1}) → Select "${backOnSelect}"; Bake makes it plain pixels`,
+      added && isRef && moved && switching && wholeMidDrag && refs0 === 1 && refs1 === 0,
+      `File ▸ Import image… adds a reference layer, a pen drag moves it (${c0} → ${c1}, Undo ${c2}); tool label Select "${onSelect}" → Move "${onMove}" (a drag moves it: ${m0} → ${m1}; off the page and back, mid-drag ${hMid} vs ${h0}) → Select "${backOnSelect}"; Bake makes it plain pixels`,
       "import-ref",
     ];
   });
