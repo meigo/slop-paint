@@ -609,7 +609,7 @@
           onclick={() => {
             resizeDoc();
             close();
-          }}>Resize canvas… <span class={kbd}>{app.docWidth} × {app.docHeight}</span></button
+          }}>Resize… <span class={kbd}>{app.docWidth} × {app.docHeight}</span></button
         >
         <div
           class="px-3 py-1.5 text-xs {memoryUse.warn ? 'text-warn' : 'text-text-muted'}"

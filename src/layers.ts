@@ -1,6 +1,7 @@
 import { matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
+import { halvingSteps } from "./resize";
 
 /** A reference's ORIGINAL image: the file as imported (kept whole for the PSD's embedded Smart
  *  Object) and a decoded copy for drawing (capped to what an iPad canvas allows). */
@@ -464,6 +465,53 @@ export class LayerManager {
         layer.ref = {
           src: layer.ref.src,
           corners: layer.ref.corners.map((p) => ({ x: p.x + dx, y: p.y + dy })) as Corners,
+        };
+        this.renderRef(layer);
+      }
+    }
+  }
+
+  /**
+   * Scale the whole document to `docW`×`docH` (2026-10-02, Document ▸ Resize… in Scale mode):
+   * every layer's pixels are resampled to the new size — through halving steps for a large shrink
+   * (`halvingSteps`), so it doesn't alias — and every reference keeps its place, its corners scaled
+   * with the page and re-drawn from its original, so it stays sharp. `setDocumentSize` is the other
+   * mode: it crops or extends around an anchor and moves nothing.
+   */
+  scaleDocument(docW: number, docH: number) {
+    const sx = docW / this.docWidth;
+    const sy = docH / this.docHeight;
+    this.docWidth = docW;
+    this.docHeight = docH;
+    const dpr = this.dpr;
+    const pxW = Math.round(docW * dpr);
+    const pxH = Math.round(docH * dpr);
+
+    for (const layer of this.flatLayers()) {
+      let src: HTMLCanvasElement = document.createElement("canvas");
+      src.width = layer.canvas.width;
+      src.height = layer.canvas.height;
+      src.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+      const steps = halvingSteps(src.width, src.height, pxW, pxH);
+      for (const step of steps.slice(0, -1)) {
+        const next = document.createElement("canvas");
+        next.width = step.w;
+        next.height = step.h;
+        const nctx = next.getContext("2d")!;
+        nctx.imageSmoothingQuality = "high";
+        nctx.drawImage(src, 0, 0, step.w, step.h);
+        src = next;
+      }
+      layer.canvas.width = pxW;
+      layer.canvas.height = pxH;
+      layer.ctx.resetTransform();
+      layer.ctx.imageSmoothingQuality = "high";
+      layer.ctx.drawImage(src, 0, 0, pxW, pxH);
+      layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (layer.ref) {
+        layer.ref = {
+          src: layer.ref.src,
+          corners: layer.ref.corners.map((p) => ({ x: p.x * sx, y: p.y * sy })) as Corners,
         };
         this.renderRef(layer);
       }

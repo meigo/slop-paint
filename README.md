@@ -120,6 +120,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Files**
 
 - A **project name** (set in New, or in the Document menu) names the saved and exported files
+- **Document ▸ Resize…**: scale the whole drawing to a new size, or crop / extend the canvas around
+  it at an anchor; **Keep ratio** fills in the other side as you type
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
   groups, reference Smart Objects and text layers, and open PSDs from Photoshop, GIMP and others
 - **Chrome and Edge on desktop:** Save writes back to the project's file (asking where only the
