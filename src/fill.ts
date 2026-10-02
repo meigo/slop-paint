@@ -19,7 +19,7 @@ export interface FillOptions {
 }
 
 /** The most Soft edge goes to, in device px. */
-export const MAX_SOFT_EDGE = 4;
+export const MAX_SOFT_EDGE = 2;
 
 /**
  * Each pixel's distance from the tapped colour, 0–255: the largest channel difference, or the

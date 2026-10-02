@@ -1059,7 +1059,7 @@
         style={sliderFill(app.fillSettings.softEdge ?? 0, 0, MAX_SOFT_EDGE)}
         bind:value={app.fillSettings.softEdge}
         oninput={onSettingsChange}
-        class="w-12"
+        class="w-24"
       />
       <span class="min-w-7 text-[11px] text-text-muted">{app.fillSettings.softEdge ?? 0}px</span>
     </label>
