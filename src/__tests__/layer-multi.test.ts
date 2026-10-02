@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { dropTarget, rowOrderAfter, type RowBox } from "../lib/layer-drop";
 import {
   groupNodes,
   layersToMove,
+  moveNodes,
   layersLeftAfter,
   removeNodes,
   rowOrder,
@@ -105,5 +107,71 @@ describe("layersToMove", () => {
       node(5),
     ];
     expect(layersToMove(tree, [1, 2, 10, 20, 5])).toEqual({ ids: [5], locked: 3, hidden: 2 });
+  });
+});
+
+describe("moveNodes — several rows as one block", () => {
+  it("moves picked rows from different groups together, keeping their order", () => {
+    const tree = make(); // [1, 2, G10[3, 4], 5]
+    expect(moveNodes(tree, [4, 1], null, 4)).toBe(true); // to the top of the root
+    expect(shape(tree)).toEqual([2, [10, 3], 5, 1, 4]);
+  });
+
+  it("counts the index in the destination as it is, though some of them leave it", () => {
+    const tree = make();
+    expect(moveNodes(tree, [1, 2], null, 3)).toBe(true); // just above G10
+    expect(shape(tree)).toEqual([[10, 3, 4], 1, 2, 5]);
+  });
+
+  it("takes a picked group whole, and refuses a drop inside a moving group", () => {
+    const tree = make();
+    expect(moveNodes(tree, [10, 3], 10, 0)).toBe(false); // into itself
+    expect(moveNodes(tree, [10, 3, 5], null, 0)).toBe(true);
+    expect(shape(tree)).toEqual([[10, 3, 4], 5, 1, 2]);
+  });
+
+  it("refuses a move that changes nothing", () => {
+    const tree = make();
+    expect(moveNodes(tree, [1, 2], null, 0)).toBe(false); // already together at the bottom
+    expect(moveNodes(tree, [1, 2], null, 2)).toBe(false);
+    expect(shape(tree)).toEqual(shape(make()));
+  });
+});
+
+describe("dropTarget / rowOrderAfter with several rows", () => {
+  /** The rows the panel renders for `tree`, 10px each, top first. */
+  const rowsOf = (tree: LayerNode[]): RowBox[] => {
+    const rows: RowBox[] = [];
+    const list = (nodes: LayerNode[]) => {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        rows.push({ kind: n.type, id: n.id, top: rows.length * 10, bottom: rows.length * 10 + 10 });
+        if (n.type === "group") list(n.children);
+      }
+    };
+    list(tree);
+    return rows;
+  };
+  const flags = (n: LayerNode): LayerNode =>
+    n.type === "group"
+      ? ({
+          ...n,
+          locked: false,
+          visible: true,
+          collapsed: false,
+          children: n.children.map(flags),
+        } as LayerNode)
+      : ({ ...n, locked: false, visible: true } as LayerNode);
+
+  it("drops the picked rows above the hovered row and previews them as a block", () => {
+    const tree = make().map(flags); // rows: 5, G10, 4, 3, 2, 1
+    const d = dropTarget(tree, rowsOf(tree), 2, [1, 3])!; // top half of row 5
+    expect(d).toEqual({ parentId: null, index: 4 });
+    expect(rowOrderAfter(tree, [1, 3], d)).toEqual([3, 1, 5, 10, 4, 2]);
+  });
+
+  it("refuses a drop onto a moving group's own members", () => {
+    const tree = make().map(flags);
+    expect(dropTarget(tree, rowsOf(tree), 23, [10, 1])).toBeNull(); // row 4, inside G10
   });
 });
