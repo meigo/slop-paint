@@ -1048,19 +1048,20 @@
     </label>
     <label
       class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
-      title="Soft edge: 0 = hard pixel edge, 1 = antialiased, more feathers the fill's edge (bucket and Fill enclosed)"
+      title="Soft edge: how far the fill runs under the line, behind it, in pixels (quarters too) — hides the pixel steps where it meets a soft line; 0 = hard pixel edge"
     >
       Soft
       <input
         type="range"
         min="0"
         max={MAX_SOFT_EDGE}
+        step="0.25"
         style={sliderFill(app.fillSettings.softEdge ?? 0, 0, MAX_SOFT_EDGE)}
         bind:value={app.fillSettings.softEdge}
         oninput={onSettingsChange}
         class="w-12"
       />
-      <span class="min-w-4 text-[11px] text-text-muted">{app.fillSettings.softEdge ?? 0}</span>
+      <span class="min-w-7 text-[11px] text-text-muted">{app.fillSettings.softEdge ?? 0}px</span>
     </label>
     <div class="h-6 w-px bg-border"></div>
     <button
