@@ -13,8 +13,8 @@ export interface FillOptions {
   gap?: number;
   /** Expand fill by this many pixels to cover antialiased edges. Fill draws behind existing content. */
   expand?: number;
-  /** Soft edge: how many pixels (fractions too) the fill runs under the surrounding lines,
-   *  behind them; 0 = the hard pixel edge (`climbDepth`, `fillCoverage`). */
+  /** Soft edge: how far the fill fades into the surrounding lines' soft edges, behind them
+   *  (0 = the hard pixel edge; `softCoverage`). */
   softEdge?: number;
 }
 
@@ -24,7 +24,7 @@ export const MAX_SOFT_EDGE = 2;
 /**
  * Each pixel's distance from the tapped colour, 0–255: the largest channel difference, or the
  * alpha alone when the tap was on an empty pixel (an empty pixel's colour means nothing). What
- * `climbDepth` climbs. Pure.
+ * `softCoverage` climbs. Pure.
  */
 export function colourDistance(
   data: Uint8ClampedArray,
@@ -49,58 +49,59 @@ export function colourDistance(
   return out;
 }
 
+/** Distance units (0–255) of fade per 1 of Soft (`softCoverage`). */
+export const SOFT_RANGE_PER_PX = 64;
+/** How far, in px, the soft edge may reach into a line at most. */
+const SOFT_MAX_STEPS = 8;
+
 /**
- * How deep under the surrounding lines each pixel is (2026-10-02): 1 for the region itself, k + 1
- * for a pixel k steps into a line, 0 elsewhere. From the region's edge it steps to a neighbouring
- * pixel at least as far from the tapped colour as the one it came from (`dist`; 0 never counts),
- * at most `maxSteps` deep — so it climbs into a line only up to its darkest middle, never past it
- * into the space beyond, nor through a break (an empty pixel is 0). Pure.
+ * The fill's coverage, 0–255, antialiased against the lines around it (2026-10-02). The flood
+ * (`region`) stops where a line's soft edge passes the colour tolerance, a whole-pixel STAIRCASE;
+ * no per-pixel rule fixes that — filling a whole pixel more just moves the staircase. Instead each
+ * pixel of the line's edge beside the region gets coverage from how FAINT the line is there:
+ * 1 − (dist − tol) / range, `dist` its distance from the tapped colour (`colourDistance`) and
+ * range = Soft × `SOFT_RANGE_PER_PX`. The line's own antialiasing carries where the edge really
+ * falls between pixels, so the coverage follows it smoothly. Drawn BEHIND the line. Reached from
+ * the region stepping uphill only (never past the line's darkest pixel, never through an empty
+ * pixel — a break — and at most 8 px), so nothing spills into the space beyond. Soft 0: the region
+ * alone, the old hard edge. Pure.
  */
-export function climbDepth(
+export function softCoverage(
   dist: Uint8Array,
   w: number,
   h: number,
   region: Uint8Array,
-  maxSteps: number,
-): Uint8Array {
-  const depth = new Uint8Array(w * h);
+  tol: number,
+  soft: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h);
+  const steps = new Uint8Array(w * h);
   const queue = new Int32Array(w * h);
   let tail = 0;
   for (let i = 0; i < w * h; i++) {
     if (!region[i]) continue;
-    depth[i] = 1;
+    out[i] = 255;
+    steps[i] = 1;
     queue[tail++] = i;
   }
+  const range = soft * SOFT_RANGE_PER_PX;
+  if (range <= 0) return out;
+  const ceiling = tol + range;
   for (let head = 0; head < tail; head++) {
     const p = queue[head];
-    if (depth[p] > maxSteps) continue;
+    if (steps[p] > SOFT_MAX_STEPS) continue;
     const x = p % w;
     const floor = Math.max(dist[p], 1);
     const visit = (q: number) => {
-      if (depth[q] || dist[q] < floor) return;
-      depth[q] = depth[p] + 1;
+      if (steps[q] || dist[q] < floor || dist[q] >= ceiling) return;
+      steps[q] = steps[p] + 1;
+      out[q] = Math.round(255 * Math.min(1, 1 - (dist[q] - tol) / range));
       queue[tail++] = q;
     };
     if (x > 0) visit(p - 1);
     if (x < w - 1) visit(p + 1);
     if (p >= w) visit(p - w);
     if (p < w * (h - 1)) visit(p + w);
-  }
-  return depth;
-}
-
-/**
- * The fill's coverage, 0–255, from `climbDepth`: the region solid, then `soft` px of the line
- * beside it — a pixel k steps in gets clamp(soft − k + 1, 0, 1), so 1 fills the line's first
- * pixel, 0.5 half of it, 1.5 one and a half. Drawn BEHIND the line, so its own antialiased edge
- * blends the two (the flood alone stops in a pixel staircase inside the line's soft edge). Pure.
- */
-export function fillCoverage(depth: Uint8Array, soft: number): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(depth.length);
-  for (let i = 0; i < depth.length; i++) {
-    const d = depth[i];
-    if (d === 1) out[i] = 255;
-    else if (d > 1) out[i] = Math.round(255 * Math.max(0, Math.min(1, soft - d + 2)));
   }
   return out;
 }
@@ -260,14 +261,14 @@ export function floodFill(
     b: data[startIdx + 2],
     a: data[startIdx + 3],
   };
-  const depth = climbDepth(
+  const cover = softCoverage(
     soft > 0 ? colourDistance(data, w, h, seed) : new Uint8Array(w * h),
     w,
     h,
     finalMask,
-    Math.ceil(soft),
+    tolerance,
+    soft,
   );
-  const cover = fillCoverage(depth, soft);
 
   // --- Pass 3: Apply fill behind existing content ---
   if (expand > 0) {
@@ -394,7 +395,8 @@ export function fillRegionBehind(
     softEdge > 0
       ? colourDistance(ctx.getImageData(0, 0, w, h).data, w, h, { r: 0, g: 0, b: 0, a: 0 })
       : new Uint8Array(w * h);
-  const cover = fillCoverage(climbDepth(dist, w, h, region, Math.ceil(softEdge)), softEdge);
+  // The enclosed areas are empty: walls start at alpha 10 (`enclosedRegion`'s threshold).
+  const cover = softCoverage(dist, w, h, region, 10, softEdge);
   for (let i = 0; i < w * h; i++) {
     if (!cover[i]) continue;
     const pi = i * 4;
