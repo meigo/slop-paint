@@ -15,10 +15,15 @@
     GripVertical,
     Image,
     Type,
+    Circle,
+    CircleCheck,
   } from "@lucide/svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import {
+    layersLeftAfter,
+    rowOrder,
+    topSelection,
     moveNode,
     type LayerManager,
     type LayerNode,
@@ -94,12 +99,94 @@
     bumpLayerVersion();
   }
 
+  // --- Several rows selected (2026-10-02) ---
+  // `app.layerSelection` holds rows picked together (empty = just the active one): Select mode
+  // (the header's Select / Done) toggles a row per tap — the iPad has no modifier keys — and on a
+  // desktop Cmd/Ctrl+click toggles and Shift+click picks a range. Group and Delete act on them;
+  // painting stays on the active layer. Undo, ↑/↓ and leaving Select mode clear it (App).
+
+  /** The picked rows still in the tree (an undone or deleted one drops out). */
+  const picked = $derived.by(() => {
+    void version;
+    return new Set(app.layerSelection.filter((id) => layers.findNode(id)));
+  });
+  /** What Group and Delete act on: the picked rows, or the active one. */
+  const targets = () => (picked.size > 0 ? [...picked] : [layers.activeId]);
+  const several = $derived(picked.size > 1);
+  /** Whether a row shows as selected: picked rows while picking, else the active one. */
+  const shown = (id: number) =>
+    app.layerSelecting || picked.size > 0 ? picked.has(id) : id === layers.activeId;
+  const ONE_ROW = "works on one row — tap Done, or pick one";
+
+  function toggleSelecting() {
+    app.layerSelecting = !app.layerSelecting;
+    app.layerSelection = app.layerSelecting ? [layers.activeId] : [];
+  }
+
+  /** A tap on a row: picks it in Select mode or with Cmd/Ctrl / Shift, else makes it active. */
+  /** A drag's release is followed by a click on the row; it mustn't count as a tap. */
+  let ignoreClicksUntil = 0;
+
+  function tapRow(node: LayerNode, e: MouseEvent) {
+    if (performance.now() < ignoreClicksUntil) return;
+    const cur = picked.size > 0 ? [...picked] : [layers.activeId];
+    if (app.layerSelecting || e.metaKey || e.ctrlKey) {
+      app.layerSelection = cur.includes(node.id)
+        ? cur.filter((id) => id !== node.id)
+        : [...cur, node.id];
+      return;
+    }
+    if (e.shiftKey) {
+      const rows = rowOrder(layers.tree);
+      const a = rows.indexOf(layers.activeId);
+      const b = rows.indexOf(node.id);
+      if (a >= 0 && b >= 0) app.layerSelection = rows.slice(Math.min(a, b), Math.max(a, b) + 1);
+      return;
+    }
+    app.layerSelection = [];
+    if (node.type === "layer") layers.setActive(node.id);
+    else layers.activeId = node.id;
+    bumpLayerVersion();
+  }
+
+  function finishPicking() {
+    app.layerSelection = [];
+    app.layerSelecting = false;
+  }
+
   function addGroup() {
+    if (several) return groupPicked();
     structuralEdit(layers, () => layers.groupActive());
     bumpLayerVersion();
   }
 
+  /** Group the picked rows into a new group, in the topmost one's place: one undo step. A member
+   *  of a locked group can't leave it (as dragging). */
+  function groupPicked() {
+    const ids = targets();
+    for (const id of topSelection(layers.tree, ids)) {
+      const why = dragBlock(layers.tree, id);
+      if (why) return flashStatus(why);
+    }
+    structuralEdit(layers, () => layers.groupSelected(ids));
+    finishPicking();
+    layers.composite();
+    bumpLayerVersion();
+  }
+
+  /** Delete the picked rows: one undo step, keeping at least one drawing layer. */
+  function deletePicked() {
+    const ids = targets();
+    if (layersLeftAfter(layers.tree, ids) < 1)
+      return flashStatus("The document needs at least one layer");
+    structuralEdit(layers, () => layers.removeSelected(ids));
+    finishPicking();
+    layers.composite();
+    bumpLayerVersion();
+  }
+
   function removeNode() {
+    if (several) return deletePicked();
     const node = layers.findNode(layers.activeId);
     const members = (n: LayerNode): number =>
       n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
@@ -111,6 +198,7 @@
   }
 
   function duplicateLayer() {
+    if (several) return flashStatus(`Duplicate ${ONE_ROW}`);
     settlePending();
     // The selected row decides: a group duplicates with everything in it.
     const node = layers.findNode(layers.activeId);
@@ -124,6 +212,7 @@
   }
 
   function mergeDown() {
+    if (several) return flashStatus(`Merge down ${ONE_ROW}`);
     // A reference is re-drawn from its original, which would wipe what was merged onto it.
     const loc = layers.findParent(layers.activeId);
     const target = loc && loc.index > 0 ? loc.parent[loc.index - 1] : null;
@@ -313,6 +402,8 @@
     // A press that never became a drag lands nothing.
     if (apply && d.live) update(d);
     const target = apply && d.live ? drop : null;
+    // The release's click lands on the row: don't let it pick or unpick it.
+    if (d.live) ignoreClicksUntil = performance.now() + 400;
     const id = d.id;
     // Clear the slides first, in the same tick as the commit, or the re-ordered rows would
     // animate back from their slides.
@@ -362,6 +453,7 @@
   }
 
   function onNamePointerDown(e: PointerEvent, node: LayerNode) {
+    if (app.layerSelecting) return; // a tap there picks the row; no rename while picking
     const tap: Tap = {
       target: `${node.type}:${node.id}`,
       t: e.timeStamp,
@@ -436,6 +528,15 @@
   {/if}
 {/snippet}
 
+{#snippet pickMark(id: number)}
+  <!-- Select mode only: whether the row is picked. -->
+  {#if app.layerSelecting}
+    <span class="flex shrink-0 {picked.has(id) ? 'text-accent' : 'text-text-muted'}"
+      >{#if picked.has(id)}<CircleCheck size={15} />{:else}<Circle size={15} />{/if}</span
+    >
+  {/if}
+{/snippet}
+
 {#snippet grip(node: LayerNode)}
   <!-- `touch-action: none`, or iPad takes the drag for a scroll and cancels the pointer. The moves
        and the release are heard on the window. -->
@@ -459,8 +560,9 @@
   <div
     class="layer-item {depth > 0
       ? 'group-rail'
-      : ''} flex min-w-0 cursor-pointer items-center gap-1 border-b border-border-light py-1 pr-[6px] text-sm transition-colors hover:bg-surface-hover {layer.id ===
-    layers.activeId
+      : ''} flex min-w-0 cursor-pointer items-center gap-1 border-b border-border-light py-1 pr-[6px] text-sm transition-colors hover:bg-surface-hover {shown(
+      layer.id,
+    )
       ? 'ui-selected text-text'
       : 'text-text-secondary'}"
     class:opacity-40={dimmed.has(layer.id)}
@@ -469,13 +571,13 @@
     style:transition={slideTransition}
     data-row-id={layer.id}
     data-row-kind="layer"
-    title="Tap to draw on this layer · double-tap the name to rename"
-    onclick={() => {
-      layers.setActive(layer.id);
-      bumpLayerVersion();
-    }}
+    title={app.layerSelecting
+      ? "Tap to pick this layer, or unpick it"
+      : "Tap to draw on this layer · double-tap the name to rename"}
+    onclick={(e) => tapRow(layer, e)}
     role="presentation"
   >
+    {@render pickMark(layer.id)}
     {@render grip(layer)}
     <!-- 20px (was 28), drawn at 40 so it stays sharp on a retina screen. -->
     <canvas
@@ -563,8 +665,9 @@
 {#snippet groupRow(group: LayerGroup, depth: number)}
   <div class="layer-group {depth > 0 ? 'group-rail' : ''} border-b border-border">
     <div
-      class="flex min-w-0 cursor-default items-center gap-1 py-1 pr-[6px] text-sm font-semibold transition-colors {group.id ===
-      layers.activeId
+      class="flex min-w-0 cursor-default items-center gap-1 py-1 pr-[6px] text-sm font-semibold transition-colors {shown(
+        group.id,
+      )
         ? 'ui-selected text-text'
         : 'text-text-secondary hover:bg-surface-hover'}"
       class:opacity-40={dimmed.has(group.id)}
@@ -574,13 +677,13 @@
       style:transition={slideTransition}
       data-row-id={group.id}
       data-row-kind="group"
-      title="Layer group · double-tap the name to rename"
-      onclick={() => {
-        layers.activeId = group.id;
-        bumpLayerVersion();
-      }}
+      title={app.layerSelecting
+        ? "Tap to pick this group (with everything in it), or unpick it"
+        : "Layer group · double-tap the name to rename"}
+      onclick={(e) => tapRow(group, e)}
       role="presentation"
     >
+      {@render pickMark(group.id)}
       {@render grip(group)}
       <!-- `-ml-0.5 mr-0.5`: the chevron glyph carries its own padding on the left; shifting the box
            2px left and giving it back on the right balances the ink without moving the name. -->
@@ -676,7 +779,18 @@
   <div
     class="flex h-10 shrink-0 items-center justify-between border-b border-border px-2.5 text-xs font-semibold text-text-secondary"
   >
-    <span>Layers</span>
+    <!-- Select / Done, where the "Layers" heading was (no room for both in the narrowest panel):
+         picking several rows for Group and Delete. -->
+    <button
+      class="h-7 shrink-0 rounded px-1.5 text-xs font-semibold whitespace-nowrap {app.layerSelecting
+        ? 'ui-on'
+        : 'text-text-secondary hover:bg-surface-hover'}"
+      aria-pressed={app.layerSelecting}
+      title={app.layerSelecting
+        ? `Done picking (${picked.size} picked) — Group and Delete act on the picked rows`
+        : "Select several layers or groups, to group or delete them together"}
+      onclick={toggleSelecting}>{app.layerSelecting ? `Done · ${picked.size}` : "Select"}</button
+    >
     <div class="flex items-center gap-1">
       <!-- Grouped create │ derive │ destroy, as in slop-animator (SLOP-TIMELINE-UI.md §4): Delete
            stands alone so a mis-tap on Merge can't delete. -->
@@ -686,7 +800,9 @@
       <button
         class={headerBtn}
         onclick={addGroup}
-        title="Group the selected layer or group (Ctrl+G)"
+        title={several
+          ? `Group the ${picked.size} picked rows (Ctrl+G)`
+          : "Group the selected layer or group (Ctrl+G)"}
       >
         <FolderPlus size={16} />
       </button>
@@ -698,14 +814,28 @@
         <Type size={16} />
       </button>
       <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
-      <button class={headerBtn} onclick={duplicateLayer} title="Duplicate layer or group">
+      <button
+        class="{headerBtn} {several ? 'opacity-40' : ''}"
+        aria-disabled={several}
+        onclick={duplicateLayer}
+        title={several ? `Duplicate ${ONE_ROW}` : "Duplicate layer or group"}
+      >
         <Copy size={16} />
       </button>
-      <button class={headerBtn} onclick={mergeDown} title="Merge down onto the layer below">
+      <button
+        class="{headerBtn} {several ? 'opacity-40' : ''}"
+        aria-disabled={several}
+        onclick={mergeDown}
+        title={several ? `Merge down ${ONE_ROW}` : "Merge down onto the layer below"}
+      >
         <ArrowDownToLine size={16} />
       </button>
       <span class="-mx-0.5 h-5 w-px shrink-0 bg-border" role="presentation"></span>
-      <button class={headerBtn} onclick={removeNode} title="Delete layer or group">
+      <button
+        class={headerBtn}
+        onclick={removeNode}
+        title={several ? `Delete the ${picked.size} picked rows` : "Delete layer or group"}
+      >
         <Trash2 size={16} />
       </button>
     </div>

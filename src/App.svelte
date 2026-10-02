@@ -9,6 +9,7 @@
   import { clampPress, drawStroke, widthRange } from "./brush";
   import { pathSmoothRadius, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
+  import { dragBlock } from "./lib/layer-drop";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
@@ -16,6 +17,7 @@
   import {
     LayerManager,
     adjacentRow,
+    topSelection,
     type Layer,
     type RefPlacement,
     type RefSource,
@@ -1417,10 +1419,22 @@
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g" && !e.shiftKey) {
-      // Group the active layer or group (Photoshop's Group Layers; the panel's New group button).
+      // Group the active layer or group (Photoshop's Group Layers; the panel's New group button) —
+      // or the rows picked together, as the panel's button does then.
       e.preventDefault();
       if (!layers) return;
-      structuralEdit(layers, () => layers.groupActive());
+      const ids = app.layerSelection.filter((id) => layers!.findNode(id));
+      if (ids.length > 1) {
+        for (const id of topSelection(layers.tree, ids)) {
+          const why = dragBlock(layers.tree, id);
+          if (why) return flashStatus(why);
+        }
+        structuralEdit(layers, () => layers!.groupSelected(ids));
+        app.layerSelection = [];
+        app.layerSelecting = false;
+      } else {
+        structuralEdit(layers, () => layers!.groupActive());
+      }
       bumpLayerVersion();
       return;
     }
@@ -1497,6 +1511,7 @@
       e.preventDefault();
       const next = adjacentRow(layers.tree, layers.activeId, e.key === "ArrowUp" ? "up" : "down");
       if (next !== null) {
+        app.layerSelection = []; // ↑/↓ moves the active row; a pick of several rows ends
         layers.activeId = next;
         bumpLayerVersion();
       }
@@ -3003,6 +3018,8 @@
     history.onChange = () => app.historyVersion++;
 
     setOnHistoryApplied(() => {
+      // Undo/redo can bring back or take away picked rows: start again from the active one.
+      app.layerSelection = [];
       layers.composite();
       bumpLayerVersion();
     });

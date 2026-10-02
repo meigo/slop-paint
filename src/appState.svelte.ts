@@ -19,6 +19,11 @@ interface AppStateShape {
   fillSettings: FillOptions;
   zoomText: string;
   layerVersion: number;
+  /** Rows selected together (2026-10-02): empty = just the active row. Delete and Group act on
+   *  them; painting stays on the active layer. Session only. */
+  layerSelection: number[];
+  /** The layer panel's Select mode: a tap on a row adds or removes it from `layerSelection`. */
+  layerSelecting: boolean;
   selectionVersion: number;
   docWidth: number;
   docHeight: number;
@@ -86,6 +91,8 @@ export const app: AppStateShape = $state({
   },
   zoomText: "100%",
   layerVersion: 0,
+  layerSelection: [],
+  layerSelecting: false,
   selectionVersion: 0,
   docWidth: 1920,
   docHeight: 1080,
