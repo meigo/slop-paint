@@ -179,7 +179,7 @@
       >
         <span class="text-[11px] text-text-muted">Anchor</span>
         <div class="grid w-16 grid-cols-3 gap-1">
-          {#each anchors as a}
+          {#each anchors as a (`${a.x},${a.y}`)}
             <button
               aria-label="Anchor {a.x},{a.y}"
               class="h-4 w-4 rounded-sm border transition-colors
