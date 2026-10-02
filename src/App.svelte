@@ -1052,6 +1052,56 @@
   } | null = null;
   let moveFrame = 0;
 
+  /** What a Move drag would take now: the picked rows, else the active layer or group. */
+  function moveTargets() {
+    if (!layers) return { ids: [] as number[], locked: 0, hidden: 0 };
+    const picks = app.layerSelection.filter((id) => layers!.findNode(id));
+    return layersToMove(layers.tree, picks.length > 0 ? picks : [layers.activeId]);
+  }
+
+  /** The Move box (2026-10-02): the painted bounds of what a drag would move, in page units — the
+   *  only on-canvas sign of it on iPad, which has no hover cursor. Worked out when the layers, the
+   *  tool or the pick change (an effect below), and only SHIFTED while dragging. */
+  let moveBoxBase: { x: number; y: number; w: number; h: number } | null = null;
+
+  function measureMoveBox() {
+    moveBoxBase = null;
+    if (!layers || app.currentTool !== "move") return;
+    const dpr = docDpr();
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const id of moveTargets().ids) {
+      const layer = layers.findLayer(id);
+      if (!layer) continue;
+      const { width: w, height: h } = layer.canvas;
+      const b = alphaBounds(layer.ctx.getImageData(0, 0, w, h).data, w, h);
+      if (!b) continue;
+      x0 = Math.min(x0, b.x);
+      y0 = Math.min(y0, b.y);
+      x1 = Math.max(x1, b.x + b.w);
+      y1 = Math.max(y1, b.y + b.h);
+    }
+    if (x0 < x1) moveBoxBase = { x: x0 / dpr, y: y0 / dpr, w: (x1 - x0) / dpr, h: (y1 - y0) / dpr };
+  }
+
+  function showMoveBox(dx = 0, dy = 0) {
+    const b = moveBoxBase;
+    selection?.setMoveBox(b ? { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h } : null);
+  }
+
+  $effect(() => {
+    void app.layerVersion;
+    void app.currentTool;
+    void app.layerSelection;
+    untrack(() => {
+      if (!layersReady) return;
+      measureMoveBox();
+      showMoveBox();
+    });
+  });
+
   /** A reference's corners moved by (dx, dy). */
   const shiftedCorners = (ref: RefPlacement, dx: number, dy: number) =>
     ref.corners.map((c) => ({ x: c.x + dx, y: c.y + dy })) as Corners;
@@ -1071,6 +1121,7 @@
       dy: g.dy,
     };
     layers.composite();
+    showMoveBox(g.dx, g.dy);
   }
 
   function moveStroke(points: InputPoint[], done: boolean) {
@@ -1078,8 +1129,7 @@
     const p = points[points.length - 1];
     if (!moveGesture) {
       if (points.length !== 1 || done) return; // a refused press: ignore the rest of it
-      const picks = app.layerSelection.filter((id) => layers!.findNode(id));
-      const found = layersToMove(layers.tree, picks.length > 0 ? picks : [layers.activeId]);
+      const found = moveTargets();
       const left = found.locked + found.hidden;
       if (found.ids.length === 0) {
         return flashStatus(
@@ -3356,6 +3406,13 @@
       if (viewport.panning || isDrawing || spaceHeld) return; // other handlers own the cursor
 
       const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+
+      // Move: four arrows, or not-allowed when everything it would take is locked or hidden.
+      if (app.currentTool === "move") {
+        canvasClipEl.style.cursor = moveTargets().ids.length > 0 ? "move" : "not-allowed";
+        hideBrushCursor();
+        return;
+      }
 
       // Non-brush tools manage their own cursor here (brush tools delegate to updateBrushCursor).
       // When a selection / transform / warp is live, hit-test for the right handle cursor.
