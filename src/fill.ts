@@ -3,7 +3,7 @@
  * Operates on raw ImageData for performance.
  */
 
-import { dilateMask } from "./mask-ops";
+import { dilateMask, distanceToMask } from "./mask-ops";
 import { clampGap, enclosedRegion } from "./fill-holes";
 
 export interface FillOptions {
@@ -102,6 +102,37 @@ export function softCoverage(
     if (x < w - 1) visit(p + 1);
     if (p >= w) visit(p - w);
     if (p < w * (h - 1)) visit(p + w);
+  }
+  return out;
+}
+
+/**
+ * The fill grown `expand` px under the lines (Expand), as coverage 0–255 (2026-10-02). Soft 0: the
+ * old whole-pixel round dilation (`dilateMask`). Above 0 the grown edge is a smooth round offset
+ * measured by true distance (`distanceToMask`), solid up to `expand` px and fading to nothing over
+ * the next max(1, 2 × Soft) px — antialiased at least. The whole-pixel dilation left a staircase
+ * under the line, showing through a see-through one, and Soft's fade (`softCoverage`) starts from
+ * that edge, already in the line's dark middle where it has nothing left to fade: with Expand on,
+ * Soft seemed to do nothing. Pure.
+ */
+export function expandedCoverage(
+  mask: Uint8Array,
+  w: number,
+  h: number,
+  expand: number,
+  soft: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h);
+  if (soft <= 0) {
+    const grown = dilateMask(mask, w, h, expand);
+    for (let i = 0; i < w * h; i++) if (grown[i]) out[i] = 255;
+    return out;
+  }
+  const width = Math.max(1, 2 * soft);
+  const dist = distanceToMask(mask, w, h);
+  for (let i = 0; i < w * h; i++) {
+    const c = (expand + width - dist[i]) / width;
+    out[i] = c >= 1 ? 255 : c <= 0 ? 0 : Math.round(c * 255);
   }
   return out;
 }
@@ -246,14 +277,10 @@ export function floodFill(
   // --- Pass 1: the region to fill ---
   const mask = fillMask(data, w, h, sx, sy, tolerance, options.gap ?? 0)!;
 
-  // --- Pass 2: Expand the mask by N pixels (morphological dilation) ---
-  let finalMask = mask;
-  if (expand > 0) {
-    finalMask = dilateMask(mask, w, h, expand);
-  }
-
-  // Coverage per pixel, 0–255. With Soft edge the fill also runs under the lines to their ridge
-  // and fades out there, drawn BEHIND them; the tapped region itself stays solid.
+  // --- Pass 2: coverage per pixel, 0–255 ---
+  // Expand grows the fill under the lines (all of it drawn behind them), its edge feathered by
+  // Soft. Without Expand, Soft fades the fill into the lines' soft edges, behind them; the tapped
+  // region itself stays solid.
   const soft = options.softEdge ?? 0;
   const seed = {
     r: data[startIdx],
@@ -261,14 +288,18 @@ export function floodFill(
     b: data[startIdx + 2],
     a: data[startIdx + 3],
   };
-  const cover = softCoverage(
-    soft > 0 ? colourDistance(data, w, h, seed) : new Uint8Array(w * h),
-    w,
-    h,
-    finalMask,
-    tolerance,
-    soft,
-  );
+  const finalMask = mask;
+  const cover =
+    expand > 0
+      ? expandedCoverage(mask, w, h, expand, soft)
+      : softCoverage(
+          soft > 0 ? colourDistance(data, w, h, seed) : new Uint8Array(w * h),
+          w,
+          h,
+          mask,
+          tolerance,
+          soft,
+        );
 
   // --- Pass 3: Apply fill behind existing content ---
   if (expand > 0) {
@@ -378,6 +409,7 @@ export function fillRegionBehind(
   region: Uint8Array,
   fillColor: { r: number; g: number; b: number; a: number },
   softEdge = 0,
+  expand = 0,
 ): void {
   const w = ctx.canvas.width,
     h = ctx.canvas.height;
@@ -391,12 +423,18 @@ export function fillRegionBehind(
   const td = img.data;
   // Soft edge, as the bucket's: run under the lines to their ridge (climbing the alpha, as the
   // enclosed areas are empty) and fade out there.
-  const dist =
-    softEdge > 0
-      ? colourDistance(ctx.getImageData(0, 0, w, h).data, w, h, { r: 0, g: 0, b: 0, a: 0 })
-      : new Uint8Array(w * h);
-  // The enclosed areas are empty: walls start at alpha 10 (`enclosedRegion`'s threshold).
-  const cover = softCoverage(dist, w, h, region, 10, softEdge);
+  // Expand (when the caller left it to us) grows it under the lines with a feathered edge, as the
+  // bucket's; else Soft fades into the lines' soft edges.
+  let cover: Uint8ClampedArray;
+  if (expand > 0) cover = expandedCoverage(region, w, h, expand, softEdge);
+  else {
+    const dist =
+      softEdge > 0
+        ? colourDistance(ctx.getImageData(0, 0, w, h).data, w, h, { r: 0, g: 0, b: 0, a: 0 })
+        : new Uint8Array(w * h);
+    // The enclosed areas are empty: walls start at alpha 10 (`enclosedRegion`'s threshold).
+    cover = softCoverage(dist, w, h, region, 10, softEdge);
+  }
   for (let i = 0; i < w * h; i++) {
     if (!cover[i]) continue;
     const pi = i * 4;

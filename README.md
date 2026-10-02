@@ -40,7 +40,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - Paint bucket with **Bridge** (small breaks in the lines count as closed, so the fill doesn't leak
   out), expand (grows the fill under the outline so no seam shows) and **Soft** (an antialiased edge: the
   fill fades into the line's soft edge, behind it, so no pixel steps show; higher reaches further
-  into the line, 0 for a hard pixel edge — Fill enclosed too)
+  into the line, 0 for a hard pixel edge; with expand on it feathers the grown edge instead — Fill enclosed too)
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
   it uses the same Bridge
 
