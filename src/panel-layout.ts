@@ -1,10 +1,10 @@
 /** Layout geometry for the resizable layer panel (pure; no DOM). From slop-animator. */
 
-/** Below this the layer detail row wraps to several lines and the name column stops being useful.
- *  It is a floor, not a target — the row is `flex-wrap` by design, so narrower degrades rather than
- *  clips. 180 of usable content PLUS the 4px strip reserved for the resize grip — the guarantee is
- *  about content width, so the reserved strip has to be added on top of it. */
-export const MIN_PANEL_WIDTH = 184;
+/** The narrowest the panel goes: its header's buttons — Select / Done, Add, Group, Text,
+ *  Duplicate, Merge down, Delete — must all fit (2026-10-02, measured: the last button ended at
+ *  249 px, plus 10 px padding, plus room for "Done · 12"). It was 184, from slop-animator, where
+ *  the header held fewer buttons, and Delete was cut off at the edge. */
+export const MIN_PANEL_WIDTH = 264;
 /** Tailwind `w-70`, the fixed width the panel had before it became resizable. */
 export const DEFAULT_PANEL_WIDTH = 280;
 

@@ -789,7 +789,7 @@
       title={app.layerSelecting
         ? `Done picking (${picked.size} picked) — Group and Delete act on the picked rows`
         : "Select several layers or groups, to group or delete them together"}
-      onclick={toggleSelecting}>{app.layerSelecting ? `Done · ${picked.size}` : "Select"}</button
+      onclick={toggleSelecting}>{app.layerSelecting ? "Done" : "Select"}</button
     >
     <div class="flex items-center gap-1">
       <!-- Grouped create │ derive │ destroy, as in slop-animator (SLOP-TIMELINE-UI.md §4): Delete

@@ -860,7 +860,8 @@ async function main(page) {
     // The active row starts picked; add the third row, then group.
     await row(n0[2]).tap();
     await page.waitForTimeout(150);
-    const picked = await page.getByRole("button", { name: /^Done/ }).innerText();
+    // The count is in the button's title (the label stays short enough for the narrowest panel).
+    const picked = await page.getByRole("button", { name: /^Done/ }).getAttribute("title");
     await shot(`${String(n).padStart(2, "0")}-select-mode`);
     await page.locator('button[title^="Group the 2 picked rows"]').tap();
     await page.waitForTimeout(250);
@@ -879,13 +880,13 @@ async function main(page) {
     await page.waitForTimeout(250);
     const n4 = await names();
     return [
-      picked.includes("2") &&
+      picked.includes("2 picked") &&
         grouped === 1 &&
         n1.length === n0.length + 1 &&
         n2.join("|") === n0.join("|") &&
         n3.length === n0.length - 2 &&
         n4.join("|") === n0.join("|"),
-      `Select: picked ${picked.replace(/\s+/g, " ")}, Group made a group (${n1.join(", ")}), Undo; Delete of 2 picked rows (${n0.length} → ${n3.length}), Undo (${n4.length})`,
+      `Select: ${picked.split(" —")[0]}, Group made a group (${n1.join(", ")}), Undo; Delete of 2 picked rows (${n0.length} → ${n3.length}), Undo (${n4.length})`,
       "multi-select",
     ];
   });
