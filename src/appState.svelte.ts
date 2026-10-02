@@ -89,6 +89,7 @@ export const app: AppStateShape = $state({
   fillSettings: {
     tolerance: 32,
     expand: 0,
+    softEdge: 1,
   },
   zoomText: "100%",
   layerVersion: 0,
