@@ -35,7 +35,7 @@ Web-based drawing app with pressure-sensitive brushes, layers, and PSD export (S
 
 - **After adding new features**, write tests for any pure logic (no DOM/canvas dependencies)
 - Tests go in `src/__tests__/` named `*.test.ts`
-- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (fillMask, hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint, pencilGrade, mipIndex, discProfile), `brush-textures.ts` (charcoalHoles), `dry-brush.ts` (bristleRuns, hairPaints, makeBristles, resample, noise1, taperLevels, dryTaperPx), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `persist/autosave-plan.ts`, `stroke-freeze.ts` (settledIndex), `layers.ts` (rowOrder, topSelection, layersLeftAfter, removeNodes, groupNodes), `resize.ts` (linkedSize, halvingSteps), `layers.ts` (lockedInTree, hiddenInTree, wrapInGroup, adjacentRow, locateNode, isWithin, moveAllowed, moveNode), `lib/layer-drop.ts` (dropTarget, dragBlock), `lib/layer-drag-visual.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`, `ref-tool.ts`, `text-layout.ts`, `png-text.ts`, `mesh-size.ts`, `stroke-smoothing.ts`, `font-file.ts`
+- Testable modules: `paste.ts`, `history.ts`, `pressure-curve.ts`, `viewport.ts`, `fill.ts` (fillMask, hexToRgba, rgbToHex, sameImageData), `fill-holes.ts`, `mask-ops.ts`, `share.ts`, `panel-layout.ts`, `lib/slider-fill.ts`, `lib/double-tap.ts`, `tool-settings.ts`, `brush.ts` (widthRange, decimationSmoothing, strokeOutline), `stamp-brush.ts` (stampFootprint, pencilGrade, mipIndex, discProfile), `brush-textures.ts` (charcoalHoles), `dry-brush.ts` (bristleRuns, hairPaints, makeBristles, resample, noise1, taperLevels, dryTaperPx), `ink-brush.ts`, `calligraphy-brush.ts`, `selection.ts` (floorScale, flipMatrix, cornerScaleMatrix, sideStretchMatrix), `outline.ts`, `persist/autosave-plan.ts`, `stroke-freeze.ts` (settledIndex), `layers.ts` (rowOrder, topSelection, layersLeftAfter, removeNodes, groupNodes, layersToMove), `resize.ts` (linkedSize, halvingSteps), `layers.ts` (lockedInTree, hiddenInTree, wrapInGroup, adjacentRow, locateNode, isWithin, moveAllowed, moveNode), `lib/layer-drop.ts` (dropTarget, dragBlock), `lib/layer-drag-visual.ts`, `touch-gestures.ts` (snappedRotation), `ref-placement.ts`, `ref-tool.ts`, `text-layout.ts`, `png-text.ts`, `mesh-size.ts`, `stroke-smoothing.ts`, `font-file.ts`
 - **Don't test**: Canvas rendering, pointer events, DOM manipulation, Svelte components — these need visual verification
 - Run `npm run test && npm run lint` before considering a feature complete
 - A bug seen only on the deployed site: reproduce it against the production build (`npm run build && npx vite preview`), not `npm run dev` — the minified bundle can behave differently (see Undo)
@@ -140,7 +140,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 
 ## Desktop Shortcuts
 
-- B/E/S/L/G/I — brush/eraser/select/lasso/fill/eyedropper (Outline has no key)
+- B/E/S/L/V/G/I — brush/eraser/select/lasso/move/fill/eyedropper (Outline has no key)
 - X (hold) — temporary eraser
 - R / Shift+R — rotate canvas 15° CW/CCW
 - 0 — reset view (zoom, pan, rotation); 1 — 100% zoom (plain keys: browsers reserve Ctrl/Cmd+digit)
@@ -250,6 +250,14 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 - Picking the tool previews at once, written INTO the layer (so layer/group opacity apply) and re-derived from a snapshot on each knob change, once per frame. Apply (✓ / Enter) is one undo step and hands back the previous tool; Cancel (✗ / Esc), undo, switching tool or layer, locking the layer, New/Open/Resize all restore the snapshot. Refused on locked, hidden or empty layers; with no live preview a canvas tap starts one
 - A marquee clips the write, not the maths (the line is truncated at the cut); alpha lock never adds ink
 - Clear layer, copy/cut/delete cancel a live preview first, so their snapshots hold the art
+
+## Move Tool
+
+- Move (V, 2026-10-02) drags WHOLE layers: the rows picked in the layer panel (Select / Cmd-click), else the active layer, or every layer inside the active group (`layersToMove`: top first, leaving locked and hidden ones — by their own flag or a group's — and saying how many). Not the marquee machinery, which is built around one layer
+- During the drag the compositor only draws them offset (`LayerManager.moveOffset` in `drawTree`, screen only); the release shifts each layer's pixels by WHOLE device pixels (no resampling, so no blur) and moves references by their corners (re-drawn from the original), ONE undo step for all (`pushLayersEdit` in `undo.ts`: each layer's changed tiles plus a reference's placement before and after; `pixelDiff` is shared with `pushPixelEdit`)
+- Content dragged past the canvas edge is cut off at the release (layers are the document's size); undo brings it back. A lifted selection is applied and an Outline preview cancelled first
+- A reference's transform handles hide under Move (a drag moves the whole layer), and selecting a reference doesn't switch away from Move (`TRANSFORM_ROW` in `ref-tool.ts`)
+- Translation only: scaling or rotating several layers at once is not built (it would need a float per layer sharing one transform)
 
 ## Document resize
 

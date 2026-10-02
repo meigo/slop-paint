@@ -275,6 +275,11 @@
     { tool: "eraser", icon: Eraser, title: "Eraser (E)" },
     { tool: "select", icon: BoxSelect, title: "Rect Select (S)" },
     { tool: "lasso", icon: Lasso, title: "Lasso Select (L)" },
+    {
+      tool: "move",
+      icon: Move,
+      title: "Move (V) — drag to move the picked layers, or the selected layer or group",
+    },
     { tool: "fill", icon: PaintBucket, title: "Paint Bucket (G)" },
     { tool: "eyedropper", icon: Pipette, title: "Eyedropper (I) — drag to aim, release to pick" },
     { tool: "outline", icon: SquareMinus, title: "Outline — hollow the layer's shapes to a line" },
@@ -1092,7 +1097,11 @@
     </div>
   {/if}
 
-  {#if activeTool === "eyedropper"}
+  {#if activeTool === "move"}
+    <span class="text-xs text-text-muted"
+      >Drag to move the picked layers (Select in the layer panel), or the selected layer or group</span
+    >
+  {:else if activeTool === "eyedropper"}
     <div class="flex items-center gap-2 text-xs text-text-secondary">
       <span
         class="h-5 w-5 rounded-full border border-text-muted"

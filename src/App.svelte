@@ -17,13 +17,19 @@
   import {
     LayerManager,
     adjacentRow,
+    layersToMove,
     topSelection,
     type Layer,
     type RefPlacement,
     type RefSource,
     type StructSnapshot,
   } from "./layers";
-  import { cornersFromMatrix, cornersFromRect, matrixFromCorners } from "./ref-placement";
+  import {
+    cornersFromMatrix,
+    cornersFromRect,
+    matrixFromCorners,
+    type Corners,
+  } from "./ref-placement";
   import { decodeRefSource } from "./ref-image";
   import { buildTextSource } from "./text-ref";
   import {
@@ -91,7 +97,14 @@
     layerMemoryBytes,
     looksBlanked,
   } from "./persist/autosave-plan";
-  import { history, pushPixelEdit, pushRefEdit, setOnHistoryApplied, structuralEdit } from "./undo";
+  import {
+    history,
+    pushLayersEdit,
+    pushPixelEdit,
+    pushRefEdit,
+    setOnHistoryApplied,
+    structuralEdit,
+  } from "./undo";
   import {
     canShareFile,
     isAppleTouch,
@@ -1022,6 +1035,79 @@
   }
 
   // --- Stroke handler ---
+  // --- Move tool (2026-10-02) ---
+  // Moves whole layers: the rows picked in the layer panel, else the active layer, or every layer
+  // in the active group. During the drag the compositor only DRAWS them offset (`moveOffset`); the
+  // release shifts their pixels by whole device pixels (no resampling) and moves references by
+  // their corners, one undo step for all. Not the marquee machinery, which is built around one
+  // layer. Content dragged past the canvas edge is cut off at the release (undo brings it back).
+  let moveGesture: { start: { x: number; y: number }; layers: Layer[] } | null = null;
+
+  function moveStroke(points: InputPoint[], done: boolean) {
+    if (!layers) return;
+    const p = points[points.length - 1];
+    if (!moveGesture) {
+      if (points.length !== 1 || done) return; // a refused press: ignore the rest of it
+      const picks = app.layerSelection.filter((id) => layers!.findNode(id));
+      const found = layersToMove(layers.tree, picks.length > 0 ? picks : [layers.activeId]);
+      const left = found.locked + found.hidden;
+      if (found.ids.length === 0) {
+        return flashStatus(
+          found.locked > 0 ? "Locked — nothing to move" : "Hidden — nothing to move",
+        );
+      }
+      if (left > 0) {
+        flashStatus(`Moving ${found.ids.length}; leaving ${left} locked or hidden`);
+      }
+      // A lifted selection or an Outline preview is unfinished pixels on one of them: settle first.
+      if (selection?.hasFloating) resolveFloat(true);
+      if (outlineActive()) cancelOutline();
+      moveGesture = { start: p, layers: found.ids.map((id) => layers!.findLayer(id)!) };
+      return;
+    }
+    // Whole device pixels, so the release shifts pixels without resampling them.
+    const dpr = docDpr();
+    const dx = Math.round((p.x - moveGesture.start.x) * dpr) / dpr;
+    const dy = Math.round((p.y - moveGesture.start.y) * dpr) / dpr;
+    if (!done) {
+      layers.moveOffset = { ids: new Set(moveGesture.layers.map((l) => l.id)), dx, dy };
+      scheduleComposite();
+      return;
+    }
+    const moved = moveGesture.layers;
+    moveGesture = null;
+    layers.moveOffset = null;
+    if (dx === 0 && dy === 0) {
+      layers.composite();
+      return;
+    }
+    const edits = moved.map((layer) => {
+      const before = layers!.snapshotOf(layer);
+      const refBefore = layer.ref;
+      if (layer.ref) {
+        layer.ref = {
+          src: layer.ref.src,
+          corners: layer.ref.corners.map((c) => ({ x: c.x + dx, y: c.y + dy })) as Corners,
+        };
+        layers!.renderRef(layer);
+      } else {
+        const tmp = document.createElement("canvas");
+        tmp.width = layer.canvas.width;
+        tmp.height = layer.canvas.height;
+        tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+        layer.ctx.save();
+        layer.ctx.resetTransform();
+        layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        layer.ctx.drawImage(tmp, Math.round(dx * dpr), Math.round(dy * dpr));
+        layer.ctx.restore();
+      }
+      return { layer, before, refBefore };
+    });
+    pushLayersEdit(layers, edits);
+    layers.composite();
+    bumpLayerVersion();
+  }
+
   function handleStroke(rawPoints: InputPoint[], done: boolean) {
     if (rawPoints.length === 0 || !layers) return;
     // The rest of a stroke that a tool switch already committed (see setTool).
@@ -1057,6 +1143,11 @@
         else app.brushSettings.color = color;
         setTool(toolBeforeEyedropper);
       }
+      return;
+    }
+
+    if (app.currentTool === "move") {
+      moveStroke(points, done);
       return;
     }
 
@@ -1522,6 +1613,7 @@
     if (e.key === "e") setTool("eraser");
     if (e.key === "s") setTool("select");
     if (e.key === "l") setTool("lasso");
+    if (e.key === "v") setTool("move");
     if (e.key === "g") setTool("fill");
     if (e.key === "i") setTool("eyedropper");
 
@@ -2786,7 +2878,9 @@
   function syncRefHandles() {
     if (!layersReady || !selection) return;
     const layer = layers.active;
-    const want = !!layer.ref && !refHandlesBlock(layer) && !outlineActive();
+    // Not under the Move tool: there a drag moves the whole layer, reference or not.
+    const want =
+      !!layer.ref && !refHandlesBlock(layer) && !outlineActive() && app.currentTool !== "move";
     // Still showing, for this layer, at the placement it has (undo/redo replaces `ref`)?
     const current =
       !!refTransform &&

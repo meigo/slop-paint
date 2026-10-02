@@ -8,7 +8,8 @@ import { PressureCurve } from "./pressure-curve";
 import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
 import { isAppleTouch } from "./share";
 
-export type Tool = "brush" | "eraser" | "fill" | "select" | "lasso" | "eyedropper" | "outline";
+export type Tool =
+  "brush" | "eraser" | "fill" | "select" | "lasso" | "move" | "eyedropper" | "outline";
 
 interface AppStateShape {
   currentTool: Tool;

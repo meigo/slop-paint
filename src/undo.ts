@@ -27,6 +27,16 @@ export function setOnHistoryApplied(fn: () => void) {
  *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
  *  not the whole layer twice over. */
 export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData) {
+  const d = pixelDiff(layers, layer, before);
+  const put = (side: "was" | "now") => {
+    d.put(side);
+    hooks.onHistoryApplied();
+  };
+  history.push({ undo: () => put("was"), redo: () => put("now"), bytes: d.bytes });
+}
+
+/** The tiles of `layer` that changed since `before`, both sides, and how to put either back. */
+function pixelDiff(layers: LayerManager, layer: Layer, before: ImageData) {
   const full = layers.snapshotOf(layer);
   const w = full.width;
   const sameSize = before.width === w && before.height === full.height;
@@ -37,11 +47,35 @@ export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageD
         now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
       }))
     : [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
+  return {
+    put: (side: "was" | "now") => {
+      for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
+    },
+    bytes: tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0),
+  };
+}
+
+/** Record a change already made to several layers at once as ONE step (the Move tool,
+ *  2026-10-02): each layer's changed tiles, and a reference's placement before and after (its
+ *  pixels are drawn from it, so undo must put both back). */
+export function pushLayersEdit(
+  layers: LayerManager,
+  edits: { layer: Layer; before: ImageData; refBefore?: RefPlacement }[],
+) {
+  const parts = edits.map((e) => ({
+    layer: e.layer,
+    diff: pixelDiff(layers, e.layer, e.before),
+    refBefore: e.refBefore,
+    refAfter: e.layer.ref,
+  }));
   const put = (side: "was" | "now") => {
-    for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
+    for (const p of parts) {
+      p.diff.put(side);
+      if (p.refBefore || p.refAfter) p.layer.ref = side === "was" ? p.refBefore : p.refAfter;
+    }
     hooks.onHistoryApplied();
   };
-  const bytes = tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0);
+  const bytes = parts.reduce((sum, p) => sum + p.diff.bytes, 0);
   history.push({ undo: () => put("was"), redo: () => put("now"), bytes });
 }
 

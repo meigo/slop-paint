@@ -892,6 +892,57 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Move tool: pick two rows, drag with the pen; the ink's centre shifts by the drag, one Undo
+    // puts it back exactly.
+    const centre = () =>
+      page.evaluate(() => {
+        const c = document.querySelector(".canvas-checkerboard + canvas");
+        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        let sx = 0;
+        let sy = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i] + d[i + 1] + d[i + 2] < 300) {
+            const p = i / 4;
+            sx += p % c.width;
+            sy += Math.floor(p / c.width);
+            n++;
+          }
+        }
+        return {
+          n,
+          x: n ? sx / n : 0,
+          y: n ? sy / n : 0,
+          scale: c.width / c.getBoundingClientRect().width,
+        };
+      });
+    const before = await centre();
+    await page.getByRole("button", { name: "Select", exact: true }).tap();
+    // The layers with ink on them (the active row starts picked; an empty one moves nothing).
+    for (const name of ["Inks", "Layer 1"]) {
+      await page.locator("[data-row-id]", { hasText: name }).first().tap();
+    }
+    await page.locator('button[title^="Move (V)"]').tap();
+    const a = at(0.5, 0.5);
+    await pen(line(a, { x: a.x + 60, y: a.y + 30 }), { n: 10 });
+    await page.waitForTimeout(300);
+    const after = await centre();
+    await shot(`${String(n).padStart(2, "0")}-moved`);
+    await undo();
+    await page.waitForTimeout(300);
+    const back = await centre();
+    await page.getByRole("button", { name: "Done", exact: true }).tap();
+    await tapTool("Brush (B)");
+    const dx = (after.x - before.x) / before.scale;
+    const dy = (after.y - before.y) / before.scale;
+    return [
+      dx > 5 && dy > 2 && Math.abs(back.x - before.x) < 0.01 && back.n === before.n,
+      `[sim] Move (V) on 2 picked rows: the ink's centre moved (${dx.toFixed(1)}, ${dy.toFixed(1)}) screen px for a (60, 30) drag; Undo put it back exactly`,
+      "move-tool",
+    ];
+  });
+
+  await step(async () => {
     const before = await page.locator(".layer-item.ui-selected").innerText();
     await page.locator(".layer-item", { hasText: "Layer 1" }).first().tap();
     await page.waitForTimeout(200);

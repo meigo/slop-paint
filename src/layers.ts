@@ -248,6 +248,32 @@ export function groupNodes(tree: LayerNode[], ids: Iterable<number>, group: Laye
   return true;
 }
 
+/** The drawing layers the Move tool moves for the picked rows (a group: every layer inside it), top
+ *  first — less the ones it must leave: locked (itself or by a group) or out of sight (hidden,
+ *  itself or by a group), counted so the status bar can say why. */
+export function layersToMove(
+  tree: LayerNode[],
+  ids: Iterable<number>,
+): { ids: number[]; locked: number; hidden: number } {
+  const out: number[] = [];
+  let locked = 0;
+  let hidden = 0;
+  const take = (n: LayerNode) => {
+    if (n.type === "group") {
+      for (let i = n.children.length - 1; i >= 0; i--) take(n.children[i]);
+      return;
+    }
+    if (lockedInTree(tree, n.id)) locked++;
+    else if (hiddenInTree(tree, n.id)) hidden++;
+    else out.push(n.id);
+  };
+  for (const id of topSelection(tree, ids)) {
+    const at = locateNode(tree, id);
+    if (at) take(at.siblings[at.index]);
+  }
+  return { ids: out, locked, hidden };
+}
+
 /** Whether node `id` refuses edits: its own lock, or any enclosing group's. */
 export function lockedInTree(tree: LayerNode[], id: number): boolean {
   const walk = (nodes: LayerNode[], inherited: boolean): boolean | null => {
@@ -359,6 +385,9 @@ export class LayerManager {
    *  the layer's place in the stack with its opacity and blend mode. Screen only: exports draw a
    *  float into its layer first (`withFloatApplied`). */
   floatPreview: (() => FloatPreview | null) | null = null;
+  /** The Move tool's drag in progress (2026-10-02): these layers are DRAWN offset by (dx, dy)
+   *  document units, their pixels untouched until the release. Screen only. */
+  moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
   /** The float's layer, combined with the float each frame (reused, resized as needed). */
   private floatScratch: HTMLCanvasElement | null = null;
 
@@ -872,7 +901,13 @@ export class LayerManager {
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
           const source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
-          ctx.drawImage(source, 0, 0, w, h);
+          const off = this.moveOffset?.ids.has(node.id) ? this.moveOffset : null;
+          if (off) {
+            const k = w / this.docWidth;
+            ctx.drawImage(source, off.dx * k, off.dy * k, w, h);
+          } else {
+            ctx.drawImage(source, 0, 0, w, h);
+          }
         } else {
           drawNodes(node.children, alpha);
         }
