@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { colourDistance, softCoverage, SOFT_RANGE_PER_PX } from "../fill";
+import { colourDistance, expandedCoverage, softCoverage, SOFT_RANGE_PER_PX } from "../fill";
+import { distanceToMask } from "../mask-ops";
 
 const row = (bits: number[]) => Uint8Array.from(bits);
 const cover = (dist: number[], region: number[], tol: number, soft: number) => [
@@ -41,5 +42,31 @@ describe("colourDistance", () => {
     const data = Uint8ClampedArray.from([255, 0, 0, 100, 0, 0, 0, 0]);
     expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 0 })]).toEqual([100, 0]);
     expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 255 })]).toEqual([255, 255]);
+  });
+});
+
+describe("expandedCoverage / distanceToMask", () => {
+  it("measures true distance to the mask", () => {
+    const m = new Uint8Array(25);
+    m[12] = 1; // the centre of 5×5
+    const d = distanceToMask(m, 5, 5);
+    expect(d[12]).toBe(0);
+    expect(d[13]).toBeCloseTo(1);
+    expect(d[18]).toBeCloseTo(Math.SQRT2);
+    expect(d[24]).toBeCloseTo(2 * Math.SQRT2);
+    expect(distanceToMask(new Uint8Array(4), 2, 2)[0]).toBe(Infinity);
+  });
+
+  it("grows solid to Expand px, then fades over the feather", () => {
+    const m = row([1, 0, 0, 0, 0, 0, 0]);
+    // Expand 2, Soft 0.5 (feather 1 px): solid to 2, half at 2.5 — pixel 3 is 3 away: 0.
+    expect([...expandedCoverage(m, 7, 1, 2, 0.5)]).toEqual([255, 255, 255, 0, 0, 0, 0]);
+    // Soft 1 (feather 2 px): pixel 3 → (2 + 2 − 3) / 2 = 0.5, pixel 4 → 0.
+    expect([...expandedCoverage(m, 7, 1, 2, 1)]).toEqual([255, 255, 255, 128, 0, 0, 0]);
+  });
+
+  it("is the old whole-pixel dilation at Soft 0", () => {
+    const m = row([1, 0, 0, 0]);
+    expect([...expandedCoverage(m, 4, 1, 2, 0)]).toEqual([255, 255, 255, 0]);
   });
 });

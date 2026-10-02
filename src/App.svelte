@@ -1852,9 +1852,13 @@
     // Fill enclosed only paints EMPTY interiors, which alpha lock refuses: it could never land.
     if (layer.alphaLock)
       return flashStatus("Alpha lock is on — Fill enclosed only paints empty areas");
+    // With Soft, Expand is applied when painting (`fillRegionBehind`), so its edge is feathered;
+    // at Soft 0 the region comes back grown in whole pixels, as before.
+    const soft = app.fillSettings.softEdge ?? 0;
+    const expand = app.fillSettings.expand ?? 0;
     const { region, area } = enclosedFillRegion(layer.canvas, {
       gap: app.fillEnclosedGap,
-      expand: app.fillSettings.expand,
+      expand: soft > 0 ? 0 : expand,
     });
     if (area === 0) {
       return flashStatus(
@@ -1871,7 +1875,7 @@
       tmp.height = layer.canvas.height;
       const tctx = tmp.getContext("2d", { willReadFrequently: true })!;
       tctx.drawImage(layer.canvas, 0, 0);
-      fillRegionBehind(tctx, region, color, app.fillSettings.softEdge);
+      fillRegionBehind(tctx, region, color, soft, soft > 0 ? expand : 0);
       layer.ctx.save();
       try {
         selection.applyClip(layer.ctx);
@@ -1881,7 +1885,7 @@
         layer.ctx.restore();
       }
     } else {
-      fillRegionBehind(layer.ctx, region, color, app.fillSettings.softEdge);
+      fillRegionBehind(layer.ctx, region, color, soft, soft > 0 ? expand : 0);
     }
     if (sameImageData(before, layers.getSnapshot())) {
       return flashStatus("Nothing filled — the enclosed areas are outside the selection");
