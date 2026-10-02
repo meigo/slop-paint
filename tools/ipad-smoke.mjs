@@ -1036,28 +1036,56 @@ async function main(page) {
   });
 
   await step(async () => {
-    const before = await page
-      .getByRole("button", { name: /^Document/ })
-      .first()
-      .tap()
-      .then(() => page.getByRole("menuitem", { name: /^Resize canvas/ }).innerText());
-    await page.getByRole("menuitem", { name: /^Resize canvas/ }).tap();
+    const sizeLabel = async () => {
+      await page
+        .getByRole("button", { name: /^Document/ })
+        .first()
+        .tap();
+      const t = (await page.getByRole("menuitem", { name: /^Resize…/ }).innerText())
+        .replace(/\s+/g, " ")
+        .trim();
+      return t;
+    };
+    const before = await sizeLabel();
+    await page.getByRole("menuitem", { name: /^Resize…/ }).tap();
     const w = page.locator("label", { hasText: "Width" }).locator("input").last();
     await w.fill("800");
     await page.getByRole("button", { name: "Resize", exact: true }).tap();
     await page.waitForTimeout(500);
-    await page
-      .getByRole("button", { name: /^Document/ })
-      .first()
-      .tap();
-    const after = await page.getByRole("menuitem", { name: /^Resize canvas/ }).innerText();
+    const cropped = await sizeLabel();
+    await tap(offPage);
+    await page.waitForTimeout(200);
+
+    // Scale drawing, ratio locked: half the width sets half the height, and the ink is still there.
+    const page0 = await page.locator(".canvas-checkerboard + canvas").boundingBox();
+    const ink0 = (await pixels({ x: page0.x, y: page0.y, w: page0.width, h: page0.height })).dark;
+    await sizeLabel();
+    await page.getByRole("menuitem", { name: /^Resize…/ }).tap();
+    await page.getByRole("button", { name: "Scale drawing" }).tap();
+    await page.getByRole("button", { name: /Keep ratio/ }).tap();
+    await w.fill("400");
+    await w.dispatchEvent("input");
+    const h = await page
+      .locator("label", { hasText: "Height" })
+      .locator("input")
+      .last()
+      .inputValue();
+    await shot(`${String(n).padStart(2, "0")}-resize-dialog`);
+    await page.getByRole("button", { name: "Resize", exact: true }).tap();
+    await page.waitForTimeout(500);
+    const scaled = await sizeLabel();
     await tap(offPage);
     await page.waitForTimeout(200);
     await fit();
     await refreshPage();
+    const ink1 = (await pixels({ x: pb.x, y: pb.y, w: pb.width, h: pb.height })).dark;
     return [
-      /800\s*×/.test(after),
-      `Document ▸ Resize canvas… (${before.replace(/\s+/g, " ").trim()} → ${after.replace(/\s+/g, " ").trim()})`,
+      /800\s*×/.test(cropped) &&
+        h === "540" &&
+        /400\s*×\s*540/.test(scaled) &&
+        ink0 > 100 &&
+        ink1 > 100,
+      `Document ▸ Resize…: crop to width 800 (${before} → ${cropped}), then Scale drawing with the ratio locked to width 400 (height follows: ${h}; ${scaled}), the drawing still there (${ink0} → ${ink1} dark px on screen)`,
       "resize",
     ];
   });

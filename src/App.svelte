@@ -871,7 +871,13 @@
     showNewDocDialog = false;
   }
 
-  function resizeDocument(width: number, height: number, anchorX: number, anchorY: number) {
+  function resizeDocument(
+    width: number,
+    height: number,
+    anchorX: number,
+    anchorY: number,
+    mode: "canvas" | "scale" = "canvas",
+  ) {
     if (!layers) return;
     if (outlineActive()) cancelOutline();
     // A float and its Cancel snapshot are in the old canvas's coordinates: Apply landed off by the
@@ -879,7 +885,9 @@
     if (selection?.hasFloating) resolveFloat(true);
     app.docWidth = width;
     app.docHeight = height;
-    layers.setDocumentSize(width, height, anchorX, anchorY);
+    // Scale resamples every layer to the new size; Canvas crops or extends around the anchor.
+    if (mode === "scale") layers.scaleDocument(width, height);
+    else layers.setDocumentSize(width, height, anchorX, anchorY);
     history.clear(); // snapshots are the old canvas size
     resizeCanvas();
     layers.composite();

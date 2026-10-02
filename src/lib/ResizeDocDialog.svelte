@@ -1,5 +1,10 @@
 <script lang="ts">
+  import { Link, Unlink } from "@lucide/svelte";
   import { app } from "../appState.svelte.js";
+  import { linkedSize, MAX_DOC_PX } from "../resize";
+
+  /** "canvas": crop or extend around the anchor (moves nothing); "scale": resize the drawing. */
+  export type ResizeMode = "canvas" | "scale";
 
   let {
     open = false,
@@ -7,7 +12,13 @@
     onCancel,
   }: {
     open: boolean;
-    onConfirm: (width: number, height: number, anchorX: number, anchorY: number) => void;
+    onConfirm: (
+      width: number,
+      height: number,
+      anchorX: number,
+      anchorY: number,
+      mode: ResizeMode,
+    ) => void;
     onCancel: () => void;
   } = $props();
 
@@ -15,6 +26,10 @@
   let height = $state(app.docHeight);
   let anchorX = $state(0.5);
   let anchorY = $state(0.5);
+  let mode = $state<ResizeMode>("canvas");
+  /** Keep the document's width : height while typing one side (2026-10-02). Kept between
+   *  openings this session; off at first. */
+  let locked = $state(false);
 
   // Reset values when dialog opens
   $effect(() => {
@@ -25,6 +40,20 @@
       anchorY = 0.5;
     }
   });
+
+  function onWidthInput(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+    if (locked && Number.isFinite(v)) height = linkedSize(v, app.docWidth, app.docHeight);
+  }
+  function onHeightInput(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+    if (locked && Number.isFinite(v)) width = linkedSize(v, app.docHeight, app.docWidth);
+  }
+  function toggleLock() {
+    locked = !locked;
+    // Locking takes the ratio from the document: bring the height in line with the width.
+    if (locked) height = linkedSize(width, app.docWidth, app.docHeight);
+  }
 
   const anchors: { x: number; y: number }[] = [
     { x: 0, y: 0 },
@@ -39,9 +68,9 @@
   ];
 
   function confirm() {
-    const w = Math.max(1, Math.min(8192, Math.round(width)));
-    const h = Math.max(1, Math.min(8192, Math.round(height)));
-    onConfirm(w, h, anchorX, anchorY);
+    const w = Math.max(1, Math.min(MAX_DOC_PX, Math.round(width)));
+    const h = Math.max(1, Math.min(MAX_DOC_PX, Math.round(height)));
+    onConfirm(w, h, anchorX, anchorY, mode);
   }
 
   function onWindowKey(e: KeyboardEvent) {
@@ -71,7 +100,27 @@
     }}
   >
     <div class="flex w-80 flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-xl">
-      <h2 class="text-sm font-semibold text-text">Resize Canvas</h2>
+      <h2 class="text-sm font-semibold text-text">Resize</h2>
+
+      <!-- Scale the drawing with the page, or change the page around the drawing. -->
+      <div class="flex gap-px rounded-md border border-border p-px text-xs">
+        <button
+          class="h-7 flex-1 rounded {mode === 'scale'
+            ? 'ui-on'
+            : 'text-text-secondary hover:bg-surface-hover'}"
+          aria-pressed={mode === "scale"}
+          title="Scale the drawing to the new size — every layer stretches with the page"
+          onclick={() => (mode = "scale")}>Scale drawing</button
+        >
+        <button
+          class="h-7 flex-1 rounded {mode === 'canvas'
+            ? 'ui-on'
+            : 'text-text-secondary hover:bg-surface-hover'}"
+          aria-pressed={mode === "canvas"}
+          title="Change the canvas around the drawing — crops or adds space at the anchor; the drawing keeps its size"
+          onclick={() => (mode = "canvas")}>Crop / extend</button
+        >
+      </div>
 
       <div class="flex flex-col gap-2">
         <span class="text-[11px] text-text-muted">Current: {app.docWidth} x {app.docHeight}</span>
@@ -82,6 +131,7 @@
             min="1"
             max="8192"
             bind:value={width}
+            oninput={onWidthInput}
             class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
@@ -96,6 +146,7 @@
             min="1"
             max="8192"
             bind:value={height}
+            oninput={onHeightInput}
             class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
@@ -103,9 +154,29 @@
           />
           <span class="text-text-muted">px</span>
         </label>
+        <button
+          class="flex h-7 w-fit items-center gap-1.5 rounded border px-2 text-xs {locked
+            ? 'ui-on'
+            : 'border-border text-text-secondary hover:bg-surface-hover'}"
+          aria-pressed={locked}
+          title={locked
+            ? "Ratio locked — typing one side sets the other; tap to unlock"
+            : "Lock the ratio: keep the document's width to height while typing one side"}
+          onclick={toggleLock}
+        >
+          {#if locked}<Link size={14} />{:else}<Unlink size={14} />{/if}
+          Keep ratio
+        </button>
       </div>
 
-      <div class="flex flex-col gap-1.5">
+      <!-- Dimmed, not removed, in Scale mode, so nothing moves: scaling keeps the whole drawing. -->
+      <div
+        class="flex flex-col gap-1.5 {mode === 'scale' ? 'pointer-events-none opacity-40' : ''}"
+        aria-disabled={mode === "scale"}
+        title={mode === "scale"
+          ? "Anchor — not used when scaling: the whole drawing scales with the page"
+          : "Anchor — where the drawing stays when the canvas is cropped or extended"}
+      >
         <span class="text-[11px] text-text-muted">Anchor</span>
         <div class="grid w-16 grid-cols-3 gap-1">
           {#each anchors as a}
