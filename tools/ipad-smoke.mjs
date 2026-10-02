@@ -849,6 +849,48 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Select: tap two rows, Group puts them in a new group; pick two, Delete removes both; Undo.
+    const names = () => page.$$eval("[data-row-id]", (els) => els.map((e) => e.textContent.trim()));
+    await page.locator('button[title="Add layer"]').tap();
+    await page.locator('button[title="Add layer"]').tap();
+    await page.waitForTimeout(200);
+    const n0 = await names();
+    const row = (name) => page.locator("[data-row-id]", { hasText: name }).first();
+    await page.getByRole("button", { name: "Select", exact: true }).tap();
+    // The active row starts picked; add the third row, then group.
+    await row(n0[2]).tap();
+    await page.waitForTimeout(150);
+    const picked = await page.getByRole("button", { name: /^Done/ }).innerText();
+    await shot(`${String(n).padStart(2, "0")}-select-mode`);
+    await page.locator('button[title^="Group the 2 picked rows"]').tap();
+    await page.waitForTimeout(250);
+    const grouped = await page.locator('[title^="Layer group"]').count();
+    const n1 = await names();
+    await undo();
+    await page.waitForTimeout(250);
+    const n2 = await names();
+    // Pick two and delete them.
+    await page.getByRole("button", { name: "Select", exact: true }).tap();
+    await row(n0[1]).tap();
+    await page.locator('button[title^="Delete the 2 picked rows"]').tap();
+    await page.waitForTimeout(250);
+    const n3 = await names();
+    await undo();
+    await page.waitForTimeout(250);
+    const n4 = await names();
+    return [
+      picked.includes("2") &&
+        grouped === 1 &&
+        n1.length === n0.length + 1 &&
+        n2.join("|") === n0.join("|") &&
+        n3.length === n0.length - 2 &&
+        n4.join("|") === n0.join("|"),
+      `Select: picked ${picked.replace(/\s+/g, " ")}, Group made a group (${n1.join(", ")}), Undo; Delete of 2 picked rows (${n0.length} → ${n3.length}), Undo (${n4.length})`,
+      "multi-select",
+    ];
+  });
+
+  await step(async () => {
     const before = await page.locator(".layer-item.ui-selected").innerText();
     await page.locator(".layer-item", { hasText: "Layer 1" }).first().tap();
     await page.waitForTimeout(200);

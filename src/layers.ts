@@ -171,6 +171,83 @@ function childrenOf(tree: LayerNode[], parentId: number | null): LayerNode[] | n
   return parent?.type === "group" ? parent.children : null;
 }
 
+/** Every node's id in the order the layer panel lists them: top first, a group before its members
+ *  (collapsed or not). */
+export function rowOrder(tree: LayerNode[]): number[] {
+  const ids: number[] = [];
+  const list = (nodes: LayerNode[]) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      ids.push(nodes[i].id);
+      const n = nodes[i];
+      if (n.type === "group") list(n.children);
+    }
+  };
+  list(tree);
+  return ids;
+}
+
+/** The selected nodes that aren't inside another selected group (a selected group already takes
+ *  its members along), top first as the panel lists them. Ids not in the tree are dropped. */
+export function topSelection(tree: LayerNode[], ids: Iterable<number>): number[] {
+  const set = new Set(ids);
+  const out: number[] = [];
+  const walk = (nodes: LayerNode[], inside: boolean) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      const picked = !inside && set.has(n.id);
+      if (picked) out.push(n.id);
+      if (n.type === "group") walk(n.children, inside || picked);
+    }
+  };
+  walk(tree, false);
+  return out;
+}
+
+/** How many drawing layers would be left after removing `ids` (with everything inside them). */
+export function layersLeftAfter(tree: LayerNode[], ids: Iterable<number>): number {
+  const gone = new Set(topSelection(tree, ids));
+  const count = (nodes: LayerNode[]): number =>
+    nodes.reduce(
+      (sum, n) => (gone.has(n.id) ? sum : sum + (n.type === "layer" ? 1 : count(n.children))),
+      0,
+    );
+  return count(tree);
+}
+
+/** Remove the selected nodes (with their members). Returns how many top-level nodes went. */
+export function removeNodes(tree: LayerNode[], ids: Iterable<number>): number {
+  const top = topSelection(tree, ids);
+  for (const id of top) {
+    const at = locateNode(tree, id);
+    if (at) at.siblings.splice(at.index, 1);
+  }
+  return top.length;
+}
+
+/**
+ * Put the selected nodes into `group` (emptied first), in the place of the TOPMOST one, keeping
+ * their stacking order even when they came from different groups — as Photoshop's Group Layers
+ * with several layers selected (2026-10-02). A selected group comes along whole. False when
+ * nothing selected is in the tree.
+ */
+export function groupNodes(tree: LayerNode[], ids: Iterable<number>, group: LayerGroup): boolean {
+  const top = topSelection(tree, ids);
+  if (top.length === 0) return false;
+  const nodes = top.map((id) => {
+    const at = locateNode(tree, id)!;
+    return at.siblings[at.index];
+  });
+  // The group takes the topmost node's place first, so removing the others can't shift it.
+  const first = locateNode(tree, top[0])!;
+  first.siblings[first.index] = group;
+  for (const id of top.slice(1)) {
+    const at = locateNode(tree, id);
+    if (at) at.siblings.splice(at.index, 1);
+  }
+  group.children = nodes.reverse(); // bottom first, as every array in the tree
+  return true;
+}
+
 /** Whether node `id` refuses edits: its own lock, or any enclosing group's. */
 export function lockedInTree(tree: LayerNode[], id: number): boolean {
   const walk = (nodes: LayerNode[], inherited: boolean): boolean | null => {
@@ -624,6 +701,27 @@ export class LayerManager {
       }
     }
     this.onChange();
+  }
+
+  /** Delete several rows at once (a selected group with its members), keeping at least one
+   *  drawing layer: 0 and nothing removed when none would be left. */
+  removeSelected(ids: Iterable<number>): number {
+    if (layersLeftAfter(this.tree, ids) < 1) return 0;
+    const removed = removeNodes(this.tree, ids);
+    if (!this.findNode(this.activeId)) {
+      const remaining = this.flatLayers();
+      if (remaining.length > 0) this.activeId = remaining[remaining.length - 1].id;
+    }
+    this.onChange();
+    return removed;
+  }
+
+  /** Put several rows into a new group in the topmost one's place (`groupNodes`). */
+  groupSelected(ids: Iterable<number>): LayerGroup | null {
+    const group = this.newGroup();
+    if (!groupNodes(this.tree, ids, group)) return null;
+    this.onChange();
+    return group;
   }
 
   setActive(id: number) {
