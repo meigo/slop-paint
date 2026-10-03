@@ -100,7 +100,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   past the last row to take it out at the bottom; a locked group takes nothing in or out; a hidden one takes layers and hides them with it),
   double-tap (or double-click) a name to rename; **Select** in the panel's header picks several
   rows (or Cmd/Ctrl+click, Shift+click) to **group** or **delete** them together, or drag them
-  as one block by any picked row's grip
+  as one block by any picked row's grip (the floating row shows how many, stacked like a pile)
 - **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
   other modes are kept too)
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
