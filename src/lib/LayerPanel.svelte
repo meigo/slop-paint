@@ -884,6 +884,20 @@
         {@render nodeList(layers.tree)}
       {/key}
       {#if ghost}
+        <!-- Several picked rows dragged (2026-10-03, as slop-vector-editor): the edges of one or
+             two fainter rows peek out below the ghost, a pile of cards — never more than two. Not
+             for a group's block: that is one node. -->
+        {#each [1, 2].slice(0, Math.min(ghost.count - 1, 2)) as n (n)}
+          <div
+            data-drag-stack
+            class={[
+              "pointer-events-none absolute border-x border-b bg-surface-raised shadow-md",
+              n === 1 ? "z-9 border-accent/60" : "z-8 border-accent/30",
+            ]}
+            style="top: {ghost.top + 6 * n}px; height: {ghost.height}px; left: {8 *
+              n}px; right: {8 * n}px"
+          ></div>
+        {/each}
         <!-- The grabbed row, following the pointer. -->
         <div
           data-drag-ghost
