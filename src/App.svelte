@@ -7,7 +7,7 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange } from "./brush";
-  import { pathSmoothRadius, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
+  import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
   import { dragBlock } from "./lib/layer-drop";
   import { drawInkStroke } from "./ink-brush";
@@ -441,6 +441,8 @@
     washGrain?: number;
     washWobble?: number;
     washMultiply?: boolean;
+    smoothWobble?: number;
+    nibWobble?: number;
     pencilGrade?: string;
     charcoalTexture?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
@@ -491,6 +493,8 @@
       washGrain: app.brushSettings.washGrain,
       washWobble: app.brushSettings.washWobble,
       washMultiply: app.brushSettings.washMultiply,
+      smoothWobble: app.brushSettings.smoothWobble,
+      nibWobble: app.brushSettings.nibWobble,
       pencilGrade: app.brushSettings.pencilGrade,
       charcoalTexture: app.brushSettings.charcoalTexture,
     };
@@ -545,6 +549,8 @@
       if (data.washGrain != null) app.brushSettings.washGrain = data.washGrain;
       if (data.washWobble != null) app.brushSettings.washWobble = data.washWobble;
       if (data.washMultiply != null) app.brushSettings.washMultiply = data.washMultiply;
+      if (data.smoothWobble != null) app.brushSettings.smoothWobble = data.smoothWobble;
+      if (data.nibWobble != null) app.brushSettings.nibWobble = data.nibWobble;
       if (data.pencilGrade != null) app.brushSettings.pencilGrade = data.pencilGrade;
       if (data.charcoalTexture != null) app.brushSettings.charcoalTexture = data.charcoalTexture;
       if (data.curveCp1 && data.curveCp2) {
@@ -1421,6 +1427,8 @@
       alphaLock: layer.alphaLock,
       // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
       pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
+      // A resting pen's jitter is on screen too (`holdRestPressure`).
+      restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
     };
 
     function drawFullStroke(

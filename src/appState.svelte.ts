@@ -87,6 +87,8 @@ export const app: AppStateShape = $state({
     washGrain: 40,
     washWobble: 30,
     washMultiply: true,
+    smoothWobble: 0,
+    nibWobble: 0,
     pencilGrade: "HB",
     charcoalTexture: "medium",
   },

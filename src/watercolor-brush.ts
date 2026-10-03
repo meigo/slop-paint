@@ -1,9 +1,9 @@
 import { outlineOfPath, widthRange, type BrushSettings } from "./brush";
-import { strokeSeed } from "./dry-brush";
 import { hexToRgba } from "./fill";
 import type { InputPoint } from "./input";
 import { distanceToMask } from "./mask-ops";
-import { smoothPath } from "./stroke-smoothing";
+import { holdRestPressure, smoothPath } from "./stroke-smoothing";
+import { lattice2, strokeSeed, wobbleAmp, wobbleOutline, wobbleScale } from "./wobble";
 
 /*
  * Watercolour (2026-10-03): a see-through wash with a darker rim where the pigment gathers as it
@@ -18,53 +18,6 @@ import { smoothPath } from "./stroke-smoothing";
  * keeps last frame's pixels. A distance capped at the rim's width only needs the window grown by
  * that width to be exact (`rimWindowPad`).
  */
-
-/** Smooth 2D value noise in [0, 1], one random value per integer lattice point, cosine-blended. */
-export function noise2(key: number, x: number, y: number): number {
-  const ix = Math.floor(x);
-  const iy = Math.floor(y);
-  const tx = (1 - Math.cos((x - ix) * Math.PI)) / 2;
-  const ty = (1 - Math.cos((y - iy) * Math.PI)) / 2;
-  const a = lattice2(key, ix, iy);
-  const b = lattice2(key, ix + 1, iy);
-  const c = lattice2(key, ix, iy + 1);
-  const d = lattice2(key, ix + 1, iy + 1);
-  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
-}
-
-function lattice2(key: number, x: number, y: number): number {
-  let t = (Math.imul(key ^ x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1) ^ 0x6d2b79f5) >>> 0;
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-}
-
-/**
- * The outline moved in or out by noise of its PAGE position, so a point drawn once lands in the
- * same place every frame however the stroke grows. `amp` (document px) is the most it moves;
- * `scale` (document px) the size of the bumps; a second, finer octave at half the amplitude.
- */
-export function wobbleOutline(
-  outline: number[][],
-  seed: number,
-  amp: number,
-  scale: number,
-): number[][] {
-  if (!(amp > 0) || !(scale > 0)) return outline;
-  const s1 = 1 / scale;
-  const s2 = 2.5 / scale;
-  return outline.map(([x, y, ...rest]) => {
-    const dx = (noise2(seed, x * s1, y * s1) - 0.5) * 2 + (noise2(seed + 2, x * s2, y * s2) - 0.5);
-    const dy =
-      (noise2(seed + 1, x * s1, y * s1) - 0.5) * 2 + (noise2(seed + 3, x * s2, y * s2) - 0.5);
-    return [x + (dx * amp) / 1.5, y + (dy * amp) / 1.5, ...rest];
-  });
-}
-
-/** How far the outline moves at Wobble 0–100, for a stroke `width` document px wide at most. */
-export function wobbleAmp(width: number, wobble: number): number {
-  return (Math.max(0, Math.min(100, wobble)) / 100) * 0.2 * width;
-}
 
 /** The rim's width in document px: a tenth of the widest width, 1–10 px (a real rim is thin
  *  whatever the brush). */
@@ -235,7 +188,10 @@ export function drawWatercolorStroke(
   const sctx = scratch.getContext("2d")!;
 
   const m = ctx.getTransform();
-  const path = smoothPath(points, settings.pathSmoothRadius ?? 0);
+  const path = smoothPath(
+    holdRestPressure(points, settings.restRadius ?? 0),
+    settings.pathSmoothRadius ?? 0,
+  );
   const maxW = widthRange(settings.size, sizeRange).max;
   const amp = wobbleAmp(maxW, settings.washWobble ?? 30);
   const seed = strokeSeed(points[0]);
@@ -243,7 +199,7 @@ export function drawWatercolorStroke(
     outlineOfPath(path, settings.size, sizeRange, done, false, true),
     seed,
     amp,
-    Math.max(3, maxW * 0.35),
+    wobbleScale(maxW),
   );
   if (outline.length < 2) return;
   const rimPx = rimWidth(maxW) * m.a;

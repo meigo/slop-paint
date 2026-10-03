@@ -6,12 +6,9 @@ import {
   GRAIN_TILE,
   grainFactor,
   grainTile,
-  noise2,
   rimWidth,
   rimWindowPad,
   washAlpha,
-  wobbleAmp,
-  wobbleOutline,
 } from "../watercolor-brush";
 
 /** A wavy stroke of `n` points whose pressure changes along it. */
@@ -24,36 +21,6 @@ const wave = (n: number): InputPoint[] =>
   }));
 
 describe("watercolour brush", () => {
-  it("noise2 is smooth, in 0–1, and the same for the same key", () => {
-    for (let i = 0; i < 200; i++) {
-      const v = noise2(7, i * 0.37, i * 0.11);
-      expect(v).toBeGreaterThanOrEqual(0);
-      expect(v).toBeLessThanOrEqual(1);
-      expect(noise2(7, i * 0.37, i * 0.11)).toBe(v);
-      expect(Math.abs(noise2(7, i * 0.37 + 0.01, i * 0.11) - v)).toBeLessThan(0.05);
-    }
-    expect(noise2(7, 3.5, 2.5)).not.toBe(noise2(8, 3.5, 2.5));
-  });
-
-  it("wobble moves a point by its page position alone, at most the amplitude", () => {
-    const pts = [
-      [10, 20, 0.5],
-      [40.5, 33, 0.5],
-    ];
-    const a = wobbleOutline(pts, 3, 4, 10);
-    // the same point in another outline lands in the same place
-    const b = wobbleOutline([[0, 0, 0.5], ...pts.slice(1)], 3, 4, 10);
-    expect(b[1]).toEqual(a[1]);
-    for (let i = 0; i < pts.length; i++) {
-      expect(Math.hypot(a[i][0] - pts[i][0], a[i][1] - pts[i][1])).toBeLessThanOrEqual(
-        4 * Math.SQRT2,
-      );
-    }
-    expect(wobbleOutline(pts, 3, 0, 10)).toBe(pts);
-    expect(wobbleAmp(100, 0)).toBe(0);
-    expect(wobbleAmp(100, 100)).toBeCloseTo(20);
-  });
-
   it("the outline's start stays put as the stroke grows (steady spacing)", () => {
     const pts = wave(200);
     const early = outlineOfPath(pts.slice(0, 120), 20, 3, false, false, true);

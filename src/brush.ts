@@ -1,6 +1,7 @@
 import getStroke from "perfect-freehand";
 import type { InputPoint } from "./input";
-import { smoothPath } from "./stroke-smoothing";
+import { holdRestPressure, smoothPath } from "./stroke-smoothing";
+import { strokeSeed, wobbleAmp, wobbleOutline, wobbleScale } from "./wobble";
 
 /** Pen pressure span, same as slop-animator's Press slider. 1 draws at a constant width. */
 export const PRESS_MIN = 1;
@@ -51,6 +52,12 @@ export interface BrushSettings {
   smoothing: number;
   /** Smooth brush: path-averaging radius in document px (`stroke-smoothing.ts`). */
   pathSmoothRadius?: number;
+  /** Smooth and Watercolour: how far a resting pen may jitter, document px (`holdRestPressure`). */
+  restRadius?: number;
+  /** Smooth only, 0–100: how uneven the outline is (`wobble.ts`); 0 by default. */
+  smoothWobble?: number;
+  /** Calligraphy only, 0–100: how uneven the nib's edge is; 0 by default. */
+  nibWobble?: number;
   isEraser: boolean;
   drawBehind: boolean;
   alphaLock: boolean;
@@ -102,8 +109,16 @@ export function drawStroke(
     done,
     settings.taper ?? false,
     settings.sharpCorners ?? false,
+    settings.restRadius ?? 0,
   );
   if (strokePoints.length < 2) return;
+  const maxW = widthRange(settings.size, sizeRange).max;
+  const outline = wobbleOutline(
+    strokePoints,
+    strokeSeed(points[0]),
+    wobbleAmp(maxW, settings.smoothWobble ?? 0),
+    wobbleScale(maxW),
+  );
 
   ctx.save();
 
@@ -125,7 +140,7 @@ export function drawStroke(
   ctx.fillStyle = settings.color;
   ctx.beginPath();
 
-  const path = getSvgPathFromStroke(strokePoints);
+  const path = getSvgPathFromStroke(outline);
   const path2d = new Path2D(path);
   ctx.fill(path2d);
 
@@ -146,9 +161,10 @@ export function strokeOutline(
   done: boolean,
   taper: boolean = false,
   sharpCorners: boolean = false,
+  restRadius: number = 0,
 ): number[][] {
   return outlineOfPath(
-    smoothPath(points, smoothRadius, sharpCorners),
+    smoothPath(holdRestPressure(points, restRadius), smoothRadius, sharpCorners),
     size,
     sizeRange,
     done,

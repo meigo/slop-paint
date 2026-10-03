@@ -874,6 +874,19 @@
               />
               <span class={valueCls}>{Math.round((app.brushSettings.nibFlatness ?? 0) * 100)}</span>
             </label>
+            <label class={rowCls} title="How uneven the stroke's outline is — 0 is a clean edge">
+              <span class={labelCls}>Wobble</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.nibWobble ?? 0, 0, 100)}
+                bind:value={app.brushSettings.nibWobble}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.nibWobble}</span>
+            </label>
           {/if}
 
           {#if app.brushType === "ink"}
@@ -1039,6 +1052,19 @@
           {/if}
 
           {#if app.brushType === "smooth"}
+            <label class={rowCls} title="How uneven the stroke's outline is — 0 is a clean edge">
+              <span class={labelCls}>Wobble</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.smoothWobble ?? 0, 0, 100)}
+                bind:value={app.brushSettings.smoothWobble}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.smoothWobble}</span>
+            </label>
             <label
               class="flex items-center gap-2 text-xs text-text-secondary"
               title="Taper the stroke's ends to a point instead of capping them"
