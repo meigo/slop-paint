@@ -7,11 +7,12 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange } from "./brush";
-  import { pathSmoothRadius, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
+  import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
   import { dragBlock } from "./lib/layer-drop";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
+  import { drawWatercolorStroke } from "./watercolor-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
   import {
@@ -436,6 +437,12 @@
     dwellPool?: number;
     dryness?: number;
     dryTaper?: number;
+    washEdge?: number;
+    washGrain?: number;
+    washWobble?: number;
+    washMultiply?: boolean;
+    smoothWobble?: number;
+    nibWobble?: number;
     pencilGrade?: string;
     charcoalTexture?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
@@ -482,6 +489,12 @@
       dwellPool: app.brushSettings.dwellPool,
       dryness: app.brushSettings.dryness,
       dryTaper: app.brushSettings.dryTaper,
+      washEdge: app.brushSettings.washEdge,
+      washGrain: app.brushSettings.washGrain,
+      washWobble: app.brushSettings.washWobble,
+      washMultiply: app.brushSettings.washMultiply,
+      smoothWobble: app.brushSettings.smoothWobble,
+      nibWobble: app.brushSettings.nibWobble,
       pencilGrade: app.brushSettings.pencilGrade,
       charcoalTexture: app.brushSettings.charcoalTexture,
     };
@@ -532,6 +545,12 @@
       if (data.dwellPool != null) app.brushSettings.dwellPool = data.dwellPool;
       if (data.dryness != null) app.brushSettings.dryness = data.dryness;
       if (data.dryTaper != null) app.brushSettings.dryTaper = data.dryTaper;
+      if (data.washEdge != null) app.brushSettings.washEdge = data.washEdge;
+      if (data.washGrain != null) app.brushSettings.washGrain = data.washGrain;
+      if (data.washWobble != null) app.brushSettings.washWobble = data.washWobble;
+      if (data.washMultiply != null) app.brushSettings.washMultiply = data.washMultiply;
+      if (data.smoothWobble != null) app.brushSettings.smoothWobble = data.smoothWobble;
+      if (data.nibWobble != null) app.brushSettings.nibWobble = data.nibWobble;
       if (data.pencilGrade != null) app.brushSettings.pencilGrade = data.pencilGrade;
       if (data.charcoalTexture != null) app.brushSettings.charcoalTexture = data.charcoalTexture;
       if (data.curveCp1 && data.curveCp2) {
@@ -1391,11 +1410,16 @@
     openStrokePoints = done ? null : rawPoints;
     if (done) strokeLayer = null;
     const kind = app.brushType;
-    // smooth / ink / calligraphy / dry redraw the whole stroke each frame from a pre-stroke copy;
+    // smooth / ink / calligraphy / dry / watercolor redraw the whole stroke each frame from a
+    // pre-stroke copy;
     // the stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
     // harden the antialiased edges (see the engines' own notes).
     const fullRedraw =
-      kind === "smooth" || kind === "ink" || kind === "calligraphy" || kind === "dry";
+      kind === "smooth" ||
+      kind === "ink" ||
+      kind === "calligraphy" ||
+      kind === "dry" ||
+      kind === "watercolor";
     // Mouse input has no pressure: draw at the nominal width instead of the widest.
     const sizeRange = (points[0]?.hasPressure ?? true) ? app.sizeRange : 1;
     const strokeSettings = {
@@ -1403,6 +1427,8 @@
       alphaLock: layer.alphaLock,
       // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
       pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
+      // A resting pen's jitter is on screen too (`holdRestPressure`).
+      restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
     };
 
     function drawFullStroke(
@@ -1416,7 +1442,9 @@
       else if (kind === "calligraphy") {
         drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange, from, to);
       } else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange);
-      else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);
+      else if (kind === "watercolor") {
+        drawWatercolorStroke(ctx, pts, strokeSettings, sizeRange, finished);
+      } else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);
     }
 
     /** Where this frame's draw starts: the whole stroke, or just past the frozen part. */

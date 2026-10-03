@@ -672,6 +672,7 @@
         <option value="ink">Ink</option>
         <option value="calligraphy">Calligraphy</option>
         <option value="dry">Dry brush</option>
+        <option value="watercolor">Watercolour</option>
         <option value="pencil">Pencil</option>
         <option value="charcoal">Charcoal</option>
         <option value="airbrush">Airbrush</option>
@@ -806,7 +807,7 @@
         <div
           class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
         >
-          {#if app.brushType === "smooth"}
+          {#if app.brushType === "smooth" || app.brushType === "watercolor"}
             <label
               class={rowCls}
               title="Smooth — rounds out wobble in the stroke's path, with no lag (the tip settles as you draw)"
@@ -872,6 +873,19 @@
                 class="min-w-0 flex-1"
               />
               <span class={valueCls}>{Math.round((app.brushSettings.nibFlatness ?? 0) * 100)}</span>
+            </label>
+            <label class={rowCls} title="How uneven the stroke's outline is — 0 is a clean edge">
+              <span class={labelCls}>Wobble</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.nibWobble ?? 0, 0, 100)}
+                bind:value={app.brushSettings.nibWobble}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.nibWobble}</span>
             </label>
           {/if}
 
@@ -946,6 +960,62 @@
             </div>
           {/if}
 
+          {#if app.brushType === "watercolor"}
+            <label
+              class={rowCls}
+              title="How much darker the rim is, where the pigment gathers as it dries — 0 is an even wash"
+            >
+              <span class={labelCls}>Edge</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.washEdge ?? 50, 0, 100)}
+                bind:value={app.brushSettings.washEdge}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.washEdge}</span>
+            </label>
+            <label class={rowCls} title="How strongly the paper's grain shows in the wash">
+              <span class={labelCls}>Grain</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.washGrain ?? 40, 0, 100)}
+                bind:value={app.brushSettings.washGrain}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.washGrain}</span>
+            </label>
+            <label class={rowCls} title="How uneven the stroke's outline is">
+              <span class={labelCls}>Wobble</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.washWobble ?? 30, 0, 100)}
+                bind:value={app.brushSettings.washWobble}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.washWobble}</span>
+            </label>
+            <label
+              class="flex items-center gap-2 text-xs text-text-secondary"
+              title="Mix with the paint already on the layer, as glazes do: yellow over blue makes green. Off, a stroke covers what's under it. Draw behind and alpha lock don't mix"
+            >
+              <input
+                type="checkbox"
+                bind:checked={app.brushSettings.washMultiply}
+                onchange={onSettingsChange}
+              />
+              Mix colours
+            </label>
+          {/if}
+
           {#if app.brushType === "dry"}
             <label
               class={rowCls}
@@ -982,6 +1052,19 @@
           {/if}
 
           {#if app.brushType === "smooth"}
+            <label class={rowCls} title="How uneven the stroke's outline is — 0 is a clean edge">
+              <span class={labelCls}>Wobble</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.smoothWobble ?? 0, 0, 100)}
+                bind:value={app.brushSettings.smoothWobble}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.smoothWobble}</span>
+            </label>
             <label
               class="flex items-center gap-2 text-xs text-text-secondary"
               title="Taper the stroke's ends to a point instead of capping them"

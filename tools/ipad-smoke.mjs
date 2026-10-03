@@ -338,8 +338,17 @@ async function main(page) {
   });
 
   // ------------------------------------------------------------------------------- brushes
-  const brushTypes = ["smooth", "ink", "calligraphy", "dry", "pencil", "charcoal", "airbrush"];
-  const bandY = (i) => 0.08 + i * 0.135;
+  const brushTypes = [
+    "smooth",
+    "ink",
+    "calligraphy",
+    "dry",
+    "watercolor",
+    "pencil",
+    "charcoal",
+    "airbrush",
+  ];
+  const bandY = (i) => 0.08 + i * 0.12;
   await step(async () => {
     const select = page
       .locator("select")
@@ -384,6 +393,85 @@ async function main(page) {
       ink0 > 30 && ink1 < ink0 / 4 && ink2 > ink0 * 0.8,
       `[sim] a two-finger tap undoes the last stroke, a three-finger tap redoes it (dark px ${ink0} → ${ink1} → ${ink2})`,
       "undo-redo-taps",
+    ];
+  });
+
+  await step(async () => {
+    // Watercolour: across a stroke the rim is darker than the middle; where one stroke crosses
+    // itself it is no darker (one wet patch); a second stroke over it is (a glaze). Grain 0, so
+    // the samples aren't grain.
+    const select = page
+      .locator("select")
+      .filter({ has: page.locator('option[value="calligraphy"]') });
+    await select.selectOption("watercolor");
+    const setRange = (label, v) =>
+      page.evaluate(
+        ([label, v]) => {
+          const input = label
+            ? [...document.querySelectorAll("label")]
+                .find((l) => l.querySelector("span")?.textContent.trim() === label)
+                ?.querySelector('input[type="range"]')
+            : document.querySelector('input[type="range"]'); // the brush Size
+          input.value = String(v);
+          input.dispatchEvent(new window.Event("input", { bubbles: true }));
+        },
+        [label, v],
+      );
+    const gear = page.locator('button[title^="Brush settings"]');
+    await gear.tap();
+    await setRange("Grain", 0);
+    await gear.tap();
+    const size0 = await page.evaluate(() => document.querySelector('input[type="range"]').value);
+    await setRange(null, 40);
+    const lum = async (p) => {
+      const { avg } = await pixels({ x: p.x - 0.5, y: p.y - 0.5, w: 1, h: 1 });
+      return [1, 3, 5].reduce((s, i) => s + parseInt(avg.slice(i, i + 2), 16), 0);
+    };
+    const even = { n: 40, p: () => 0.6 };
+    // One stroke: right along y, up, back left, then down through its own first leg.
+    const y = 0.4;
+    const legs = [
+      at(0.66, y),
+      at(0.94, y),
+      at(0.94, y - 0.12),
+      at(0.8, y - 0.12),
+      at(0.8, y + 0.12),
+    ];
+    const poly = (t) => {
+      const f = t * (legs.length - 1);
+      const i = Math.min(legs.length - 2, Math.floor(f));
+      return line(legs[i], legs[i + 1])(f - i);
+    };
+    await pen(poly, { n: 120, p: () => 0.6 });
+    await page.waitForTimeout(300);
+    // The profile across the first leg, away from the crossing.
+    const x = at(0.72, y).x;
+    const profile = [];
+    for (let dy = -60; dy <= 60; dy += 1) profile.push(await lum({ x, y: at(0, y).y + dy }));
+    const covered = profile.filter((v) => v < 740);
+    const middle = profile[profile.length >> 1];
+    const rim = Math.min(...covered);
+    const single = middle;
+    const crossing = await lum(at(0.8, y));
+    // A second stroke over the first leg.
+    await pen(line(at(0.7, y - 0.08), at(0.7, y + 0.08)), even);
+    await page.waitForTimeout(300);
+    const glazed = await lum(at(0.7, y));
+    await undo();
+    await undo();
+    await page.waitForTimeout(300);
+    await gear.tap();
+    await setRange("Grain", 40);
+    await gear.tap();
+    await setRange(null, size0);
+    await select.selectOption("smooth");
+    return [
+      covered.length > 4 &&
+        rim < middle - 30 &&
+        Math.abs(crossing - single) < 25 &&
+        glazed < single - 30,
+      `[sim] Watercolour: the rim is darker than the middle (sum of RGB ${rim} vs ${middle}, ${covered.length} samples across); where the stroke crosses itself it is as light (${crossing} vs ${single}); a second stroke over it darkens it (${glazed})`,
+      "watercolour",
     ];
   });
 

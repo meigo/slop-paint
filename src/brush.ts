@@ -1,6 +1,7 @@
 import getStroke from "perfect-freehand";
 import type { InputPoint } from "./input";
-import { smoothPath } from "./stroke-smoothing";
+import { holdRestPressure, smoothPath } from "./stroke-smoothing";
+import { strokeSeed, wobbleAmp, wobbleOutline, wobbleScale } from "./wobble";
 
 /** Pen pressure span, same as slop-animator's Press slider. 1 draws at a constant width. */
 export const PRESS_MIN = 1;
@@ -51,6 +52,12 @@ export interface BrushSettings {
   smoothing: number;
   /** Smooth brush: path-averaging radius in document px (`stroke-smoothing.ts`). */
   pathSmoothRadius?: number;
+  /** Smooth and Watercolour: how far a resting pen may jitter, document px (`holdRestPressure`). */
+  restRadius?: number;
+  /** Smooth only, 0–100: how uneven the outline is (`wobble.ts`); 0 by default. */
+  smoothWobble?: number;
+  /** Calligraphy only, 0–100: how uneven the nib's edge is; 0 by default. */
+  nibWobble?: number;
   isEraser: boolean;
   drawBehind: boolean;
   alphaLock: boolean;
@@ -67,6 +74,14 @@ export interface BrushSettings {
   pencilGrade?: string;
   /** Charcoal only: "rough" (big holes) … "dense"; "medium" by default (`charcoalHoles`). */
   charcoalTexture?: string;
+  /** Watercolour only, 0–100: how dark the rim is against the wash (`washAlpha`). */
+  washEdge?: number;
+  /** Watercolour only, 0–100: how strongly the paper's grain shows in the wash. */
+  washGrain?: number;
+  /** Watercolour only, 0–100: how uneven the stroke's outline is. */
+  washWobble?: number;
+  /** Watercolour only: mix with the paint already on the layer, as glazes do (canvas multiply). */
+  washMultiply?: boolean;
   /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
   taper?: boolean;
   /** Smooth brush: keep a corner sharp where the pen paused, instead of smoothing it round. */
@@ -94,8 +109,16 @@ export function drawStroke(
     done,
     settings.taper ?? false,
     settings.sharpCorners ?? false,
+    settings.restRadius ?? 0,
   );
   if (strokePoints.length < 2) return;
+  const maxW = widthRange(settings.size, sizeRange).max;
+  const outline = wobbleOutline(
+    strokePoints,
+    strokeSeed(points[0]),
+    wobbleAmp(maxW, settings.smoothWobble ?? 0),
+    wobbleScale(maxW),
+  );
 
   ctx.save();
 
@@ -117,7 +140,7 @@ export function drawStroke(
   ctx.fillStyle = settings.color;
   ctx.beginPath();
 
-  const path = getSvgPathFromStroke(strokePoints);
+  const path = getSvgPathFromStroke(outline);
   const path2d = new Path2D(path);
   ctx.fill(path2d);
 
@@ -138,11 +161,33 @@ export function strokeOutline(
   done: boolean,
   taper: boolean = false,
   sharpCorners: boolean = false,
+  restRadius: number = 0,
+): number[][] {
+  return outlineOfPath(
+    smoothPath(holdRestPressure(points, restRadius), smoothRadius, sharpCorners),
+    size,
+    sizeRange,
+    done,
+    taper,
+  );
+}
+
+/** `strokeOutline` after the path smoothing: the Watercolour brush smooths first itself, as it
+ *  compares each frame's smoothed path with the last one's (pure). `steadySpacing` spaces the
+ *  outline for the thinnest width the SETTINGS allow, not the thinnest the stroke has reached so
+ *  far: that one changes as the stroke grows and moves the whole outline a little each time. */
+export function outlineOfPath(
+  path: InputPoint[],
+  size: number,
+  sizeRange: number,
+  done: boolean,
+  taper: boolean = false,
+  steadySpacing: boolean = false,
 ): number[][] {
   // We map pressure → size ourselves and tell pf thinning=1 so it uses our mapped pressure directly.
   const { min: minSize, max: maxSize } = widthRange(size, sizeRange);
   let minStrokeWidth = Infinity;
-  const inputPoints = smoothPath(points, smoothRadius, sharpCorners).map((p) => {
+  const inputPoints = path.map((p) => {
     const desiredSize = minSize + p.pressure * (maxSize - minSize);
     if (desiredSize < minStrokeWidth) minStrokeWidth = desiredSize;
     const mappedPressure = maxSize > 0 ? desiredSize / maxSize : 1;
@@ -156,7 +201,11 @@ export function strokeOutline(
   return getStroke(inputPoints, {
     size: pfSize,
     thinning: 1,
-    smoothing: decimationSmoothing(OUTLINE_SPACING, minStrokeWidth, pfSize),
+    smoothing: decimationSmoothing(
+      OUTLINE_SPACING,
+      steadySpacing ? minSize : minStrokeWidth,
+      pfSize,
+    ),
     streamline: 0.3,
     start: { taper, cap: !taper },
     end: { taper, cap: !taper },

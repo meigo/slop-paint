@@ -83,6 +83,7 @@ export function parseSlot(raw: unknown, fallback: StrokeSlot): StrokeSlot {
     "ink",
     "calligraphy",
     "dry",
+    "watercolor",
     "pencil",
     "charcoal",
     "airbrush",
