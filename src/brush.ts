@@ -67,6 +67,14 @@ export interface BrushSettings {
   pencilGrade?: string;
   /** Charcoal only: "rough" (big holes) … "dense"; "medium" by default (`charcoalHoles`). */
   charcoalTexture?: string;
+  /** Watercolour only, 0–100: how dark the rim is against the wash (`washAlpha`). */
+  washEdge?: number;
+  /** Watercolour only, 0–100: how strongly the paper's grain shows in the wash. */
+  washGrain?: number;
+  /** Watercolour only, 0–100: how uneven the stroke's outline is. */
+  washWobble?: number;
+  /** Watercolour only: mix with the paint already on the layer, as glazes do (canvas multiply). */
+  washMultiply?: boolean;
   /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
   taper?: boolean;
   /** Smooth brush: keep a corner sharp where the pen paused, instead of smoothing it round. */
@@ -139,10 +147,31 @@ export function strokeOutline(
   taper: boolean = false,
   sharpCorners: boolean = false,
 ): number[][] {
+  return outlineOfPath(
+    smoothPath(points, smoothRadius, sharpCorners),
+    size,
+    sizeRange,
+    done,
+    taper,
+  );
+}
+
+/** `strokeOutline` after the path smoothing: the Watercolour brush smooths first itself, as it
+ *  compares each frame's smoothed path with the last one's (pure). `steadySpacing` spaces the
+ *  outline for the thinnest width the SETTINGS allow, not the thinnest the stroke has reached so
+ *  far: that one changes as the stroke grows and moves the whole outline a little each time. */
+export function outlineOfPath(
+  path: InputPoint[],
+  size: number,
+  sizeRange: number,
+  done: boolean,
+  taper: boolean = false,
+  steadySpacing: boolean = false,
+): number[][] {
   // We map pressure → size ourselves and tell pf thinning=1 so it uses our mapped pressure directly.
   const { min: minSize, max: maxSize } = widthRange(size, sizeRange);
   let minStrokeWidth = Infinity;
-  const inputPoints = smoothPath(points, smoothRadius, sharpCorners).map((p) => {
+  const inputPoints = path.map((p) => {
     const desiredSize = minSize + p.pressure * (maxSize - minSize);
     if (desiredSize < minStrokeWidth) minStrokeWidth = desiredSize;
     const mappedPressure = maxSize > 0 ? desiredSize / maxSize : 1;
@@ -156,7 +185,11 @@ export function strokeOutline(
   return getStroke(inputPoints, {
     size: pfSize,
     thinning: 1,
-    smoothing: decimationSmoothing(OUTLINE_SPACING, minStrokeWidth, pfSize),
+    smoothing: decimationSmoothing(
+      OUTLINE_SPACING,
+      steadySpacing ? minSize : minStrokeWidth,
+      pfSize,
+    ),
     streamline: 0.3,
     start: { taper, cap: !taper },
     end: { taper, cap: !taper },
