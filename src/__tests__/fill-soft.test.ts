@@ -2,45 +2,62 @@ import { describe, it, expect } from "vitest";
 import {
   colourDistance,
   expandedCoverage,
-  softCoverage,
+  ridgeCoverage,
   softStepIndex,
-  SOFT_RANGE_PER_PX,
   SOFT_STEPS,
+  UNDER_LINE_MAX_PX,
 } from "../fill";
 import { distanceToMask } from "../mask-ops";
 
 const row = (bits: number[]) => Uint8Array.from(bits);
-const cover = (dist: number[], region: number[], tol: number, soft: number) => [
-  ...softCoverage(row(dist), dist.length, 1, row(region), tol, soft),
-];
+/** One row: `region` 1s, then the line's strengths, then empty space beyond. */
+const across = (line: number[], soft = 1, inside = 6, beyond = 10) => {
+  const dist = [...Array(inside).fill(0), ...line, ...Array(beyond).fill(0)];
+  const region = [...Array(inside).fill(1), ...Array(line.length + beyond).fill(0)];
+  const c = [...ridgeCoverage(row(dist), dist.length, 1, row(region), 32, soft)];
+  return c.slice(inside, inside + line.length + beyond);
+};
 
-describe("softCoverage", () => {
-  it("fades into a line's soft edge by how faint it is there", () => {
-    // region | line edge getting darker | ridge | far side | empty
-    const c = cover([0, 0, 40, 96, 200, 120, 0], [1, 1, 0, 0, 0, 0, 0], 32, 1);
-    expect(c.slice(0, 2)).toEqual([255, 255]);
-    expect(c[2]).toBe(Math.round(255 * (1 - 8 / SOFT_RANGE_PER_PX))); // faint: mostly filled
-    expect(c[3]).toBe(0); // at tol + range: none
-    expect(c.slice(4)).toEqual([0, 0, 0]);
+describe("ridgeCoverage", () => {
+  it("runs under the line to its middle and stops there", () => {
+    const c = across([60, 140, 230, 255, 255, 255, 230, 140, 60]);
+    expect(c[0]).toBeGreaterThan(0); // the inner edge gets fill
+    expect(c[2]).toBeGreaterThan(0);
+    expect(c.slice(6)).toEqual(Array(c.length - 6).fill(0)); // the outer side: none
   });
 
-  it("follows sub-pixel position: a fainter edge pixel gets more fill", () => {
-    const a = cover([0, 40], [1, 0], 32, 1)[1];
-    const b = cover([0, 70], [1, 0], 32, 1)[1];
-    expect(a).toBeGreaterThan(b);
-    expect(b).toBeGreaterThan(0);
+  it("isn't stopped by grain: every pixel of the inner half gets some", () => {
+    // A light pencil line whose strength goes up and down from pixel to pixel.
+    const c = across([50, 110, 40, 130, 60, 140, 120, 140, 60, 130, 40, 110, 50]);
+    for (let i = 0; i < 5; i++) expect(c[i]).toBeGreaterThan(0);
+    expect(c.slice(9)).toEqual(Array(c.length - 9).fill(0));
   });
 
-  it("never passes the line's darkest pixel nor crosses a break", () => {
-    // Falling side past the ridge is out, even when faint.
-    expect(cover([0, 60, 50, 40], [1, 0, 0, 0], 32, 2).slice(2)).toEqual([0, 0]);
-    expect(cover([0, 0, 0], [1, 0, 0], 32, 2)).toEqual([255, 0, 0]);
+  it("fades toward 1 − the line's strongest value: a light line keeps more fill than a solid one", () => {
+    const light = across([40, 70, 100, 100, 100, 70, 40]);
+    const solid = across([100, 200, 255, 255, 255, 200, 100]);
+    expect(light[2]).toBeGreaterThan(solid[2]);
+    expect(light[0]).toBeGreaterThanOrEqual(light[2]); // fading from the region outward
   });
 
-  it("is the region alone at Soft 0, and reaches further at a higher Soft", () => {
-    expect(cover([0, 40, 60], [1, 0, 0], 32, 0)).toEqual([255, 0, 0]);
-    expect(cover([0, 40, 120], [1, 0, 0], 32, 1)[2]).toBe(0);
-    expect(cover([0, 40, 120], [1, 0, 0], 32, 2)[2]).toBeGreaterThan(0);
+  it("is the region alone at Soft 0, and a softer cut at a higher Soft", () => {
+    expect(across([60, 140, 230, 140, 60], 0)).toEqual(Array(15).fill(0));
+    const hard = across([60, 140, 230, 255, 230, 140, 60], 0.25);
+    const soft = across([60, 140, 230, 255, 230, 140, 60], 4);
+    const last = (c: number[]) => c.findLastIndex((v) => v > 0);
+    expect(last(soft)).toBeGreaterThanOrEqual(last(hard));
+    // the soft cut steps down more gently at its end
+    const step = (c: number[]) => c[last(c) - 1] - c[last(c)];
+    expect(step(soft)).toBeLessThan(step(hard));
+  });
+
+  it("fills all of a line with no empty space beyond it within reach, and nothing out of reach", () => {
+    // The region, then a solid band wider than the reach: fill under it up to the reach only.
+    const band = Array(UNDER_LINE_MAX_PX + 8).fill(255);
+    const c = across(band, 1, 4, 0);
+    expect(c[0]).toBeGreaterThan(0);
+    expect(c[UNDER_LINE_MAX_PX - 1]).toBeGreaterThan(0);
+    expect(c[UNDER_LINE_MAX_PX + 2]).toBe(0);
   });
 });
 
