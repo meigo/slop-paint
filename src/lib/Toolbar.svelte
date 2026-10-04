@@ -1133,7 +1133,7 @@
     </label>
     <label
       class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
-      title="Soft edge: antialiases the fill where it meets a soft line (0.5–1), higher fades further into it; with Expand it feathers the grown edge (up to 16 px at 8); 0 = hard pixel edge"
+      title="Soft edge: the fill runs behind the line to its middle, so no pixel steps show; this sets how softly it ends there — and, with Expand, how softly the grown edge ends (up to 16 px at 8); 0 = hard pixel edge"
     >
       Soft
       <input
