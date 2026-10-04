@@ -62,6 +62,45 @@ export function colourDistance(
 }
 
 /**
+ * The line strength the bucket's Soft reads (`ridgeCoverage`), 0–255 (2026-10-04, found by
+ * slop-animator's port review, both confirmed here): `colourDistance`, but
+ * - never above the pixel's own alpha: from a PAINTED tap (recolouring) the transparent space round
+ *   the art was full-strength "line", so the fill ran up to 32 px out into it — a solid ring on a
+ *   transparent layer;
+ * - at least `tol` wherever the flood walls the pixel off (`fillMask` compares all four channels)
+ *   and it has any alpha: WebKit reads a Pencil line's faintest pixels with drifted colour, e.g.
+ *   (46,46,46,11) — a wall to the flood, but "empty" to an alpha-only strength, so they got no fill
+ *   and showed as paper at the region's edge.
+ * Fill enclosed keeps `colourDistance` (its areas are empty, its walls alpha-only). Pure.
+ */
+export function bucketStrength(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  seed: { r: number; g: number; b: number; a: number },
+  tol: number,
+): Uint8Array {
+  const out = colourDistance(data, w, h, seed);
+  for (let i = 0; i < w * h; i++) {
+    const p = i * 4;
+    const a = data[p + 3];
+    let v = Math.min(out[i], a);
+    if (
+      a > 0 &&
+      v < tol &&
+      (Math.abs(data[p] - seed.r) > tol ||
+        Math.abs(data[p + 1] - seed.g) > tol ||
+        Math.abs(data[p + 2] - seed.b) > tol ||
+        Math.abs(a - seed.a) > tol)
+    ) {
+      v = tol;
+    }
+    out[i] = v;
+  }
+  return out;
+}
+
+/**
  * `dist` averaged over a (2r+1)² box (separable), never below a pixel's own value: smoothing only
  * fills a line's faint grain pixels in from their neighbours, so a grain hole inside a line doesn't
  * read as the empty space beyond it (`ridgeCoverage`). Pure.
@@ -399,7 +438,7 @@ export function floodFill(
   };
   const finalMask = mask;
   const toMiddle = ridgeCoverage(
-    soft > 0 ? colourDistance(data, w, h, seed) : new Uint8Array(w * h),
+    soft > 0 ? bucketStrength(data, w, h, seed, tolerance) : new Uint8Array(w * h),
     w,
     h,
     mask,
