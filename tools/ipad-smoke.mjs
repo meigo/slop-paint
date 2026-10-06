@@ -738,6 +738,46 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Distort and Mesh applied with no handle moved change nothing. Each warp triangle is clipped
+    // to its shape, and the clips' antialiased edges once left a faint light seam along every
+    // shared edge (~1200–1900 px; reported from the iPad, 2026-10-06).
+    const snap = () =>
+      page.evaluate(() => {
+        const c = document.querySelector(".canvas-checkerboard + canvas");
+        window.__warpBefore = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      });
+    const changed = () =>
+      page.evaluate(() => {
+        const c = document.querySelector(".canvas-checkerboard + canvas");
+        const now = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        const was = window.__warpBefore;
+        let n = 0;
+        for (let i = 0; i < now.length; i += 4) {
+          if (Math.abs(now[i] - was[i]) + Math.abs(now[i + 3] - was[i + 3]) > 30) n++;
+        }
+        return n;
+      });
+    const counts = {};
+    for (const [name, button] of [
+      ["Distort", 'button[title^="Distort"]'],
+      ["Mesh", 'button[title^="Mesh warp"]'],
+    ]) {
+      await snap();
+      await page.locator('button[title="Select all"]').tap();
+      await page.locator(button).tap();
+      await page.waitForTimeout(250);
+      await page.locator('button[title="Apply (Enter)"]').tap();
+      await page.waitForTimeout(300);
+      counts[name] = await changed();
+    }
+    return [
+      counts.Distort === 0 && counts.Mesh === 0,
+      `Select all + Distort / Mesh warp + Apply with no handle moved changes no pixels (${counts.Distort} / ${counts.Mesh} changed)`,
+      "warp-untouched",
+    ];
+  });
+
+  await step(async () => {
     await tapTool("Lasso Select");
     await pen(
       (t) => {
