@@ -880,6 +880,15 @@ export class Selection {
     this.drawOverlay();
   }
 
+  /** Under Move a plain marquee is kept but not drawn (2026-10-10): Move ignores it and drags whole
+   *  layers, and showing it beside the Move box read as two selections. */
+  private marqueeHidden = false;
+
+  setMarqueeHidden(hidden: boolean) {
+    this.marqueeHidden = hidden;
+    this.drawOverlay();
+  }
+
   private drawMoveBox(ctx: CanvasRenderingContext2D) {
     if (!this.moveBox) return;
     ctx.beginPath();
@@ -892,7 +901,9 @@ export class Selection {
     const cvs = this.overlayCanvas;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cvs.width, cvs.height);
-    if ((!this.rect || this.state === "idle") && !this.moveBox) return;
+    const marquee =
+      !!this.rect && this.state !== "idle" && !(this.marqueeHidden && this.state === "selected");
+    if (!marquee && !this.moveBox) return;
     ctx.setTransform(this.viewTransform()); // everything below draws in page units
 
     // Animation re-trigger
@@ -901,7 +912,7 @@ export class Selection {
     this.animFrame = requestAnimationFrame(() => this.drawOverlay());
 
     this.drawMoveBox(ctx);
-    if (!this.rect || this.state === "idle") return;
+    if (!marquee || !this.rect) return;
 
     // 'selected' state OR mid-creation: draw the actual selection shape with marching ants.
     if (this.state === "selected" || this.isCreating) {

@@ -1123,6 +1123,7 @@
       if (!layersReady) return;
       measureMoveBox();
       showMoveBox();
+      selection?.setMarqueeHidden(app.currentTool === "move");
     });
   });
 
