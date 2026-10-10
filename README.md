@@ -60,7 +60,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Selection & transform**
 
 - **Move** (V) drags whole layers: the ones picked with **Select** in the layer panel, or the
-  selected layer or group (every layer in it); one undo step
+  selected layer or group (every layer in it); one undo step. A marquee is kept but hidden meanwhile
 - Rectangle and lasso selection; brush, eraser, fill and Outline stay inside it
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
   **Mesh warp** (3×3 up to 8×8; finer keeps your bends), flip, keep proportions — with nothing
