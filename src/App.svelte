@@ -57,7 +57,6 @@
     hexToRgba,
     MAX_SOFT_EDGE,
     rgbToHex,
-    sameImageData,
   } from "./fill";
   import { clampGap } from "./fill-holes";
   import {
@@ -708,7 +707,7 @@
     const layer = layers.active;
     const before = layers.snapshotOf(layer);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    pushPixelEdit(layers, layer, before);
+    if (!pushPixelEdit(layers, layer, before)) return flashStatus("The layer is already empty");
     layers.composite();
     bumpLayerVersion();
   }
@@ -1399,8 +1398,7 @@
           });
         }
         // Nothing landed (already this colour, or clipped away): no empty undo step
-        if (sameImageData(before, layers.getSnapshot())) return;
-        pushPixelEdit(layers, layer, before);
+        if (!pushPixelEdit(layers, layer, before)) return;
         layers.composite();
         bumpLayerVersion();
       }
@@ -1916,10 +1914,9 @@
     } else {
       fillRegionBehind(layer.ctx, region, color, soft, soft > 0 ? expand : 0);
     }
-    if (sameImageData(before, layers.getSnapshot())) {
+    if (!pushPixelEdit(layers, layer, before)) {
       return flashStatus("Nothing filled — the enclosed areas are outside the selection");
     }
-    pushPixelEdit(layers, layer, before);
     layers.composite();
     bumpLayerVersion();
   }
@@ -2063,8 +2060,7 @@
     }
     clearOutline();
     // A shape thinner than the line stays solid, so an outline can change nothing: no empty step.
-    if (!sameImageData(before, layers.snapshotOf(layer))) {
-      pushPixelEdit(layers, layer, before);
+    if (pushPixelEdit(layers, layer, before)) {
       bumpLayerVersion();
     } else {
       flashStatus("Nothing changed — the shapes are thinner than the line");
@@ -2683,8 +2679,7 @@
     const before = layers.getSnapshot();
     selection.clearRegion(layer.ctx, dpr);
     selection.cancel(); // drop the marquee
-    if (sameImageData(before, layers.getSnapshot())) return;
-    pushPixelEdit(layers, layer, before);
+    if (!pushPixelEdit(layers, layer, before)) return;
     layers.composite();
     bumpLayerVersion();
   }
@@ -3262,9 +3257,7 @@
       selection.renderFloatingTo(layer.ctx);
       // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
       // landed made the next undo appear to do nothing).
-      if (before && !sameImageData(before, layers.snapshotOf(layer))) {
-        pushPixelEdit(layers, layer, before);
-      }
+      if (before) pushPixelEdit(layers, layer, before);
       layers.composite();
       bumpLayerVersion();
     };

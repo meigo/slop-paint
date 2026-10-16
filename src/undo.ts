@@ -25,14 +25,17 @@ export function setOnHistoryApplied(fn: () => void) {
 
 /** Record a pixel change already made to `layer`, given its pixels from before the change. Only
  *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
- *  not the whole layer twice over. */
-export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData) {
+ *  not the whole layer twice over. Pushes nothing when no pixel changed — an empty step would wipe
+ *  redo — and says whether it pushed, so a caller can report the no-op. */
+export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData): boolean {
   const d = pixelDiff(layers, layer, before);
+  if (d.empty) return false;
   const put = (side: "was" | "now") => {
     d.put(side);
     hooks.onHistoryApplied();
   };
   history.push({ undo: () => put("was"), redo: () => put("now"), bytes: d.bytes });
+  return true;
 }
 
 /** The tiles of `layer` that changed since `before`, both sides, and how to put either back. */
@@ -43,6 +46,7 @@ function pixelDiff(layers: LayerManager, layer: Layer, before: ImageData) {
       for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
     },
     bytes: tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0),
+    empty: tiles.length === 0,
   };
 }
 
@@ -68,12 +72,15 @@ export function pushLayersEdit(
   layers: LayerManager,
   edits: { layer: Layer; before: ImageData; refBefore?: RefPlacement }[],
 ) {
-  const parts = edits.map((e) => ({
-    layer: e.layer,
-    diff: pixelDiff(layers, e.layer, e.before),
-    refBefore: e.refBefore,
-    refAfter: e.layer.ref,
-  }));
+  const parts = edits
+    .map((e) => ({
+      layer: e.layer,
+      diff: pixelDiff(layers, e.layer, e.before),
+      refBefore: e.refBefore,
+      refAfter: e.layer.ref,
+    }))
+    .filter((p) => !p.diff.empty || p.refBefore !== p.refAfter);
+  if (parts.length === 0) return; // nothing moved (empty layers): no empty step to wipe redo
   const put = (side: "was" | "now") => {
     for (const p of parts) {
       p.diff.put(side);
