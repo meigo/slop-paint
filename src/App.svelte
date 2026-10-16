@@ -100,6 +100,7 @@
     layerMemoryBytes,
     looksBlanked,
   } from "./persist/autosave-plan";
+  import { layerPixelRatio } from "./resize";
   import {
     history,
     pushLayersEdit,
@@ -345,7 +346,7 @@
 
   // --- Layer resolution ---
   /** Pixels per document unit the layers (and the display canvas) are kept at: the screen's
-   *  density with Sharp layers on, else 1. Saves and exports are document pixels either way, so
+   *  density (a whole ratio) with Sharp layers on, else 1. Saves and exports are document pixels either way, so
    *  the extra is only on screen — and 4× the memory at 2×. The selection overlay stays at the
    *  screen's density regardless (crisp handles). */
   function docDpr(): number {
@@ -355,9 +356,9 @@
     return layers ? layers.pixelRatio : wantedDpr();
   }
 
-  /** The ratio Sharp layers asks for on this screen. */
+  /** The ratio Sharp layers asks for on this screen: a whole one (`layerPixelRatio`). */
   function wantedDpr(): number {
-    return app.hiResLayers ? window.devicePixelRatio || 1 : 1;
+    return app.hiResLayers ? layerPixelRatio(window.devicePixelRatio || 1) : 1;
   }
 
   /** Edit ▸ Settings ▸ Sharp layers: resample the open document to the new resolution. */

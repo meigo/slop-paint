@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { halvingSteps, linkedSize, MAX_DOC_PX } from "../resize";
+import { halvingSteps, layerPixelRatio, linkedSize, MAX_DOC_PX } from "../resize";
 
 describe("linkedSize", () => {
   it("keeps the document's ratio", () => {
@@ -45,5 +45,45 @@ describe("halvingSteps", () => {
       expect(s.h).toBeGreaterThanOrEqual(900);
     }
     expect(steps.at(-1)).toEqual({ w: 500, h: 900 });
+  });
+});
+
+describe("layerPixelRatio", () => {
+  it("keeps whole ratios", () => {
+    expect([1, 2, 3].map(layerPixelRatio)).toEqual([1, 2, 3]);
+  });
+
+  it("rounds a fractional screen (Windows scaling, browser zoom) to a whole ratio", () => {
+    expect([1.25, 1.5, 1.75, 2.2, 1.8].map(layerPixelRatio)).toEqual([1, 2, 2, 2, 2]);
+  });
+
+  it("is never below 1: a zoomed-out page doesn't keep layers under document pixels", () => {
+    expect([0.5, 0.9, 0, NaN].map(layerPixelRatio)).toEqual([1, 1, 1, 1]);
+  });
+
+  // The reason for whole ratios: a save shrinks a layer to document pixels (bilinear) and opening
+  // grows it back nearest-neighbour. 1-D model of both.
+  it("a save + open round trip returns exactly the saved pixels at a whole ratio, not at 1.5", () => {
+    const nearestUp = (src: number[], n: number) =>
+      Array.from(
+        { length: n },
+        (_, i) => src[Math.min(src.length - 1, Math.floor((i * src.length) / n))],
+      );
+    const bilinearDown = (src: number[], n: number) =>
+      Array.from({ length: n }, (_, j) => {
+        const u = ((j + 0.5) * src.length) / n - 0.5;
+        const i0 = Math.max(0, Math.floor(u));
+        const i1 = Math.min(src.length - 1, i0 + 1);
+        const f = u - Math.floor(u);
+        return Math.round((1 - f) * src[i0] + f * src[i1]);
+      });
+    const doc = [0, 255, 0, 0, 128, 255, 255, 0, 64, 0, 255, 32];
+    const trip = (ratio: number) => {
+      const n = Math.round(doc.length * ratio);
+      return bilinearDown(nearestUp(doc, n), doc.length);
+    };
+    expect(trip(layerPixelRatio(1.5))).toEqual(doc);
+    expect(trip(3)).toEqual(doc);
+    expect(trip(1.5)).not.toEqual(doc);
   });
 });

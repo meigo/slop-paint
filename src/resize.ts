@@ -36,3 +36,15 @@ export function halvingSteps(
   if (!last || last.w !== toW || last.h !== toH) steps.push({ w: toW, h: toH });
   return steps;
 }
+
+/**
+ * The layer resolution Sharp layers uses on a screen of `screenDpr`: the nearest WHOLE ratio, at
+ * least 1. Saves scale layers down to document pixels and opening scales them back up
+ * nearest-neighbour, which returns exactly the saved pixels only at a whole ratio; at the raw 1.25,
+ * 1.5 or 1.75 (Windows scaling, browser zoom) every save and reload softened every layer a little
+ * more, and below 1 (zoomed out) opening dropped rows of pixels. Rounding rather than flooring, so
+ * 1.5 and 1.75 screens still get sharper layers (2×) instead of none.
+ */
+export function layerPixelRatio(screenDpr: number): number {
+  return Number.isFinite(screenDpr) ? Math.max(1, Math.round(screenDpr)) : 1;
+}

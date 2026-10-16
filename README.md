@@ -149,7 +149,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - If the layers ever come back **blank** (an iPad can reclaim the memory of an app left in the
   background), autosave stops before it overwrites the saved copy and offers to restore it. The
   Document menu shows how much memory the layers take, and warns on iPad when it's a lot
-- **Edit ▸ Settings ▸ Sharp layers** keeps layers at the screen's pixel density: crisper when
+- **Edit ▸ Settings ▸ Sharp layers** keeps layers at the screen's pixel density (rounded to a whole 2× or 3×): crisper when
   zoomed in, 4× the memory. Off by default on iPad; files are saved at document pixels either way
 - On iPad/iPhone, **File ▸ Save to Files…** and both exports go through the share sheet (pick
   Save to Files there); in the Home Screen app, Save does too
