@@ -837,6 +837,8 @@ export class Selection {
     cancelAnimationFrame(this.animFrame);
     this.overlayCtx.resetTransform();
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+    // The Move box isn't part of the selection: put it back (Esc or Deselect under Move wiped it).
+    if (this.moveBox) this.drawOverlay();
     if (wasActive) this.onStateChange?.();
   }
 

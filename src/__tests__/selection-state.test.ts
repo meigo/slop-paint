@@ -297,3 +297,14 @@ describe("a tap makes no marquee", () => {
     expect(drag(1, 3, 3)).toBe("selected");
   });
 });
+
+describe("the Move box", () => {
+  it("is drawn again when the selection is cleared", () => {
+    sel.selectRect({ x: 10, y: 10, w: 40, h: 40 });
+    sel.setMoveBox({ x: 100, y: 100, w: 50, h: 50 });
+    overlay.rec.calls.length = 0;
+    sel.cancel();
+    const rects = overlay.rec.calls.filter((k) => k.fn === "rect").map((k) => k.args);
+    expect(rects).toContainEqual([100, 100, 50, 50]);
+  });
+});
