@@ -2053,6 +2053,8 @@
    *  so the clipped path has to arrive by `drawImage`. */
   let outlineScratch: HTMLCanvasElement | null = null;
   let outlineRaf = 0;
+  /** The alpha lock the preview was drawn under, so toggling it redraws the preview. */
+  let outlinePreviewLock = false;
 
   function outlineActive(): boolean {
     return outlineBefore !== null;
@@ -2130,6 +2132,7 @@
     const next = outlinePreviewImg;
     // Alpha lock: the outline may hollow the art but never put ink where there was none.
     const lock = layer.alphaLock;
+    outlinePreviewLock = lock;
     for (let i = 0, p = 3; i < cov.length; i++, p += 4)
       next.data[p] = lock ? Math.min(cov[i], alpha[i]) : cov[i];
     // A marquee clips the WRITE, not the maths: the field is built from the whole drawing, so where
@@ -2264,12 +2267,21 @@
   });
 
   // The preview belongs to the layer it started on: selecting another layer (which add, duplicate
-  // and merge also do) or locking this one cancels it rather than leaving it baked in.
+  // and merge also do), locking or hiding this one cancels it rather than leaving it baked in, as
+  // Outline refuses a locked or hidden layer to begin with. Alpha lock redraws it under the new rule
+  // (Apply keeps the last preview, which could put ink where alpha lock forbids it).
   $effect(() => {
     void app.layerVersion;
     untrack(() => {
-      if (outlineLayer && (layers.activeId !== outlineLayer.id || layers.isLocked(outlineLayer))) {
+      if (!outlineLayer) return;
+      if (
+        layers.activeId !== outlineLayer.id ||
+        layers.isLocked(outlineLayer) ||
+        layers.isHidden(outlineLayer)
+      ) {
         cancelOutline();
+      } else if (outlineLayer.alphaLock !== outlinePreviewLock) {
+        scheduleOutlinePreview();
       }
     });
   });

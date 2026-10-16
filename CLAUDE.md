@@ -251,7 +251,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 ## Outline Tool
 
 - Hollows the active layer's shapes to a line of `Thickness` (0.5–24 device px) inside the edge; Wobble moves it across the edge, Variation swells/thins it, the dice re-rolls the noise. Knobs are in toolbar row 2, session-only
-- Picking the tool previews at once, written INTO the layer (so layer/group opacity apply) and re-derived from a snapshot on each knob change, once per frame. Apply (✓ / Enter) is one undo step and hands back the previous tool; Cancel (✗ / Esc), undo, switching tool or layer, locking the layer, New/Open/Resize all restore the snapshot. Refused on locked, hidden or empty layers; with no live preview a canvas tap starts one
+- Picking the tool previews at once, written INTO the layer (so layer/group opacity apply) and re-derived from a snapshot on each knob change, once per frame. Apply (✓ / Enter) is one undo step and hands back the previous tool; Cancel (✗ / Esc), undo, switching tool or layer, locking or hiding the layer, New/Open/Resize all restore the snapshot; toggling alpha lock redraws the preview under it. Refused on locked, hidden or empty layers; with no live preview a canvas tap starts one
 - A marquee clips the write, not the maths (the line is truncated at the cut); alpha lock never adds ink
 - Clear layer, copy/cut/delete cancel a live preview first, so their snapshots hold the art
 
