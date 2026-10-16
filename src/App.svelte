@@ -3192,17 +3192,26 @@
 
   /** A canvas gesture while a reference's handles show: a handle scales/rotates, anywhere else
    *  moves it. The layer is re-drawn as it goes; the release stores the placement (one step). */
+  /** Whether the press on a reference has travelled `REF_TAP_PX` screen px yet: until then it is a
+   *  tap and moves nothing. A Pencil tap's sub-pixel travel pushed an undo step and nudged the
+   *  reference, and a still tap on a corner handle snapped that corner to the pen. */
+  let refDragMoved = false;
+  const REF_TAP_PX = 3;
+
   function refGesture(points: InputPoint[], done: boolean) {
     if (!refTransform || !selection) return;
     const p = points[points.length - 1];
     if (points.length === 1 && !done) {
       selection.startDrag(selection.hitTest(p.x, p.y) ?? "move", p.x, p.y);
+      refDragMoved = false;
       return;
     }
-    selection.updateDrag(p.x, p.y);
+    const p0 = points[0];
+    refDragMoved ||= Math.hypot(p.x - p0.x, p.y - p0.y) * selection.screenScale >= REF_TAP_PX;
+    if (refDragMoved) selection.updateDrag(p.x, p.y);
     if (done) {
       selection.endDrag();
-      storeRefPlacement();
+      if (refDragMoved) storeRefPlacement();
     }
   }
 
