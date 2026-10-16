@@ -365,6 +365,7 @@
     if (!layers || hi === app.hiResLayers) return;
     app.hiResLayers = hi;
     if (wantedDpr() === layers.pixelRatio) return; // a 1× screen: same resolution, keep undo
+    endGesture(); // a press still down finishes at the old resolution (see newDocument)
     if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
     if (outlineActive()) cancelOutline();
     layers.setPixelRatio(wantedDpr());
@@ -943,6 +944,9 @@
     if (!layers) return;
     app.projectName = name.trim() || "untitled";
     docFile = null; // a new document has no file until it's saved
+    // A press still down (the dialog's OK by touch while the Pencil rests) finishes on the old
+    // document: its stroke kept drawing on a removed layer, or a drag landed on the new one.
+    endGesture();
     if (outlineActive()) cancelOutline();
     // Autosave paused over blank layers: the latest is the copy the pause protects — set it aside
     // before New drops it; the new document then autosaves as usual.
@@ -980,6 +984,7 @@
       showResizeDialog = false;
       return flashStatus("Same size — nothing changed");
     }
+    endGesture(); // a press still down finishes at the old size (see newDocument)
     if (outlineActive()) cancelOutline();
     // A float and its Cancel snapshot are in the old canvas's coordinates: Apply landed off by the
     // anchor shift, Cancel wrote the old snapshot back at 0,0. Apply it first, as Sharp layers does.
@@ -1038,6 +1043,7 @@
       let size: { width: number; height: number };
       // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged or
       // non-PSD file fails here with the open document unchanged.
+      endGesture(); // a press still down finishes on the old document, not the new one
       try {
         size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion);
       } catch (e) {
@@ -2447,6 +2453,7 @@
   function loadAutosaveBuffer(buffer: ArrayBuffer) {
     if (!layers) return;
     const dpr = docDpr();
+    endGesture(); // a press still down finishes on the old document, not the new one
     const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
     if (outlineActive()) cancelOutline();
     history.clear(); // restored document: nothing from this session to undo
