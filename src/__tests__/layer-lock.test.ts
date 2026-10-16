@@ -147,4 +147,12 @@ describe("sameStructure / detachedLayerBytes", () => {
     expect(detachedLayerBytes(before, after)).toBe(400);
     expect(detachedLayerBytes(after, before)).toBe(0);
   });
+
+  it("counts a removed reference's source too", () => {
+    const src = { bytes: new Uint8Array(50), image: { width: 5, height: 2 } };
+    const ref = { ...lay(3), ref: { src, corners: [] } } as unknown as LayerNode;
+    expect(detachedLayerBytes({ tree: [a, ref], activeId: 1 }, { tree: [a], activeId: 1 })).toBe(
+      400 + 50 + 40,
+    );
+  });
 });

@@ -423,8 +423,17 @@ export function detachedLayerBytes(a: StructSnapshot, b: StructSnapshot): number
   const x = layersOf(a.tree);
   const y = layersOf(b.tree);
   let bytes = 0;
-  for (const l of x) if (!y.has(l)) bytes += l.canvas.width * l.canvas.height * 4;
+  for (const l of x)
+    if (!y.has(l)) bytes += l.canvas.width * l.canvas.height * 4 + refSourceBytes(l.ref?.src);
   return bytes;
+}
+
+/** What a reference's source holds in memory: the original file's bytes and its decoded copy.
+ *  Undo keeps a source alive once nothing else does (a text edit makes a new one, a deleted
+ *  reference layer takes its own along), so those steps count it toward the budget. */
+export function refSourceBytes(src: RefSource | undefined): number {
+  if (!src) return 0;
+  return src.bytes.byteLength + (src.image ? src.image.width * src.image.height * 4 : 0);
 }
 
 function cloneTree(nodes: LayerNode[]): LayerNode[] {

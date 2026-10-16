@@ -6,6 +6,7 @@
 import { History, changedTiles, cropPixels } from "./history";
 import {
   detachedLayerBytes,
+  refSourceBytes,
   sameStructure,
   type Layer,
   type LayerManager,
@@ -187,5 +188,8 @@ export function pushRefEdit(
     if (value) layers.renderRef(layer);
     hooks.onHistoryApplied();
   };
-  history.push({ undo: () => apply(before), redo: () => apply(after) });
+  // A placement change keeps the same source; a text edit or a bake leaves one only undo holds.
+  const bytes =
+    before?.src === after?.src ? 0 : refSourceBytes(before?.src) + refSourceBytes(after?.src);
+  history.push({ undo: () => apply(before), redo: () => apply(after), bytes });
 }
