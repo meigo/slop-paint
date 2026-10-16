@@ -756,6 +756,11 @@
     if (why) return flashStatus(why);
     if (layers.active.ref) return flashStatus(REF_PAINT_REFUSED);
     if (outlineActive()) cancelOutline();
+    // A lifted float is applied first, as Duplicate and Merge down do: its Apply/Cancel snapshot is
+    // from before the clear, so Cancel brought the cleared art back with the Clear still on the
+    // stack, and undoing both left the lifted region a hole (2026-10-17 review).
+    endGesture();
+    if (selection?.hasFloating) resolveFloat(true);
     const layer = layers.active;
     const before = layers.snapshotOf(layer);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
