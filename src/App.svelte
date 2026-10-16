@@ -887,10 +887,7 @@
   async function writeDocTo(handle: FileSystemFileHandle): Promise<boolean> {
     if (!layers) return false;
     try {
-      await writeFile(
-        handle,
-        withPendingResolved(() => psdBuffer(layers, false)),
-      );
+      await writeFile(handle, () => withPendingResolved(() => psdBuffer(layers, false)));
       flashStatus(`Saved ${handle.name}`);
       return true;
     } catch (e) {
