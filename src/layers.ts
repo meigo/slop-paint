@@ -459,7 +459,8 @@ export class LayerManager {
    *  float into its layer first (`withFloatApplied`). */
   floatPreview: (() => FloatPreview | null) | null = null;
   /** The Move tool's drag in progress (2026-10-02): these layers are DRAWN offset by (dx, dy)
-   *  document units, their pixels untouched until the release. Screen only. */
+   *  document units, their pixels untouched until the release. Screen only: `composite` hands it
+   *  to `drawTree`, the exports don't, so a drag left open can't shift a saved file. */
   moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
   /** The float's layer, combined with the float each frame (reused, resized as needed). */
   private floatScratch: HTMLCanvasElement | null = null;
@@ -933,7 +934,7 @@ export class LayerManager {
     const docPxH = Math.round(this.docHeight * dpr);
     ctx.resetTransform();
     ctx.clearRect(0, 0, docPxW, docPxH);
-    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null);
+    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null, this.moveOffset);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
@@ -962,7 +963,13 @@ export class LayerManager {
    * its members blend straight into what's below). The export paths used to loop the layers alone
    * and missed group visibility and opacity — a hidden group still showed in the PNG.
    */
-  drawTree(ctx: CanvasRenderingContext2D, w: number, h: number, float: FloatPreview | null = null) {
+  drawTree(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    float: FloatPreview | null = null,
+    move: LayerManager["moveOffset"] = null,
+  ) {
     ctx.save();
     ctx.resetTransform();
     const drawNodes = (nodes: LayerNode[], parentAlpha: number) => {
@@ -974,7 +981,7 @@ export class LayerManager {
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
           const source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
-          const off = this.moveOffset?.ids.has(node.id) ? this.moveOffset : null;
+          const off = move?.ids.has(node.id) ? move : null;
           if (off) {
             const k = w / this.docWidth;
             ctx.drawImage(source, off.dx * k, off.dy * k, w, h);

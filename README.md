@@ -180,7 +180,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 | Ctrl+G                     | Put the selected layer or group into a new group    |
 | ↑ / ↓                      | Select the layer above / below                      |
 
-Cmd works in place of Ctrl on a Mac.
+Cmd works in place of Ctrl on a Mac. While the pen or mouse button is down, the view keys and
+the wheel do nothing, and a stroke keeps the brush it started with; a tool switch or a selection
+action (Delete, Cut, Enter/Escape, W/M) finishes the stroke or drag first.
 
 ## Getting started
 

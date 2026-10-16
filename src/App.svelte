@@ -6,9 +6,10 @@
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
-  import { clampPress, drawStroke, widthRange } from "./brush";
+  import { clampPress, drawStroke, widthRange, type BrushSettings } from "./brush";
   import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
+  import type { PressureCurve } from "./pressure-curve";
   import { dragBlock } from "./lib/layer-drop";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
@@ -195,13 +196,35 @@
   // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
   // Null once the stroke ends, so a frame still pending at pen-up can't redraw the unfinished stroke.
   let smoothPendingPoints: InputPoint[] | null = null;
-  // Raw points of the brush/eraser stroke in progress, null between strokes.
-  let openStrokePoints: InputPoint[] | null = null;
-  /** The layer a brush/eraser stroke started on. The stroke stays on it to the end: the active
-   *  layer can change under an open stroke (↑/↓, a finger on the layer panel), and re-reading it
-   *  drew the first layer's pre-stroke copy over the new one, with the wrong undo `before`. */
-  let strokeLayer: Layer | null = null;
-  let dropStrokeUntilUp = false;
+  /** What a brush/eraser stroke draws with, fixed at its press. */
+  type StrokeSetup = {
+    /** The layer it started on. The stroke stays on it to the end: the active layer can change
+     *  under an open stroke (↑/↓, a finger on the layer panel), and re-reading it drew the first
+     *  layer's pre-stroke copy over the new one, with the wrong undo `before`. */
+    layer: Layer;
+    /** The brush type and settings, so a finger on the brush-type menu, a size preset, the swatch
+     *  or [ / ] can't change the stroke under way: a stamp tip turned Smooth restored another
+     *  stroke's pre-stroke copy, and Watercolour re-drew only near the pen (a seam). */
+    kind: BrushKind;
+    settings: BrushSettings;
+    sizeRange: number;
+  };
+  /**
+   * The canvas gesture of the press in progress (one pen or mouse contact), decided at the PRESS —
+   * which tool it belongs to and, for a stroke, its setup — and null between presses. Every later
+   * event of the press goes to it, whatever the tool, the active layer or a reference's handles are
+   * by then: re-reading them mid-press sent the rest of a refused press, a Select or Move drag or a
+   * reference drag to the brush without its pre-stroke copy, which wiped the layer with no undo step
+   * (2026-10-17 review). `endGesture` finishes it early (a tool switch); the rest of the press is
+   * then ignored. "none": a refused press, or Outline's (it only starts a preview).
+   */
+  type Gesture = {
+    kind: "brush" | "fill" | "select" | "move" | "ref" | "eyedropper" | "none";
+    points: InputPoint[];
+    curve: PressureCurve;
+    stroke: StrokeSetup | null;
+  };
+  let gesture: Gesture | null = null;
 
   function saveLayerToCanvas(layer: {
     canvas: HTMLCanvasElement;
@@ -581,9 +604,10 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
-    // Not under an open stroke: its pre-stroke copy still holds the step, so the release would put
-    // the undone pixels back and lose the step for good (a two-finger tap while the Pencil draws).
-    if (openStrokePoints) return;
+    // Not under an open gesture: a stroke's pre-stroke copy still holds the step, so the release
+    // would put the undone pixels back and lose the step for good (a two-finger tap while the Pencil
+    // draws); a Move drag's release would write its press-time placement over the undo.
+    if (gesture) return;
     // A live Outline preview looks like an edit already made, and undo is the artist taking it
     // back. Cancel it and stop there, or the undo would also take back the edit before it.
     if (outlineActive()) {
@@ -599,7 +623,7 @@
 
   function redo() {
     if (!layers) return;
-    if (openStrokePoints) return;
+    if (gesture) return;
     if (outlineActive()) {
       cancelOutline();
       return;
@@ -644,6 +668,7 @@
 
   function enterFreeTransform() {
     if (!selection || !layers) return;
+    endGesture();
     // A reference shows its handles whenever it is active; say why when it can't.
     if (layers.active.ref) {
       const why = refHandlesBlock(layers.active);
@@ -670,6 +695,7 @@
    */
   function enterWarp(rows: number, cols: number) {
     if (!selection || !layers) return;
+    endGesture();
     if (refTransform || layers.active.ref) {
       return flashStatus("A reference moves, scales and rotates only — Bake it to warp it");
     }
@@ -1231,27 +1257,90 @@
 
   function handleStroke(rawPoints: InputPoint[], done: boolean) {
     if (rawPoints.length === 0 || !layers) return;
-    // The rest of a stroke that a tool switch already committed (see setTool).
-    if (dropStrokeUntilUp) {
-      if (done) dropStrokeUntilUp = false;
-      return;
-    }
+    // The pen is down until its release, even when a tool switch already ended its gesture: a palm
+    // landing then is still a resting hand (touch-gestures), not a two-finger undo.
     isDrawing = !done;
     if (!done) hideBrushCursor();
-    else if (done) {
-      // Restore cursor after stroke ends — use last point's screen position
-      // (will be updated on next mousemove anyway)
-    }
+    if (rawPoints.length === 1 && !done) gesture = startGesture(rawPoints);
+    const g = gesture;
+    if (!g) return; // the rest of a press whose gesture was ended early (see endGesture)
+    g.points = rawPoints;
+    // Cleared BEFORE it runs: a release that switches tool (the eyedropper's) ends no gesture twice.
+    if (done) gesture = null;
+    runGesture(g, rawPoints, done);
+  }
 
-    const curve = activePressureCurve();
+  /** Who owns a new press, and a stroke's setup. A refused press is "none" to its release. */
+  function startGesture(rawPoints: InputPoint[]): Gesture {
+    const g: Gesture = {
+      kind: "none",
+      points: rawPoints,
+      curve: activePressureCurve(),
+      stroke: null,
+    };
+    const tool = app.currentTool;
+    if (tool === "eyedropper") g.kind = "eyedropper";
+    else if (tool === "move") g.kind = "move";
+    // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
+    else if (refTransform) g.kind = "ref";
+    else if (tool === "select" || tool === "lasso") g.kind = "select";
+    else if (tool === "brush" || tool === "eraser" || tool === "fill") {
+      const layer = layers.active;
+      // A reference is drawn from its original, so paint on it would be wiped by its next move:
+      // brush, eraser and fill are refused until it is baked.
+      const why =
+        paintBlock(layer) || (layer.ref ? refHandlesBlock(layer) || REF_PAINT_REFUSED : "");
+      if (why) {
+        flashStatus(why);
+        return g;
+      }
+      if (tool === "fill") {
+        g.kind = "fill";
+        return g;
+      }
+      g.kind = "brush";
+      // Mouse input has no pressure: draw at the nominal width instead of the widest.
+      const sizeRange = (rawPoints[0].hasPressure ?? true) ? app.sizeRange : 1;
+      g.stroke = {
+        layer,
+        kind: app.brushType,
+        sizeRange,
+        settings: {
+          ...app.brushSettings,
+          alphaLock: layer.alphaLock,
+          // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
+          pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
+          // A resting pen's jitter is on screen too (`holdRestPressure`).
+          restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
+        },
+      };
+    }
+    return g;
+  }
+
+  /** Finish the open gesture now, as its release would (a stroke is committed, a drag lands where
+   *  it got to); the rest of the press is then ignored. The eyedropper picks nothing. Run by a tool
+   *  switch, and first thing by the selection actions (Delete, Cut, Enter/Esc, Select all, Deselect,
+   *  Free transform, Distort/Mesh, Flip): mid-stroke, Delete's step came before the stroke's while
+   *  the stroke's pre-stroke copy put the deleted pixels back, and W/M lifted the half-drawn stroke
+   *  into a float and drew it again under it (2026-10-17 review). */
+  function endGesture() {
+    const g = gesture;
+    if (!g) return;
+    gesture = null;
+    if (g.kind === "eyedropper") eyedropperSwatchEl.style.display = "none";
+    else runGesture(g, g.points, true);
+  }
+
+  function runGesture(g: Gesture, rawPoints: InputPoint[], done: boolean) {
     const points = rawPoints.map((p) => ({
       ...p,
-      pressure: curve.evaluate(p.pressure),
+      pressure: g.curve.evaluate(p.pressure),
     }));
 
     // Eyedropper: reads the composite, so it ignores the active layer's lock.
     // Picks on RELEASE — drag to slide the sample point out from under the pen tip.
-    if (app.currentTool === "eyedropper") {
+    if (g.kind === "eyedropper") {
       const p = points[points.length - 1];
       const color = sampleColor(p.x, p.y);
       if (!done) {
@@ -1267,13 +1356,12 @@
       return;
     }
 
-    if (app.currentTool === "move") {
+    if (g.kind === "move") {
       moveStroke(points, done);
       return;
     }
 
-    // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
-    if (refTransform) {
+    if (g.kind === "ref") {
       refGesture(points, done);
       canvasClipEl.style.cursor = selection.getCursor(
         selection.hitTest(points[points.length - 1].x, points[points.length - 1].y) ?? "move",
@@ -1281,34 +1369,19 @@
       return;
     }
 
-    // Outline is driven from the toolbar; a canvas press only (re)starts a preview when none is live
-    // (entering refused on a locked or empty layer, then the artist switched layers).
-    if (app.currentTool === "outline") {
-      if (!outlineActive() && points.length === 1 && !done) enterOutline();
+    const press = points.length === 1 && !done;
+    if (g.kind === "none") {
+      // Outline is driven from the toolbar; a canvas press only (re)starts a preview when none is
+      // live (entering refused on a locked or empty layer, then the artist switched layers).
+      if (press && app.currentTool === "outline" && !outlineActive()) enterOutline();
       return;
     }
 
-    // A stroke under way keeps its layer (checked for lock/reference when it started).
-    const continuing = strokeLayer !== null && (points.length > 1 || done);
-    const layer = continuing ? strokeLayer! : layers.active;
+    const layer = g.stroke?.layer ?? layers.active;
     const dpr = docDpr();
 
-    if (!continuing && app.currentTool !== "select" && app.currentTool !== "lasso") {
-      const why = paintBlock(layer);
-      if (why) {
-        if (points.length === 1 && !done) flashStatus(why);
-        return;
-      }
-    }
-    // A reference is drawn from its original, so paint on it would be wiped by its next move:
-    // brush, eraser and fill are refused until it is baked.
-    if (!continuing && layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
-      if (points.length === 1 && !done) flashStatus(refHandlesBlock(layer) || REF_PAINT_REFUSED);
-      return;
-    }
-
     // Selection tool
-    if (app.currentTool === "select" || app.currentTool === "lasso") {
+    if (g.kind === "select") {
       const p = points[points.length - 1];
 
       if (points.length === 1 && !done) {
@@ -1364,8 +1437,8 @@
     }
 
     // Fill tool
-    if (app.currentTool === "fill") {
-      if (points.length === 1 && !done) {
+    if (g.kind === "fill") {
+      if (press) {
         const before = layers.getSnapshot();
         const color = hexToRgba(app.fillColor, app.fillOpacity);
         const clipSel = selection?.state === "selected" ? selection : null;
@@ -1412,9 +1485,8 @@
     }
 
     // Brush stroke
-    openStrokePoints = done ? null : rawPoints;
-    if (done) strokeLayer = null;
-    const kind = app.brushType;
+    if (!g.stroke) return;
+    const { kind, sizeRange, settings: strokeSettings } = g.stroke;
     // smooth / ink / calligraphy / dry / watercolor redraw the whole stroke each frame from a
     // pre-stroke copy;
     // the stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
@@ -1425,17 +1497,6 @@
       kind === "calligraphy" ||
       kind === "dry" ||
       kind === "watercolor";
-    // Mouse input has no pressure: draw at the nominal width instead of the widest.
-    const sizeRange = (points[0]?.hasPressure ?? true) ? app.sizeRange : 1;
-    const strokeSettings = {
-      ...app.brushSettings,
-      alphaLock: layer.alphaLock,
-      // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
-      pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
-      // A resting pen's jitter is on screen too (`holdRestPressure`).
-      restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
-    };
-
     function drawFullStroke(
       ctx: CanvasRenderingContext2D,
       pts: InputPoint[],
@@ -1481,8 +1542,7 @@
       frozenTo = i;
     }
 
-    if (points.length <= 1 && !done) {
-      strokeLayer = layer;
+    if (press) {
       frozenTo = 0;
       preStrokeSnapshot = layers.getSnapshot();
       if (fullRedraw) {
@@ -1550,12 +1610,10 @@
 
   // --- Set tool ---
   function setTool(tool: Tool) {
-    // The tool can change under an open stroke (X, a finger on the toolbar). Commit it now with the
-    // settings that STARTED it — setTool swaps them below — and ignore the rest of that stroke.
-    if (openStrokePoints && tool !== app.currentTool) {
-      handleStroke(openStrokePoints, true);
-      dropStrokeUntilUp = true;
-    }
+    // The tool can change under an open press (X, a finger on the toolbar, a reference's tool
+    // follow). Finish its gesture now — a stroke with the settings that started it, a Select or Move
+    // drag where it got to — and ignore the rest of that press.
+    if (tool !== app.currentTool) endGesture();
     // A floating transform/warp must resolve before switching tools (it has uncommitted
     // pixels). A plain marquee survives — brush/fill/eraser will clip to it.
     if (selection?.hasFloating && tool !== app.currentTool) {
@@ -1698,11 +1756,13 @@
     }
     if (e.key === "Enter" && selection?.active) {
       e.preventDefault();
+      endGesture();
       resolveFloat(true);
       return;
     }
     if (e.key === "Escape" && selection?.active) {
       e.preventDefault();
+      endGesture();
       resolveFloat(false);
       return;
     }
@@ -1749,7 +1809,10 @@
     if (e.key === "g") setTool("fill");
     if (e.key === "i") setTool("eyedropper");
 
-    if (e.key === "r" || e.key === "R") {
+    // The view stays put under an open press: its next point would map through the new view and
+    // the line jump there in a straight chord. (A stroke's settings are fixed at its press.)
+    const viewFree = !gesture;
+    if (viewFree && (e.key === "r" || e.key === "R")) {
       const step = (15 * Math.PI) / 180;
       viewport.rotateAroundCenter(e.shiftKey ? -step : step);
       updateZoomDisplay();
@@ -1766,12 +1829,12 @@
 
     if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
       e.preventDefault();
-      viewport.setZoom(viewport.zoom * 1.2);
+      if (viewFree) viewport.setZoom(viewport.zoom * 1.2);
       updateZoomDisplay();
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "-") {
       e.preventDefault();
-      viewport.setZoom(viewport.zoom / 1.2);
+      if (viewFree) viewport.setZoom(viewport.zoom / 1.2);
       updateZoomDisplay();
     }
     // Plain digits, matching slop-animator's `0` for fit. These were Cmd/Ctrl+0 and +1, which
@@ -1779,11 +1842,11 @@
     // so preventDefault could not claim them — the app command never ran and the browser did
     // something disruptive instead. No digit shortcuts existed to collide with, and this handler
     // already bails inside INPUT/SELECT.
-    if (!e.ctrlKey && !e.metaKey && e.key === "0") {
+    if (viewFree && !e.ctrlKey && !e.metaKey && e.key === "0") {
       e.preventDefault();
       resetView();
     }
-    if (!e.ctrlKey && !e.metaKey && e.key === "1") {
+    if (viewFree && !e.ctrlKey && !e.metaKey && e.key === "1") {
       e.preventDefault();
       resetTo100Percent();
     }
@@ -2153,6 +2216,7 @@
       if (!layers.findLayer(floatLayer.id)) return selection.cancel();
       // Said out loud, so the switch doesn't apply it silently (undo takes it back).
       const name = floatLayer.name;
+      if (gesture?.kind === "select") endGesture(); // a drag on the float ends with it
       selection.commit();
       flashStatus(`Applied the transform to ${name} — undo to take it back`);
     });
@@ -2213,6 +2277,7 @@
    *  shows as a float with handles; lift + commit stay one undo step. */
   function flipSelection(axis: "h" | "v") {
     if (!selection) return;
+    endGesture();
     if (layers.active.ref) {
       if (!refTransform) return enterFreeTransform(); // says why there are no handles
       selection.flip(axis);
@@ -2666,15 +2731,18 @@
 
   function selectAll() {
     if (!selection) return;
+    endGesture();
     if (selection.hasFloating) selection.commit(); // as starting a new marquee does
     selection.selectRect({ x: 0, y: 0, w: app.docWidth, h: app.docHeight });
   }
 
   function deselect() {
+    endGesture();
     if (selection?.state === "selected") selection.cancel();
   }
 
   function deleteSelection() {
+    endGesture();
     if (!selection || selection.state !== "selected" || !layers) return;
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
@@ -2691,6 +2759,7 @@
   }
 
   function cutSelection() {
+    endGesture();
     copySelection();
     deleteSelection();
   }
@@ -3025,6 +3094,17 @@
       selection.handlesOnly;
     if (current && want) return;
     if (refTransform) {
+      // A drag on them ends with the handles (another layer picked mid-drag): stored where it got
+      // to while they are intact, else put back. Left to run on, the rest of the press went to the
+      // brush, and the reference stayed at its fast preview off its stored placement.
+      if (gesture?.kind === "ref") {
+        if (selection.handlesOnly) endGesture();
+        else {
+          gesture = null;
+          layers.renderRef(refTransform.layer);
+          layers.composite();
+        }
+      }
       refTransform = null;
       if (selection.handlesOnly) selection.cancel();
     }
@@ -3355,19 +3435,16 @@
       handleStroke,
       (sx, sy) => viewport.screenToCanvas(sx, sy),
       {
-        // Streamline is a brush preference. On select and lasso it made handles trail the Pencil
-        // and stop short of the lift.
-        streamline: () =>
-          app.currentTool === "brush" || app.currentTool === "eraser" ? app.streamline / 100 : 0,
+        // Streamline is a brush preference, so it follows the press's gesture, not the tool: on
+        // select and lasso, or a reference's handles dragged under Brush, it made handles trail
+        // the Pencil and stop short of the lift.
+        streamline: () => (gesture?.kind === "brush" ? app.streamline / 100 : 0),
         // The stamp tips follow the points exactly, so they always get a short string
         // (STAMP_MIN_ROPE_PX): at Stream 0 a thin Pencil line came out stepped on iPad.
-        minRopePx: () =>
-          (app.currentTool === "brush" || app.currentTool === "eraser") &&
-          (app.brushType === "pencil" ||
-            app.brushType === "charcoal" ||
-            app.brushType === "airbrush")
-            ? STAMP_MIN_ROPE_PX
-            : 0,
+        minRopePx: () => {
+          const k = gesture?.stroke?.kind;
+          return k === "pencil" || k === "charcoal" || k === "airbrush" ? STAMP_MIN_ROPE_PX : 0;
+        },
       },
     );
 
@@ -3401,6 +3478,7 @@
     // zooms; a plain wheel — a two-finger trackpad swipe, or a mouse wheel — pans.
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
+      if (gesture) return; // as the view keys: not under an open press
       if (e.ctrlKey || e.metaKey) viewport.zoomAt(e.clientX, e.clientY, e.deltaY);
       else viewport.panBy(-e.deltaX, -e.deltaY); // content follows the scroll
       updateZoomDisplay();
@@ -3565,8 +3643,8 @@
           mesh={() => enterWarp(3, 3)}
           flip={flipSelection}
           {toggleKeepProportions}
-          applyFloat={() => resolveFloat(true)}
-          cancelFloat={() => resolveFloat(false)}
+          applyFloat={() => (endGesture(), resolveFloat(true))}
+          cancelFloat={() => (endGesture(), resolveFloat(false))}
           copy={copySelection}
           cut={cutSelection}
           paste={() => void pasteFromMenu()}
