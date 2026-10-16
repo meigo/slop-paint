@@ -216,6 +216,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 ## Clipboard
 
 - On iPad (no keyboard) the clipboard actions are in row 2 of the Select/Lasso tools (see Svelte UI Layer); the Edit menu keeps them too
+- Copy refuses a group row (it copied Background, where the active layer falls back to); copying from a locked layer or a reference is fine. Cut checks Delete's refusals BEFORE it copies (it replaced the clipboard, then refused)
 - Copy also takes a float, as shown (transform/warp applied), cropped to its bounds (a mesh's bounds cover every grid point)
 - Copy keeps the selection's pixels in memory (layer resolution + source rect) and also writes a PNG at document resolution to the system clipboard (best effort; the ClipboardItem must be built synchronously with a Blob promise for Safari)
 - Paste goes through the window `paste` event: an image on the system clipboard becomes a REFERENCE layer (below); if its size equals the internal copy's, the internal copy is used instead so it keeps its position. Pasted pixels float on the active layer with transform handles (Enter applies, Esc cancels); the paste is one undo step

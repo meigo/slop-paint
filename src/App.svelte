@@ -2727,6 +2727,9 @@
   function copySelection() {
     if (selection?.hasFloating) return copyFloat();
     if (!selection || selection.state !== "selected" || !selection.rect || !layers) return;
+    // A group row has no pixels of its own; the active layer then falls back to the bottom one,
+    // and Copy took Background's (2026-10-17 review).
+    if (layers.activeIsGroup) return flashStatus(GROUP_SELECTED);
     if (outlineActive()) cancelOutline(); // copy the art, not the preview
     const dpr = docDpr();
     const pixels = selection.copyPixels(layers.active.ctx, dpr);
@@ -2791,6 +2794,12 @@
 
   function cutSelection() {
     endGesture();
+    // Refused before the copy, for the reasons Delete refuses: the copy used to replace the
+    // clipboard and then the delete said no.
+    if (selection?.state === "selected" && layers) {
+      const why = paintBlock(layers.active) || (layers.active.ref ? REF_PAINT_REFUSED : "");
+      if (why) return flashStatus(why);
+    }
     copySelection();
     deleteSelection();
   }
