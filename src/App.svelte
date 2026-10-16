@@ -3479,6 +3479,20 @@
     const overlayResize = new ResizeObserver(sizeOverlay);
     overlayResize.observe(canvasClipEl);
     sizeOverlay();
+    // Moving the window to a screen of another density changes the pixel ratio but not the area's
+    // size, so the observer stays quiet and the ants and handles were drawn at the wrong scale.
+    // A `resolution` query matches one ratio only: re-armed at the new one after each change.
+    let dprQuery: MediaQueryList | null = null;
+    const watchDpr = () => {
+      dprQuery?.removeEventListener("change", onDprChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      dprQuery.addEventListener("change", onDprChange);
+    };
+    const onDprChange = () => {
+      sizeOverlay();
+      watchDpr();
+    };
+    watchDpr();
 
     // Keep selection's hit areas at a constant screen size by feeding it the viewport zoom.
     selection.screenScale = viewport.zoom;
@@ -3649,6 +3663,7 @@
       canvasClipEl.removeEventListener("wheel", handleWheel);
       canvasClipEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
       overlayResize.disconnect();
+      dprQuery?.removeEventListener("change", onDprChange);
       canvasClipEl.removeEventListener("pointermove", handlePanMove, { capture: true });
       canvasClipEl.removeEventListener("pointerup", handlePanUp, { capture: true });
       canvasClipEl.removeEventListener("pointermove", handleCursorMove);
