@@ -88,14 +88,18 @@ export class History {
     this.redoStack = [];
     this.undoStack.push(cmd);
     this.bytes += cmd.bytes ?? 0;
-    this.trim();
+    this.trim(cmd.bytes ?? 0);
     this.onChange?.();
   }
 
-  private trim(): void {
+  /** Drops the oldest steps over the count, and over the byte budget — but only when the new step
+   *  brought pixels of its own. A step with none (eye, rename, opacity) adds no memory, and evicting
+   *  for it threw away a step that alone was over the budget (a Move of many layers: one eye toggle
+   *  later it could no longer be undone). The newest step always stays. */
+  private trim(added: number): void {
     while (
       this.undoStack.length > this.maxSize ||
-      (this.bytes > this.maxBytes && this.undoStack.length > 1)
+      (added > 0 && this.bytes > this.maxBytes && this.undoStack.length > 1)
     ) {
       const old = this.undoStack.shift();
       if (!old) break;
