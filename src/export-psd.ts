@@ -1,6 +1,13 @@
 import { writePsd, readPsd, type Psd, type Layer as PsdLayer, type LinkedFile } from "ag-psd";
 import { downloadBlob } from "./download";
-import type { LayerNode, LayerManager, Layer, LayerGroup, RefSource } from "./layers";
+import {
+  layersLeftAfter,
+  type LayerNode,
+  type LayerManager,
+  type Layer,
+  type LayerGroup,
+  type RefSource,
+} from "./layers";
 import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
 import { openTextSource, textPayloadFromPng } from "./text-ref";
@@ -191,34 +198,40 @@ export function loadPsd(
     }
   }
 
-  if (psd.children) {
-    for (const child of psd.children) {
-      const node = buildNode(child);
-      if (node) tree.push(node);
-    }
-  } else if (psd.canvas) {
-    // No layers, just a flat image (a Photoshop file with only a Background). createLayer sizes
-    // the canvas from the manager's document size, which is still the OLD one here: the image came
-    // in stretched to it. Take the file's size while it's made (the caller sets it for good).
+  /** A layer at the FILE's size: createLayer sizes it from the manager's document size, which is
+   *  still the OLD one here (a flat image came in stretched to it). The caller sets it for good. */
+  function fileSizedLayer(name: string): Layer {
     const [oldW, oldH] = [manager.docWidth, manager.docHeight];
     manager.docWidth = w;
     manager.docHeight = h;
     try {
-      const layer = manager.createLayer("Background");
-      layer.ctx.drawImage(psd.canvas, 0, 0);
-      tree.push(layer);
+      return manager.createLayer(name);
     } finally {
       manager.docWidth = oldW; // a failure leaves the open document as it was
       manager.docHeight = oldH;
     }
   }
 
+  // `children` is [] for a file whose layer section holds no records: that one is flat too.
+  if (psd.children?.length) {
+    for (const child of psd.children) {
+      const node = buildNode(child);
+      if (node) tree.push(node);
+    }
+  } else if (psd.canvas) {
+    // No layers, just a flat image (a Photoshop file with only a Background).
+    const layer = fileSizedLayer("Background");
+    layer.ctx.drawImage(psd.canvas, 0, 0);
+    tree.push(layer);
+  }
+  // Nothing to draw on (only empty groups, e.g. a Spine template, or no image at all): the app
+  // needs an active layer — without one every tool and the layer strip threw.
+  if (layersLeftAfter(tree, []) === 0) tree.push(fileSizedLayer("Layer 1"));
+
   manager.tree = tree;
   // Set active to the topmost layer
   const flat = manager.flatLayers();
-  if (flat.length > 0) {
-    manager.activeId = flat[flat.length - 1].id;
-  }
+  manager.activeId = flat[flat.length - 1].id;
 
   decodeOpenedRefs(refSources.values(), onRefDecoded, onRefFailed);
   return { width: w, height: h };
