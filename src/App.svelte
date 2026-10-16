@@ -951,10 +951,12 @@
     endGesture();
     if (outlineActive()) cancelOutline();
     // Autosave paused over blank layers: the latest is the copy the pause protects — set it aside
-    // before New drops it; the new document then autosaves as usual.
-    void setAsideIfPaused()
-      .then(() => clearAutosave())
-      .catch((e) => console.error("clearing autosave failed", e));
+    // before New drops it; the new document then autosaves as usual. Off for the session (the
+    // startup restore failed), the latest is work that couldn't be loaded: leave it alone.
+    if (autosaveReady)
+      void setAsideIfPaused()
+        .then(() => clearAutosave())
+        .catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
     app.docHeight = height;
     layers.tree.length = 0;
