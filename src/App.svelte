@@ -1388,7 +1388,7 @@
       if (color) {
         if (app.eyedropperTarget === "fill") app.fillColor = color;
         else app.brushSettings.color = color;
-        setTool(toolBeforeEyedropper);
+        setTool(toolBeforeEyedropper, true);
       }
       return;
     }
@@ -1646,7 +1646,11 @@
   }
 
   // --- Set tool ---
-  function setTool(tool: Tool) {
+  /** `returning`: going BACK to a tool (the eyedropper's pick, Outline's Apply/Cancel, letting go
+   *  of X, the second double-tap). It records no tool to return to: Outline → Eyedropper → pick made
+   *  Outline its own hand-back (Apply re-entered it), and X held on the Eyedropper made the Eraser
+   *  the pick's hand-back, with the colour going to the brush. */
+  function setTool(tool: Tool, returning = false) {
     // The tool can change under an open press (X, a finger on the toolbar, a reference's tool
     // follow). Finish its gesture now — a stroke with the settings that started it, a Select or Move
     // drag where it got to — and ignore the rest of that press.
@@ -1656,7 +1660,7 @@
     if (selection?.hasFloating && tool !== app.currentTool) {
       selection.commit();
     }
-    if (tool === "eyedropper" && app.currentTool !== "eyedropper") {
+    if (tool === "eyedropper" && app.currentTool !== "eyedropper" && !returning) {
       toolBeforeEyedropper = app.currentTool;
       app.eyedropperTarget = app.currentTool === "fill" ? "fill" : "brush";
     }
@@ -1665,8 +1669,9 @@
     if (app.currentTool === "outline" && tool !== "outline" && outlineActive()) {
       cancelOutline(false);
     }
-    if (tool === "outline" && app.currentTool !== "outline") {
-      toolBeforeOutline = app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool;
+    if (tool === "outline" && app.currentTool !== "outline" && !returning) {
+      const from = app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool;
+      if (from !== "outline") toolBeforeOutline = from; // Outline → Eyedropper → Outline
     }
     swapSlots(app, strokeSlots, app.currentTool, tool);
     app.currentTool = tool;
@@ -1907,7 +1912,7 @@
     if (selection) selection.shiftHeld = e.shiftKey;
     // Either case: with Shift down by the release the key reads "X", and the eraser stayed on.
     if (e.key.toLowerCase() === "x" && toolBeforeEraser) {
-      setTool(toolBeforeEraser);
+      setTool(toolBeforeEraser, true);
       toolBeforeEraser = null;
     }
     if (e.code === "Space") {
@@ -2170,7 +2175,7 @@
     } else {
       flashStatus("Nothing changed — the shapes are thinner than the line");
     }
-    if (app.currentTool === "outline") setTool(toolBeforeOutline); // one-shot: hand the tool back
+    if (app.currentTool === "outline") setTool(toolBeforeOutline, true); // one-shot: hand the tool back
   }
 
   /** Put the art back. `handBack` returns to the tool Outline was entered from; setTool passes
@@ -2179,7 +2184,7 @@
     if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
     clearOutline();
     layers?.composite();
-    if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline);
+    if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline, true);
   }
 
   function clearOutline() {
@@ -3510,7 +3515,7 @@
       onRedo: redo,
       onToggleEraser: () => {
         if (app.currentTool === "eraser") {
-          setTool(toolBeforeEraserToggle ?? "brush");
+          setTool(toolBeforeEraserToggle ?? "brush", true);
           toolBeforeEraserToggle = null;
         } else {
           toolBeforeEraserToggle = app.currentTool;
@@ -3642,7 +3647,7 @@
     // panned) and a held X kept the eraser.
     spaceHeld = false;
     if (toolBeforeEraser) {
-      setTool(toolBeforeEraser);
+      setTool(toolBeforeEraser, true);
       toolBeforeEraser = null;
     }
     updateCursor();
