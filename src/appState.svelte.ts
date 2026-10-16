@@ -142,13 +142,21 @@ export function bumpSelectionVersion() {
 }
 
 let statusTimer: ReturnType<typeof setTimeout> | undefined;
+/** The lasting conditions showing, oldest first. One slot let any later one — an uncaught error,
+ *  say — replace "Autosave is off" for good, and nothing brought it back. */
+const stickies: string[] = [];
+function showStickies() {
+  app.statusSticky = stickies.join(" · ");
+}
+
 /** Show a short message in the status bar, e.g. why an action did nothing. `ms = 0` is a lasting
  *  condition (autosave failing or off) rather than a one-off explanation: it stays, behind any
- *  later short message, until `clearSticky`. */
+ *  later short message and beside any other lasting one, until `clearSticky`. */
 export function flashStatus(message: string, ms = 4000) {
   clearTimeout(statusTimer);
   if (ms === 0) {
-    app.statusSticky = message;
+    if (!stickies.includes(message)) stickies.push(message);
+    showStickies();
     app.statusMessage = "";
     return;
   }
@@ -156,7 +164,10 @@ export function flashStatus(message: string, ms = 4000) {
   statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
 }
 
-/** End a lasting condition (`flashStatus(msg, 0)`); with `message`, only if it's the one showing. */
+/** End lasting conditions (`flashStatus(msg, 0)`): those starting with `message`, or all. */
 export function clearSticky(message?: string) {
-  if (message === undefined || app.statusSticky.startsWith(message)) app.statusSticky = "";
+  for (let i = stickies.length - 1; i >= 0; i--) {
+    if (message === undefined || stickies[i].startsWith(message)) stickies.splice(i, 1);
+  }
+  showStickies();
 }

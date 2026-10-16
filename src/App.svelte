@@ -2466,6 +2466,7 @@
 
   /** A lasting "Autosave is failing" (cleared by the next save that works). */
   function autosaveFailing(e: unknown) {
+    clearSticky("Autosave is failing"); // one at a time, with the latest reason
     flashStatus(
       `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save so this work isn't lost.`,
       0,

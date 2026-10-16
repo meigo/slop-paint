@@ -244,7 +244,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 
 - Actions that can't act are dimmed with `aria-disabled` + a title saying why, never `disabled` (a disabled button dispatches no pointer events, so the status bar's hint could never read its title — and on iPad the hint is the only explanation)
 - Fixed height, `px-5` so text clears an iPad's rounded window corners. Right side: the active tool
-- Left side, in priority order: an explicit message (`flashStatus`, e.g. why an action did nothing), then a lasting condition (`flashStatus(msg, 0)` → `app.statusSticky`, amber, until `clearSticky`: autosave off, failing or paused — an ordinary message used to replace it for good), then `statusHint` — the `title` of the control under the pointer — then the selection/transform context
+- Left side, in priority order: an explicit message (`flashStatus`, e.g. why an action did nothing), then a lasting condition (`flashStatus(msg, 0)` → `app.statusSticky`, amber, until `clearSticky`: autosave off, failing or paused — an ordinary message used to replace it for good; several show side by side, oldest first, joined by ·, as one slot let an uncaught error replace "Autosave is off" for good; "Autosave is failing" and the global "Error —" each keep only their latest), then `statusHint` — the `title` of the control under the pointer — then the selection/transform context
 - The hint is written on `pointerover` AND `pointerdown` (capture) in App.svelte, since iPad has no hover: touching a control explains it. A `pointerover` resolving to the same element is ignored, or pointer capture's boundary events would clear a message the press just wrote
 - Give every new control a `title`: on touch it is the only explanation the user gets
 
