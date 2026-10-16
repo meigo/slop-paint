@@ -256,11 +256,17 @@ export function setupInput(
     catchUpAlongTrail();
     rope = null;
     penEvent = null;
-    // Pen pointerup reports pressure 0; keep the last move's pressure so the stroke doesn't taper
-    const up = getPoint(e);
     const last = currentPoints[currentPoints.length - 1];
-    if (last) up.pressure = last.pressure;
-    currentPoints.push(up);
+    // A cancel or a lost capture carries no position of the pen (Chromium reports client 0, 0): it
+    // drew a line to the screen's corner. The stroke ends where it last was instead.
+    if (e.type === "pointercancel" || e.type === "lostpointercapture") {
+      if (last) currentPoints.push({ ...last });
+    } else {
+      // Pen pointerup reports pressure 0; keep the last move's pressure so the stroke doesn't taper
+      const up = getPoint(e);
+      if (last) up.pressure = last.pressure;
+      currentPoints.push(up);
+    }
     onStroke(currentPoints, true);
     currentPoints = [];
   }
