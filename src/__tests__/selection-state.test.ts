@@ -275,3 +275,25 @@ describe("a small float", () => {
     expect(sel.hitTest(150, 150)).toBe("move");
   });
 });
+
+describe("a tap makes no marquee", () => {
+  const drag = (zoom: number, w: number, h: number) => {
+    sel.screenScale = zoom;
+    sel.mode = "rect";
+    sel.startCreate(100, 100);
+    sel.updateCreate(100 + w, 100 + h);
+    sel.endCreate();
+    return sel.state;
+  };
+  it("zoomed out, a tap's jitter of a screen px or two", () => {
+    expect(drag(0.25, 4, 4)).toBe("idle");
+    expect(drag(0.25, 8, 8)).toBe("idle");
+  });
+  it("zoomed in, a thin deliberate drag is kept", () => {
+    expect(drag(8, 2, 40)).toBe("selected");
+  });
+  it("at 100%, 3 px a side is a marquee", () => {
+    expect(drag(1, 2, 40)).toBe("idle");
+    expect(drag(1, 3, 3)).toBe("selected");
+  });
+});
