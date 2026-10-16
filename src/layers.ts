@@ -614,8 +614,12 @@ export class LayerManager {
       layer.canvas.width = pxW;
       layer.canvas.height = pxH;
       layer.ctx.resetTransform();
+      // Up nearest-neighbour, as opening a file is: a smoothed scale up blurred the art, and the
+      // next save kept the blur (saves are document pixels). Down smoothed, as a save is.
+      layer.ctx.imageSmoothingEnabled = old.width >= pxW;
       layer.ctx.imageSmoothingQuality = "high";
       layer.ctx.drawImage(old, 0, 0, pxW, pxH);
+      layer.ctx.imageSmoothingEnabled = true;
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (layer.ref) this.renderRef(layer);
     }
