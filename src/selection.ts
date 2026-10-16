@@ -524,7 +524,10 @@ export class Selection {
 
     if (this.state === "selected") {
       // No handles in 'selected' state — only inside/outside the actual shape.
-      if (this.mode === "lasso" && this.lassoPath) {
+      // The marquee's own shape, not the tool's mode: switching Lasso → Select set the mode to rect,
+      // and a lasso marquee then hit-tested, clipped and showed as its box while Delete and a lift
+      // still took the lasso (2026-10-17 review). `mode` only shapes a marquee being drawn.
+      if (this.lassoPath) {
         // With no transform set, the path and (x, y) are both in page units.
         const ctx = this.overlayCtx;
         ctx.save();
@@ -759,7 +762,7 @@ export class Selection {
    */
   applyClip(ctx: CanvasRenderingContext2D): boolean {
     if (this.state !== "selected" || !this.rect) return false;
-    if (this.mode === "lasso" && this.lassoPath) {
+    if (this.lassoPath) {
       ctx.clip(this.lassoPath);
     } else {
       ctx.beginPath();
@@ -933,7 +936,10 @@ export class Selection {
 
     // 'selected' state OR mid-creation: draw the actual selection shape with marching ants.
     if (this.state === "selected" || this.isCreating) {
-      if (this.mode === "lasso" && (this.lassoPath || this.lassoPoints.length > 1)) {
+      if (
+        this.lassoPath ||
+        (this.isCreating && this.mode === "lasso" && this.lassoPoints.length > 1)
+      ) {
         ctx.beginPath();
         ctx.moveTo(this.lassoPoints[0].x, this.lassoPoints[0].y);
         for (let i = 1; i < this.lassoPoints.length; i++) {

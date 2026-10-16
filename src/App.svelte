@@ -1664,8 +1664,6 @@
     swapSlots(app, strokeSlots, app.currentTool, tool);
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";
-    if (tool === "select") selection.mode = "rect";
-    if (tool === "lasso") selection.mode = "lasso";
     updateCursor();
     debouncedSave();
     // After the switch (a floating selection has been committed above), so the snapshot holds it.

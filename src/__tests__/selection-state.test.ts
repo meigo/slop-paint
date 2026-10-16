@@ -206,3 +206,24 @@ describe("lifting a lasso", () => {
     expect(sel.rect).toEqual({ x: 10, y: 20, w: 51, h: 51 });
   });
 });
+
+describe("a lasso marquee keeps its shape", () => {
+  it("when the mode changes after it is drawn (Lasso → Select)", () => {
+    lasso([
+      { x: 10, y: 10 },
+      { x: 100, y: 10 },
+      { x: 10, y: 100 },
+    ]);
+    sel.mode = "rect";
+    expect(sel.hitTest(90, 90)).toBe(null); // in the box, outside the triangle
+    expect(sel.hitTest(20, 20)).toBe("move");
+    const c = fakeCanvas();
+    sel.applyClip(c.ctx);
+    expect(c.rec.clips[0].length).toBe(3);
+    overlay.rec.calls.length = 0;
+    sel.drawOverlay();
+    const fns = overlay.rec.calls.map((k) => k.fn);
+    expect(fns).toContain("lineTo");
+    expect(fns).not.toContain("rect");
+  });
+});
