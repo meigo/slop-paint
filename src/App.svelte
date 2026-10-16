@@ -2436,8 +2436,10 @@
     try {
       buffer = withPendingResolved(() => psdBuffer(layers, false));
     } catch (e) {
+      // Said, as a failed write is (below): it went only to the console, which an iPad hasn't got.
       autosaveDirty = true;
       console.error("autosave encode failed", e);
+      autosaveFailing(e);
       return;
     }
     inkedAtSave = inked;
@@ -2457,11 +2459,16 @@
         // failure (iPad quota, a stale tab after a deploy) lets hours of work look saved.
         autosaveDirty = true;
         console.error("autosave failed", e);
-        flashStatus(
-          `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save so this work isn't lost.`,
-          0,
-        );
+        autosaveFailing(e);
       },
+    );
+  }
+
+  /** A lasting "Autosave is failing" (cleared by the next save that works). */
+  function autosaveFailing(e: unknown) {
+    flashStatus(
+      `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save so this work isn't lost.`,
+      0,
     );
   }
 
