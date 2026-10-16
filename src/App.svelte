@@ -2419,6 +2419,10 @@
 
   function flushAutosave() {
     if (!autosaveReady || !autosaveDirty || !layers) return;
+    // The text dialog previews into its layer with no undo step until OK, and an empty text
+    // previews an empty layer: the guard took that for a blanking (its dialog opened under the
+    // text one). Saved once it closes — OK and Cancel both re-draw, which schedules the save.
+    if (textDialog) return;
     // Paused over blank layers (the dialog closed without a choice): say so again at each save it
     // skips — a later status message had wiped the first notice, and work went unsaved silently.
     if (autosaveHalted) return flashStatus(AUTOSAVE_PAUSED, 0);
@@ -2599,7 +2603,7 @@
 
   /** Back from the background: were the layers blanked while away? */
   function checkBlankOnReturn() {
-    if (!autosaveReady || autosaveHalted || !layers) return;
+    if (!autosaveReady || autosaveHalted || !layers || textDialog) return; // (see flushAutosave)
     if (blankedSince(inkedLayerIds())) haltForBlankLayers();
   }
 
