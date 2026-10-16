@@ -3433,6 +3433,7 @@
 
     // Keep selection's hit areas at a constant screen size by feeding it the viewport zoom.
     selection.screenScale = viewport.zoom;
+    selection.pixelRatio = docDpr;
     viewport.onChange = () => {
       selection.screenScale = viewport.zoom;
     };

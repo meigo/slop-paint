@@ -227,3 +227,29 @@ describe("a lasso marquee keeps its shape", () => {
     expect(fns).not.toContain("rect");
   });
 });
+
+describe("moving a float", () => {
+  for (const dpr of [1, 2]) {
+    it(`at dpr ${dpr}, lands on whole layer pixels`, () => {
+      sel.screenScale = 0.75;
+      sel.pixelRatio = () => dpr;
+      sel.mode = "rect";
+      sel.startCreate(10.37, 10.81);
+      sel.updateCreate(50.2, 50.6);
+      sel.endCreate();
+      const layer = layerCtx(dpr);
+      const lifted = sel.liftPixels(layer.ctx, dpr)!;
+      sel.beginTransform(lifted);
+      sel.startDrag("move", 30, 30);
+      sel.updateDrag(30 + 10 / 0.75, 30 + 7 / 0.75);
+      sel.endDrag();
+      layer.rec.draws.length = 0;
+      sel.renderFloatingTo(layer.ctx); // what Apply does
+      const d = layer.rec.draws[0];
+      const o = ap(d.ctm, d.args[0], d.args[1]);
+      expect(o.x).toBeCloseTo(Math.round(o.x), 9);
+      expect(o.y).toBeCloseTo(Math.round(o.y), 9);
+      expect(d.ctm.a * d.args[2]).toBeCloseTo(lifted.width, 9);
+    });
+  }
+});

@@ -225,6 +225,9 @@ export class Selection {
     return this.pageSize ? clampToPage({ x, y }, this.pageSize.w, this.pageSize.h) : { x, y };
   }
 
+  /** Layer pixels per page unit (the document's pixel ratio): a moved float lands on whole ones. */
+  pixelRatio: () => number = () => 1;
+
   /** Current viewport zoom — used to keep handle hit areas at a constant screen-pixel size. */
   screenScale = 1;
 
@@ -632,10 +635,15 @@ export class Selection {
 
     switch (this.dragging) {
       case "move": {
+        // By whole layer pixels, as the Move tool: a float lifted on the pixel grid stays on it, so
+        // Apply draws it back without resampling. The raw pointer delta landed it between pixels
+        // and every lift + move + Apply blurred the art a little more (2026-10-17 review). A turned
+        // or scaled float is resampled anyway; this only steps its moves.
+        const k = this.pixelRatio();
         this.matrix = {
           ...this.matrixStart,
-          e: this.matrixStart.e + dx,
-          f: this.matrixStart.f + dy,
+          e: this.matrixStart.e + Math.round(dx * k) / k,
+          f: this.matrixStart.f + Math.round(dy * k) / k,
         };
         break;
       }
