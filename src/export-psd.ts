@@ -160,6 +160,9 @@ export function loadPsd(
         // pixels come back down to exactly the stored ones.
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(psdLayer.canvas, left, top);
+        // Back on: the layer keeps this context, and every later draw onto it (stamps, a
+        // transform's Apply, a reference's re-draw) came out point-sampled and jagged.
+        ctx.imageSmoothingEnabled = true;
         ctx.resetTransform();
         psdLayer.canvas = undefined; // drawn: let the decoded copy go while the rest are built
       }
