@@ -253,3 +253,25 @@ describe("moving a float", () => {
     });
   }
 });
+
+describe("a small float", () => {
+  for (const [w, h] of [
+    [20, 20],
+    [40, 20],
+    [100, 10],
+  ]) {
+    it(`${w}×${h} screen px moves from inside and scales from just outside`, () => {
+      sel.screenScale = 1;
+      sel.pasteFloat(fakeCanvas(w, h).canvas, { x: 100, y: 100, w, h });
+      expect(sel.hitTest(100 + w / 2, 100 + h / 2)).toBe("move");
+      expect(sel.hitTest(100 + w + 6, 100 + h + 6)).toBe("br");
+    });
+  }
+
+  it("a large float still scales from just inside its corner", () => {
+    sel.screenScale = 1;
+    sel.pasteFloat(fakeCanvas(100, 100).canvas, { x: 100, y: 100, w: 100, h: 100 });
+    expect(sel.hitTest(195, 195)).toBe("br");
+    expect(sel.hitTest(150, 150)).toBe("move");
+  });
+});
