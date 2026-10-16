@@ -2676,6 +2676,7 @@
     const why = meshStepBlock(selection.warpRows, dir, selection.warpUntouched);
     if (why) return flashStatus(`Mesh — ${why}`);
     const n = selection.warpRows + dir;
+    endGesture(); // a point held by the pen ends where it got to (as W/M do)
     selection.densifyWarp(n, n);
     scheduleComposite();
   }
