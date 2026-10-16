@@ -37,22 +37,28 @@ export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageD
 
 /** The tiles of `layer` that changed since `before`, both sides, and how to put either back. */
 function pixelDiff(layers: LayerManager, layer: Layer, before: ImageData) {
-  const full = layers.snapshotOf(layer);
-  const w = full.width;
-  const sameSize = before.width === w && before.height === full.height;
-  const tiles = sameSize
-    ? changedTiles(before.data, full.data, w, full.height).map((r) => ({
-        r,
-        was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
-        now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
-      }))
-    : [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
+  const tiles = diffTiles(before, layers.snapshotOf(layer));
   return {
     put: (side: "was" | "now") => {
       for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
     },
     bytes: tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0),
   };
+}
+
+/** The changed tiles of two snapshots, each side cropped out. Its own function, not inline in
+ *  `pixelDiff`: closures made in one scope share it, so `put` kept the `.map` callback's `before`
+ *  and `full` reachable — every step held BOTH whole-layer snapshots while `bytes` counted only
+ *  the tiles (2026-10-17 review: 50 strokes on a 2732×2048 iPad layer kept ~2.2 GB alive). */
+function diffTiles(before: ImageData, full: ImageData) {
+  const w = full.width;
+  if (before.width !== w || before.height !== full.height)
+    return [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
+  return changedTiles(before.data, full.data, w, full.height).map((r) => ({
+    r,
+    was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
+    now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
+  }));
 }
 
 /** Record a change already made to several layers at once as ONE step (the Move tool,
