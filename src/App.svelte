@@ -2918,6 +2918,20 @@
     await importReferenceFile(blob); // a clipboard file is always "image.png": the layer is "ref"
   }
 
+  /** Paste a clipboard image; one this browser can't decode (an SVG or TIFF fetched from a copied
+   *  <img>) falls back to the last copy made here, and says why. Its rejection used to escape every
+   *  paste path: no fallback, only the global handler's lasting "Error —". */
+  async function pasteClipboardImage(blob: Blob) {
+    try {
+      await pasteImageBlob(blob);
+    } catch (e) {
+      console.error("pasting the clipboard image failed", e);
+      const what = pasteInternal() ? "pasted the last copy made here" : "nothing pasted";
+      const why = e instanceof Error ? e.message : String(e);
+      flashStatus(`Couldn't read the copied image (${why}) — ${what}`, 10000);
+    }
+  }
+
   /** Read an image file (or a pasted one) whole — its bytes go into the PSD as the Smart Object's
    *  embedded original — and add it as a reference. */
   async function importReferenceFile(blob: Blob, fileName?: string) {
@@ -3324,7 +3338,7 @@
       .find((i) => i.kind === "file" && i.type.startsWith("image/"))
       ?.getAsFile();
     e.preventDefault();
-    if (file) return void pasteImageBlob(file).catch(() => pasteInternal());
+    if (file) return void pasteClipboardImage(file);
     // Only an image's address (as Midjourney's on iPad, see clipboardImage): fetch it.
     const d = e.clipboardData;
     const url = d
@@ -3336,7 +3350,7 @@
       : null;
     if (!url) return void pasteInternal();
     void fetchImage(url).then(async (blob) => {
-      if (blob) return pasteImageBlob(blob);
+      if (blob) return pasteClipboardImage(blob);
       if (!pasteInternal())
         flashStatus(
           `Couldn't fetch the copied image from ${new URL(url).host} — save it and use File ▸ Import image…`,
@@ -3404,7 +3418,19 @@
       return flashStatus(`Can't read the clipboard (${why}) — try File ▸ Import image…`, 10000);
     }
     const blob = await clipboardImage(items);
-    if (blob) return importReferenceFile(blob);
+    if (blob) {
+      try {
+        await importReferenceFile(blob);
+      } catch (e) {
+        // (as pasteClipboardImage) an image this browser can't decode
+        console.error("importing the clipboard image failed", e);
+        flashStatus(
+          `Couldn't read the copied image (${e instanceof Error ? e.message : String(e)})`,
+          10000,
+        );
+      }
+      return;
+    }
     flashStatus(
       `No image the browser can read on the clipboard (it holds: ${clipboardTypes(items)}) — save the image and use File ▸ Import image…`,
       10000,
@@ -3421,7 +3447,7 @@
       const items = await navigator.clipboard.read();
       holds = clipboardTypes(items);
       const blob = await clipboardImage(items);
-      if (blob) return pasteImageBlob(blob);
+      if (blob) return void (await pasteClipboardImage(blob));
     } catch (e) {
       readError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
