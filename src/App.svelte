@@ -19,6 +19,7 @@
   import {
     LayerManager,
     adjacentRow,
+    isWithin,
     layersToMove,
     topSelection,
     type Layer,
@@ -3760,6 +3761,16 @@
           settlePending={() => {
             if (selection?.hasFloating) resolveFloat(true);
             if (outlineActive()) cancelOutline();
+          }}
+          beforeShut={(id) => {
+            // A float lifted from a layer being locked or hidden is applied first, with a word: it
+            // was applied into the locked or hidden layer later (an edit the lock should refuse).
+            if (!selection?.hasFloating || !floatLayer) return;
+            if (!isWithin(layers.tree, floatLayer.id, id)) return;
+            const name = floatLayer.name;
+            endGesture();
+            resolveFloat(true);
+            flashStatus(`Applied the transform to ${name} first — undo to take it back`);
           }}
         />
       </div>

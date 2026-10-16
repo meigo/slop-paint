@@ -45,6 +45,7 @@
     onAddText,
     onEditText,
     settlePending,
+    beforeShut,
   }: {
     layers: LayerManager;
     /** Called when a resize drag ends, so the width can be saved. */
@@ -56,6 +57,9 @@
     /** Before an action that copies or merges a layer's pixels: apply a lifted float and cancel an
      *  Outline preview, or the copy took the float's hole / the unapplied preview. */
     settlePending: () => void;
+    /** Before the node is locked or hidden: a float lifted from it (or from inside it) is applied
+     *  while its layer still takes edits. */
+    beforeShut: (id: number) => void;
   } = $props();
 
   // Panel resize. The panel is docked RIGHT, so dragging its left-edge grip LEFT makes it wider —
@@ -667,6 +671,7 @@
           : "Unlocked — click to lock drawing"}
       onclick={(e) => {
         e.stopPropagation();
+        if (!layer.locked) beforeShut(layer.id);
         layer.locked = !layer.locked;
         pushNodeFieldEdit(layers, layer.id, "locked", !layer.locked, layer.locked);
         bumpLayerVersion();
@@ -679,6 +684,7 @@
       title={layer.visible ? "Visible — click to hide" : "Hidden — click to show"}
       onclick={(e) => {
         e.stopPropagation();
+        if (layer.visible) beforeShut(layer.id);
         layers.toggleVisibility(layer.id);
         pushNodeFieldEdit(layers, layer.id, "visible", !layer.visible, layer.visible);
         bumpLayerVersion();
@@ -738,6 +744,7 @@
             : "Unlocked — click to lock every layer in this group"}
         onclick={(e) => {
           e.stopPropagation();
+          if (!group.locked) beforeShut(group.id);
           group.locked = !group.locked;
           pushNodeFieldEdit(layers, group.id, "locked", !group.locked, group.locked);
           bumpLayerVersion();
@@ -750,6 +757,7 @@
         title={group.visible ? "Group visible — click to hide" : "Group hidden — click to show"}
         onclick={(e) => {
           e.stopPropagation();
+          if (group.visible) beforeShut(group.id);
           layers.toggleVisibility(group.id);
           pushNodeFieldEdit(layers, group.id, "visible", !group.visible, group.visible);
           bumpLayerVersion();
