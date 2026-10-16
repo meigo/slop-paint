@@ -3790,7 +3790,7 @@
           exportPsd={doExportPsd}
           savePsd={doSavePsd}
           saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
-          restoreAutosave={() => void openRestoreDialog(false)}
+          restoreAutosave={() => void openRestoreDialog(autosaveHalted)}
           {memoryUse}
           saveAs={fileAccessAvailable() ? () => void doSaveAs() : null}
           openPsd={() => void doOpenPsd()}
