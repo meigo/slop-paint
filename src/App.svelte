@@ -2150,8 +2150,11 @@
       try {
         selection.applyClip(ctx); // layer.ctx carries the dpr transform applyClip expects
         // Inside the marquee the outline REPLACES the art: drawing over it would leave the solid
-        // fill showing through the hollowed middle.
-        ctx.clearRect(r.x / dpr, r.y / dpr, w / dpr, h / dpr);
+        // fill showing through the hollowed middle. One `copy`, as the fill does: a clearRect and
+        // then a draw both took the clip's antialiased edge, leaving a notch along the marquee
+        // (the art there came out at c·outline + (1 − c)²·art). `copy` also clears what lies in
+        // the marquee outside the region — transparent anyway, the region holding all the ink.
+        ctx.globalCompositeOperation = "copy";
         ctx.drawImage(outlineScratch, r.x / dpr, r.y / dpr, w / dpr, h / dpr);
       } finally {
         ctx.restore();
