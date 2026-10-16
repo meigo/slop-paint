@@ -89,6 +89,7 @@
   import {
     clearAutosave,
     keepLatestAutosave,
+    LATEST_KEY,
     listAutosaves,
     loadAutosave,
     saveAutosave,
@@ -2622,6 +2623,10 @@
     try {
       const buffer = await loadAutosave(entry.key);
       if (!buffer) throw new Error("that copy is gone");
+      // Paused over blank layers, the latest is the newest good copy: restoring an older one and
+      // resuming let the next autosave overwrite it. Set it aside first (after reading the chosen
+      // copy, which may be the kept slot this replaces); if that fails, stay paused.
+      if (autosaveHalted && entry.key !== LATEST_KEY) await keepLatestAutosave();
       loadAutosaveBuffer(buffer);
       app.projectName = entry.projectName;
       docFile = null; // it may not match the file the document came from
