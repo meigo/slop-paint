@@ -1870,7 +1870,8 @@
 
   function handleKeyUp(e: KeyboardEvent) {
     if (selection) selection.shiftHeld = e.shiftKey;
-    if (e.key === "x" && toolBeforeEraser) {
+    // Either case: with Shift down by the release the key reads "X", and the eraser stayed on.
+    if (e.key.toLowerCase() === "x" && toolBeforeEraser) {
       setTool(toolBeforeEraser);
       toolBeforeEraser = null;
     }
@@ -3590,6 +3591,14 @@
   onpointerdowncapture={onPointerHint}
   onblur={() => {
     if (selection) selection.shiftHeld = false;
+    // A key held when the window loses focus sends no keyup: Space stayed latched (every click
+    // panned) and a held X kept the eraser.
+    spaceHeld = false;
+    if (toolBeforeEraser) {
+      setTool(toolBeforeEraser);
+      toolBeforeEraser = null;
+    }
+    updateCursor();
   }}
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}

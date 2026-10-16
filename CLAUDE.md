@@ -144,7 +144,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 ## Desktop Shortcuts
 
 - B/E/S/L/V/G/I — brush/eraser/select/lasso/move/fill/eyedropper (Outline has no key)
-- X (hold) — temporary eraser
+- X (hold) — temporary eraser (released as x or X; leaving the window lets go of X and Space too, as no keyup comes)
 - R / Shift+R — rotate canvas 15° CW/CCW
 - 0 — reset view (zoom, pan, rotation); 1 — 100% zoom (plain keys: browsers reserve Ctrl/Cmd+digit)
 - Ctrl+=/- — zoom in/out
