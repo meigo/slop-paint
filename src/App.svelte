@@ -2434,7 +2434,7 @@
       return;
     }
     inkedAtSave = inked;
-    historyAtSave = app.historyVersion;
+    historyAtSave = history.layerChanges;
     const meta = {
       savedAt: Date.now(),
       projectName: app.projectName,
@@ -2502,7 +2502,7 @@
   // whether layers lost all their pixels with no undo step to explain it (`looksBlanked`); if so,
   // autosave pauses and the restore dialog opens.
   let inkedAtSave = new Set<number>(); // layers with pixels at the last save (or restore)
-  let historyAtSave = 0; // app.historyVersion then: how many undo steps have happened since
+  let historyAtSave = 0; // history.layerChanges then: how many layers undo steps changed since
   let autosaveHalted = false;
   const AUTOSAVE_PAUSED =
     "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back, or keep the blank layers there.";
@@ -2544,7 +2544,7 @@
   /** The document now counts as saved in this state: the guard compares against it. */
   function markSaved() {
     inkedAtSave = inkedLayerIds();
-    historyAtSave = app.historyVersion;
+    historyAtSave = history.layerChanges;
   }
 
   /** After Resize or Sharp layers re-made every layer: a new baseline for the guard — unless the
@@ -2564,7 +2564,7 @@
   function blankedSince(inked: Set<number>): boolean {
     if (!layers) return false;
     const existing = new Set(layers.flatLayers().map((l) => l.id));
-    return looksBlanked(inkedAtSave, inked, existing, app.historyVersion - historyAtSave);
+    return looksBlanked(inkedAtSave, inked, existing, history.layerChanges - historyAtSave);
   }
 
   function haltForBlankLayers() {

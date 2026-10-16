@@ -5,6 +5,8 @@ export interface Command {
   label?: string;
   /** Retained RAM for this command (e.g. two ImageData copies). Used to evict old pixel undos. */
   bytes?: number;
+  /** How many layers it can change at once (default 1): a Move of several layers is one step. */
+  layers?: number;
 }
 
 /** Default pixel-undo budget. Pixel steps keep only the tiles they changed (`changedTiles`):
@@ -76,6 +78,11 @@ export class History {
   private undoStack: Command[] = [];
   private redoStack: Command[] = [];
   private bytes = 0;
+  /** Layers changed by pushes, undos and redos so far, each step counted by its `layers`. Only
+   *  ever grows: the blank-layers guard compares it with its value at the last save (every way the
+   *  user empties a layer is a step, so more layers emptied than this grew by means something
+   *  else emptied them). */
+  layerChanges = 0;
   private maxSize: number;
   private maxBytes: number;
   constructor(maxSize = 50, maxBytes = DEFAULT_HISTORY_BYTES) {
@@ -87,6 +94,7 @@ export class History {
     for (const c of this.redoStack) this.bytes -= c.bytes ?? 0;
     this.redoStack = [];
     this.undoStack.push(cmd);
+    this.layerChanges += cmd.layers ?? 1;
     this.bytes += cmd.bytes ?? 0;
     this.trim(cmd.bytes ?? 0);
     this.onChange?.();
@@ -112,6 +120,7 @@ export class History {
     const cmd = this.undoStack.pop();
     if (!cmd) return;
     cmd.undo();
+    this.layerChanges += cmd.layers ?? 1;
     this.redoStack.push(cmd);
     this.onChange?.();
   }
@@ -120,6 +129,7 @@ export class History {
     const cmd = this.redoStack.pop();
     if (!cmd) return;
     cmd.redo();
+    this.layerChanges += cmd.layers ?? 1;
     this.undoStack.push(cmd);
     this.onChange?.();
   }

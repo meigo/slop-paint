@@ -90,7 +90,7 @@ export function pushLayersEdit(
     hooks.onHistoryApplied();
   };
   const bytes = parts.reduce((sum, p) => sum + p.diff.bytes, 0);
-  history.push({ undo: () => put("was"), redo: () => put("now"), bytes });
+  history.push({ undo: () => put("was"), redo: () => put("now"), bytes, layers: parts.length });
 }
 
 /**

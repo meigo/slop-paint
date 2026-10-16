@@ -140,3 +140,19 @@ describe("History.onChange", () => {
     expect(seen.at(-1)).toEqual({ undo: true, redo: false });
   });
 });
+
+describe("History.layerChanges", () => {
+  it("counts each push, undo and redo by the layers its step can change", () => {
+    const s = { n: 0 };
+    const h = new History();
+    h.push(counterCmd(s, 1)); // one layer by default
+    expect(h.layerChanges).toBe(1);
+    h.push({ ...counterCmd(s, 1), layers: 3 }); // a Move of three layers: one step
+    expect(h.layerChanges).toBe(4);
+    h.undo();
+    h.redo();
+    expect(h.layerChanges).toBe(10);
+    h.clear();
+    expect(h.layerChanges).toBe(10); // only grows: the guard takes differences
+  });
+});
