@@ -339,9 +339,10 @@
   /** Edit ▸ Settings ▸ Sharp layers: resample the open document to the new resolution. */
   function setLayerResolution(hi: boolean) {
     if (!layers || hi === app.hiResLayers) return;
+    app.hiResLayers = hi;
+    if (wantedDpr() === layers.pixelRatio) return; // a 1× screen: same resolution, keep undo
     if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
     if (outlineActive()) cancelOutline();
-    app.hiResLayers = hi;
     layers.setPixelRatio(wantedDpr());
     history.clear(); // snapshots are the old resolution
     resizeCanvas();
@@ -917,6 +918,11 @@
     mode: "canvas" | "scale" = "canvas",
   ) {
     if (!layers) return;
+    // The same size changes nothing in either mode: keep the undo history it would clear.
+    if (width === app.docWidth && height === app.docHeight) {
+      showResizeDialog = false;
+      return flashStatus("Same size — nothing changed");
+    }
     if (outlineActive()) cancelOutline();
     // A float and its Cancel snapshot are in the old canvas's coordinates: Apply landed off by the
     // anchor shift, Cancel wrote the old snapshot back at 0,0. Apply it first, as Sharp layers does.
