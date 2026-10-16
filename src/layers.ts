@@ -13,8 +13,11 @@ export interface RefSource {
   /** The original's own pixel size (the file's, not the capped decode's). */
   width: number;
   height: number;
-  /** Decoded copy, or null while an opened file is still decoding. */
+  /** Decoded copy, or null while an opened file is still decoding (or couldn't decode it). */
   image: HTMLCanvasElement | null;
+  /** The opened file's original couldn't be decoded here (a format the browser can't read): it
+   *  stays its saved pixels, and only Bake or a whole-layer Move apply to it. */
+  decodeFailed?: boolean;
   /** Set on a text reference: `image` is only its raster copy (for the handles and the PSD); the
    *  layer is drawn from this, sharp at any scale. `bytes` is a PNG carrying `spec` (text-ref.ts). */
   text?: {

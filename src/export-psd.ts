@@ -107,6 +107,8 @@ export function loadPsd(
   dpr: number,
   /** Called as each reference's original finishes decoding (it can be transformed from then on). */
   onRefDecoded?: () => void,
+  /** Called with a reference's name when its original can't be decoded. */
+  onRefFailed?: (name: string) => void,
 ): { width: number; height: number } {
   // No thumbnail (unused), and no composite when the file has layers (ag-psd still reads it for a
   // flat file, which needs it): each was another decoded image held through the open.
@@ -215,13 +217,17 @@ export function loadPsd(
     manager.activeId = flat[flat.length - 1].id;
   }
 
-  decodeOpenedRefs(refSources.values(), onRefDecoded);
+  decodeOpenedRefs(refSources.values(), onRefDecoded, onRefFailed);
   return { width: w, height: h };
 }
 
 /** Decode the originals of the references an opened PSD brought back, filling in each shared
  *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
-function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) {
+function decodeOpenedRefs(
+  sources: Iterable<RefSource>,
+  onDecoded?: () => void,
+  onFailed?: (name: string) => void,
+) {
   for (const src of sources) {
     // A text reference's PNG carries its settings: rebuild it as text, once its font has loaded
     // (the saved bytes stay). Same fonts, same layout, so the raster copy comes out the size it was
@@ -240,7 +246,11 @@ function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) 
         if (!src.height) src.height = decoded.height;
         onDecoded?.();
       },
-      (e) => console.error(`reference "${src.name}" could not be decoded`, e),
+      (e) => {
+        console.error(`reference "${src.name}" could not be decoded`, e);
+        src.decodeFailed = true; // said, instead of "still loading" for good
+        onFailed?.(src.name);
+      },
     );
   }
 }

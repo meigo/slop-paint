@@ -1045,7 +1045,7 @@
       // non-PSD file fails here with the open document unchanged.
       endGesture(); // a press still down finishes on the old document, not the new one
       try {
-        size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion);
+        size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion, refDecodeFailed);
       } catch (e) {
         failed(e);
         return;
@@ -1208,8 +1208,9 @@
     if (!g || !layers) return;
     for (const r of g.refs)
       layers.renderRef(r.layer, shiftedCorners(r.refBefore, g.dx, g.dy), true);
+    const drawn = new Set(g.refs.map((r) => r.layer));
     layers.moveOffset = {
-      ids: new Set(g.layers.filter((l) => !l.ref).map((l) => l.id)),
+      ids: new Set(g.layers.filter((l) => !drawn.has(l)).map((l) => l.id)),
       dx: g.dx,
       dy: g.dy,
     };
@@ -1239,8 +1240,11 @@
       moveGesture = {
         start: p,
         layers: moving,
+        // Re-drawn from the original — once it is decoded. One still decoding (or that can't be)
+        // has only its saved pixels: they shift as a plain layer's, its placement along with them.
+        // Shifting the placement alone left the pixels behind, and a save then stored the two apart.
         refs: moving
-          .filter((l) => l.ref)
+          .filter((l) => l.ref?.src.image)
           .map((l) => ({ layer: l, before: layers!.snapshotOf(l), refBefore: l.ref! })),
         dx: 0,
         dy: 0,
@@ -1276,6 +1280,8 @@
         return { layer, before: r.before, refBefore: r.refBefore };
       }
       const before = layers!.snapshotOf(layer);
+      const refBefore = layer.ref; // a reference not decoded yet
+      if (refBefore) layer.ref = { src: refBefore.src, corners: shiftedCorners(refBefore, dx, dy) };
       const tmp = document.createElement("canvas");
       tmp.width = layer.canvas.width;
       tmp.height = layer.canvas.height;
@@ -1285,7 +1291,7 @@
       layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
       layer.ctx.drawImage(tmp, Math.round(dx * dpr), Math.round(dy * dpr));
       layer.ctx.restore();
-      return { layer, before };
+      return { layer, before, refBefore };
     });
     pushLayersEdit(layers, edits);
     layers.composite();
@@ -2474,7 +2480,7 @@
     if (!layers) return;
     const dpr = docDpr();
     endGesture(); // a press still down finishes on the old document, not the new one
-    const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
+    const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion, refDecodeFailed);
     if (outlineActive()) cancelOutline();
     history.clear(); // restored document: nothing from this session to undo
     app.docWidth = width;
@@ -3134,10 +3140,19 @@
   // The Selection only supplies the handles (`handlesOnly`: no float, nothing pending).
   let refTransform: { layer: Layer; at: RefPlacement } | null = null;
   const REF_PAINT_REFUSED = "It's a reference — Bake it (in the layer strip) to paint on it";
+  const REF_UNDECODABLE =
+    "This browser can't read the reference's original — it shows its saved pixels; Bake it to edit them";
+
+  /** An opened reference whose original can't be decoded: said once, as its handles never come. */
+  function refDecodeFailed(name: string) {
+    flashStatus(`Couldn't read the original of "${name}" — it keeps its saved pixels`, 6000);
+    bumpLayerVersion();
+  }
 
   /** Why the active reference shows no handles, or "" — also the reason a drag on it does nothing. */
   function refHandlesBlock(layer: Layer): string {
     if (!layer.ref) return "";
+    if (layer.ref.src.decodeFailed) return REF_UNDECODABLE;
     if (!layer.ref.src.image) return "The reference is still loading — try again in a moment";
     if (layers.isLocked(layer)) return "Layer is locked";
     if (layers.isHidden(layer)) return "Layer is hidden";
