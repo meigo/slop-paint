@@ -374,7 +374,7 @@
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
-    markSaved(); // resampling can drop a faint layer's last pixels: a new baseline, not a blanking
+    markResampled(); // resampling can drop a faint layer's last pixels: a new baseline
     debouncedSave();
     flashStatus(
       hi
@@ -999,7 +999,7 @@
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
-    markSaved(); // a crop that empties layers is deliberate, not a blanking (the guard's baseline)
+    markResampled(); // a crop that empties layers is deliberate, not a blanking
     fitDocumentInView();
     showResizeDialog = false;
   }
@@ -2545,6 +2545,20 @@
   function markSaved() {
     inkedAtSave = inkedLayerIds();
     historyAtSave = app.historyVersion;
+  }
+
+  /** After Resize or Sharp layers re-made every layer: a new baseline for the guard — unless the
+   *  device refused some of the new canvases (`unbackedLayerCount`: they came out empty, with no
+   *  error), when the baseline would let the next autosave replace the stored drawing with them.
+   *  Then autosave pauses and the restore dialog opens, as for layers blanked in the background. */
+  function markResampled() {
+    const lost = layers?.unbackedLayerCount() ?? 0;
+    if (!lost) return markSaved();
+    haltForBlankLayers();
+    flashStatus(
+      `The device ran out of memory for ${lost} layer${lost > 1 ? "s" : ""} at this size — ${lost > 1 ? "they are" : "it is"} empty now`,
+      15000,
+    );
   }
 
   function blankedSince(inked: Set<number>): boolean {

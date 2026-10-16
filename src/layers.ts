@@ -594,6 +594,28 @@ export class LayerManager {
     ctx.restore();
   }
 
+  /** How many layers have a canvas that didn't get its memory. An iPad refuses a canvas over its
+   *  size or memory limit WITHOUT an error (a Resize up, Sharp layers on a big document): it then
+   *  draws nothing and reads back empty. So a pixel is written at the far corner, read back and put
+   *  back as it was. */
+  unbackedLayerCount(): number {
+    let n = 0;
+    for (const { canvas, ctx } of this.flatLayers()) {
+      const x = canvas.width - 1;
+      const y = canvas.height - 1;
+      try {
+        const was = ctx.getImageData(x, y, 1, 1);
+        ctx.putImageData(new ImageData(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1), x, y);
+        const back = ctx.getImageData(x, y, 1, 1).data;
+        ctx.putImageData(was, x, y);
+        if (back[0] !== 1 || back[1] !== 2 || back[2] !== 3 || back[3] !== 255) n++;
+      } catch {
+        n++;
+      }
+    }
+    return n;
+  }
+
   /** Pixels per document unit that the layers are kept at (the layer resolution). */
   get pixelRatio(): number {
     return this.dpr;
