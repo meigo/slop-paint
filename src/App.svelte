@@ -677,7 +677,8 @@
     }
     if (!selectLayerContent() || selection.state !== "selected") return;
     const layer = layers.active;
-    if (layers.isLocked(layer)) return;
+    const why = paintBlock(layer);
+    if (why) return flashStatus(why);
     const dpr = docDpr();
     preSelectionSnapshot = layers.getSnapshot();
     floatLayer = layers.active;
@@ -701,8 +702,11 @@
     }
     if (!selectLayerContent()) return;
     if (selection.state === "selected") {
+      // A marquee kept from another layer: nothing to lift from a group row (the active layer then
+      // falls back to Background), a locked or a hidden layer — as a drag inside it refuses.
       const layer = layers.active;
-      if (layers.isLocked(layer)) return;
+      const why = paintBlock(layer);
+      if (why) return flashStatus(why);
       const dpr = docDpr();
       preSelectionSnapshot = layers.getSnapshot();
       floatLayer = layers.active;
@@ -723,6 +727,27 @@
         );
       selection.densifyWarp(rows, cols);
     }
+  }
+
+  /**
+   * W / M: the Distort / Mesh buttons of the Select/Lasso row, through the same checks — so with
+   * no marquee they take the whole layer, and a group row, a locked or hidden layer say why. A float
+   * lives on Select/Lasso only (its Apply/Cancel are in their row; a tool switch applies it), so
+   * from another tool they act only on a marquee, switching to Select first as Paste does. They
+   * used to lift a float under the Brush, Fill or Outline, whose strokes then drew into the hole
+   * (undo lost the art), and lifted from Background with a group row selected (2026-10-17 review).
+   */
+  function warpFromKey(n: number) {
+    if (!selection || !layers) return;
+    const tool = app.currentTool;
+    if (tool !== "select" && tool !== "lasso") {
+      if (refTransform) return enterWarp(n, n); // says a reference doesn't warp
+      if (selection.state !== "selected") return;
+      const why = paintBlock(layers.active) || (layers.active.ref ? REF_PAINT_REFUSED : "");
+      if (why) return flashStatus(why);
+      setTool("select");
+    }
+    enterWarp(n, n);
   }
 
   function clearLayer() {
@@ -1768,14 +1793,14 @@
     }
 
     // Distort/Warp: W = 4-corner distort (2×2 grid). M = mesh warp (3×3 grid).
-    if ((e.key === "w" || e.key === "W") && selection?.active) {
+    if ((e.key === "w" || e.key === "W") && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      enterWarp(2, 2);
+      warpFromKey(2);
       return;
     }
-    if ((e.key === "m" || e.key === "M") && selection?.active) {
+    if ((e.key === "m" || e.key === "M") && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      enterWarp(3, 3);
+      warpFromKey(3);
       return;
     }
 

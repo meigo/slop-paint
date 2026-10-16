@@ -169,7 +169,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 | Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                         |
 | Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                  |
 | Delete or Backspace        | Clear the selection                                 |
-| W / M                      | Distort / mesh warp the selection                   |
+| W / M                      | Distort / mesh warp the selection or whole layer    |
 | Enter / Escape             | Apply / cancel a transform or Outline preview       |
 | Space+drag or middle mouse | Pan                                                 |
 | Ctrl+= / Ctrl+-            | Zoom in / out                                       |
@@ -182,7 +182,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 Cmd works in place of Ctrl on a Mac. While the pen or mouse button is down, the view keys and
 the wheel do nothing, and a stroke keeps the brush it started with; a tool switch or a selection
-action (Delete, Cut, Enter/Escape, W/M) finishes the stroke or drag first.
+action (Delete, Cut, Enter/Escape, W/M) finishes the stroke or drag first. W/M are the Distort
+and Mesh buttons of the Select and Lasso tools: with nothing selected there they take the whole
+layer; from another tool they warp the selection and switch to Select.
 
 ## Getting started
 
