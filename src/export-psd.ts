@@ -38,11 +38,16 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
           children: buildChildren(node.children),
         };
       }
-      const cvs = document.createElement("canvas");
-      cvs.width = w;
-      cvs.height = h;
-      // node.canvas is dpr-scaled (physical pixels); scale down to CSS-sized PSD canvas.
-      cvs.getContext("2d")!.drawImage(node.canvas, 0, 0, w, h);
+      // node.canvas is dpr-scaled (physical pixels); scale down to CSS-sized PSD canvas. At 1×
+      // (iPad's default) it already is that size, and ag-psd only reads it: a copy doubled the
+      // layers' memory at every autosave, the tab-hide flush included.
+      let cvs = node.canvas;
+      if (cvs.width !== w || cvs.height !== h) {
+        cvs = document.createElement("canvas");
+        cvs.width = w;
+        cvs.height = h;
+        cvs.getContext("2d")!.drawImage(node.canvas, 0, 0, w, h);
+      }
       const out: PsdLayer = {
         name: node.name,
         canvas: cvs,
@@ -103,7 +108,9 @@ export function loadPsd(
   /** Called as each reference's original finishes decoding (it can be transformed from then on). */
   onRefDecoded?: () => void,
 ): { width: number; height: number } {
-  const psd = readPsd(buffer);
+  // No thumbnail (unused), and no composite when the file has layers (ag-psd still reads it for a
+  // flat file, which needs it): each was another decoded image held through the open.
+  const psd = readPsd(buffer, { skipThumbnail: true, skipCompositeImageData: true });
   const w = psd.width;
   const h = psd.height;
   // Smart Objects become references again. Their originals decode in the background, one decode
@@ -152,6 +159,7 @@ export function loadPsd(
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(psdLayer.canvas, left, top);
         ctx.resetTransform();
+        psdLayer.canvas = undefined; // drawn: let the decoded copy go while the rest are built
       }
       // Set dpr transform for future CSS-coord operations
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
