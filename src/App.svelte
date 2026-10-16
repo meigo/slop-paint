@@ -672,8 +672,8 @@
     if (!selection || !layers) return;
     endGesture();
     // A reference shows its handles whenever it is active; say why when it can't.
-    if (layers.active.ref) {
-      const why = refHandlesBlock(layers.active);
+    if (layers.activeRef) {
+      const why = refHandlesBlock(layers.activeRef);
       if (why) flashStatus(why);
       return;
     }
@@ -699,7 +699,7 @@
   function enterWarp(rows: number, cols: number) {
     if (!selection || !layers) return;
     endGesture();
-    if (refTransform || layers.active.ref) {
+    if (refTransform || layers.activeRef) {
       return flashStatus("A reference moves, scales and rotates only — Bake it to warp it");
     }
     if (!selectLayerContent()) return;
@@ -2230,7 +2230,7 @@
   let toolBeforeRef: Tool | null = null;
   $effect(() => {
     void app.layerVersion;
-    const onRef = layersReady && !!layers.active?.ref;
+    const onRef = layersReady && !!layers.activeRef;
     untrack(() => {
       if (onRef === lastOnRef) return;
       lastOnRef = onRef;
@@ -2334,7 +2334,7 @@
   function flipSelection(axis: "h" | "v") {
     if (!selection) return;
     endGesture();
-    if (layers.active.ref) {
+    if (layers.activeRef) {
       if (!refTransform) return enterFreeTransform(); // says why there are no handles
       selection.flip(axis);
       storeRefPlacement();
@@ -2709,7 +2709,7 @@
   const refActive = $derived.by(() => {
     void app.layerVersion;
     void app.selectionVersion;
-    return layersReady && !!layers.active?.ref;
+    return layersReady && !!layers.activeRef;
   });
   // Why the lifting actions (transform, flip, cut, delete) can't act on the active layer, or "".
   const liftBlock = $derived.by(() => {
@@ -3052,9 +3052,9 @@
   /** Open the dialog on the active text layer. */
   function editText() {
     if (!layers || textDialog) return;
-    const layer = layers.active;
-    const text = layer.ref?.src.text;
-    if (!text) return;
+    const layer = layers.activeRef;
+    const text = layer?.ref?.src.text;
+    if (!layer || !text) return;
     if (layers.isLocked(layer)) return flashStatus("Layer is locked");
     if (layers.isHidden(layer)) return flashStatus("Layer is hidden");
     textEdit = { layer, before: layer.ref, beforeTree: null };
@@ -3152,7 +3152,10 @@
     const layer = layers.active;
     // Not under the Move tool: there a drag moves the whole layer, reference or not.
     const want =
-      !!layer.ref && !refHandlesBlock(layer) && !outlineActive() && app.currentTool !== "move";
+      !!layers.activeRef &&
+      !refHandlesBlock(layer) &&
+      !outlineActive() &&
+      app.currentTool !== "move";
     // Still showing, for this layer, at the placement it has (undo/redo replaces `ref`)?
     const current =
       !!refTransform &&

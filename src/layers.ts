@@ -542,6 +542,14 @@ export class LayerManager {
     return this.findNode(this.activeId)?.type === "group";
   }
 
+  /** The active row when it is a reference layer, else null. Never `active`'s fallback: with a
+   *  group row selected that is the bottom layer, and a reference there took the tool to Select
+   *  and showed handles that moved a layer nobody had picked. */
+  get activeRef(): Layer | null {
+    const layer = this.findLayer(this.activeId);
+    return layer?.ref ? layer : null;
+  }
+
   /** Find the parent array and index of a node by id */
   findParent(id: number): { parent: LayerNode[]; index: number } | null {
     function search(nodes: LayerNode[]): { parent: LayerNode[]; index: number } | null {
