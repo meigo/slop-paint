@@ -159,3 +159,50 @@ describe("changing the warp grid while a drag is held", () => {
     expect(sel.warpGrid[1][1]).toEqual({ x: 100, y: 100 });
   });
 });
+
+function lasso(pts: { x: number; y: number }[]) {
+  sel.mode = "lasso";
+  sel.startCreate(pts[0].x, pts[0].y);
+  for (const p of pts.slice(1)) sel.updateCreate(p.x, p.y);
+  sel.endCreate();
+}
+
+describe("lifting a lasso", () => {
+  for (const dpr of [1, 2]) {
+    it(`at dpr ${dpr}, the copy's clip lands where the hole is cut`, () => {
+      const pts = [];
+      for (let k = 0; k < 32; k++) {
+        const t = (k / 32) * 2 * Math.PI;
+        pts.push({ x: 100.33 + 30.17 * Math.cos(t), y: 80.71 + 30.29 * Math.sin(t) });
+      }
+      lasso(pts);
+      const layer = layerCtx(dpr);
+      made = [];
+      sel.liftPixels(layer.ctx, dpr);
+      const copy = made[0].rec;
+      const [sx, sy] = copy.draws[0].args; // the copy's (0, 0) is this layer pixel
+      const clip = copy.clips[0];
+      const hole = layer.rec.clips[0];
+      expect(clip.length).toBe(hole.length);
+      clip.forEach((p, i) => {
+        expect(p.x + sx).toBeCloseTo(hole[i].x, 9);
+        expect(p.y + sy).toBeCloseTo(hole[i].y, 9);
+      });
+    });
+  }
+
+  it("copies every pixel the outline touches", () => {
+    lasso([
+      { x: 10.6, y: 20.2 },
+      { x: 60.2, y: 20.2 },
+      { x: 60.2, y: 70.7 },
+      { x: 10.6, y: 70.7 },
+    ]);
+    const layer = layerCtx(1);
+    made = [];
+    sel.liftPixels(layer.ctx, 1);
+    const [sx, sy, sw, sh] = made[0].rec.draws[0].args;
+    expect([sx, sy, sw, sh]).toEqual([10, 20, 51, 51]);
+    expect(sel.rect).toEqual({ x: 10, y: 20, w: 51, h: 51 });
+  });
+});

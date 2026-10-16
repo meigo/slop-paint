@@ -356,10 +356,13 @@ export class Selection {
   copyPixels(srcCtx: CanvasRenderingContext2D, dpr: number): HTMLCanvasElement | null {
     if (!this.rect) return null;
     const r = this.rect;
-    const px = Math.round(r.x * dpr);
-    const py = Math.round(r.y * dpr);
-    const pw = Math.round(r.w * dpr);
-    const ph = Math.round(r.h * dpr);
+    const lasso = !!this.lassoPath;
+    // A lasso's box takes every pixel its outline touches: the hole is cut along the outline as
+    // drawn, and a rounded box left the outer part of a pixel at its edge cleared but never copied.
+    const px = lasso ? Math.floor(r.x * dpr) : Math.round(r.x * dpr);
+    const py = lasso ? Math.floor(r.y * dpr) : Math.round(r.y * dpr);
+    const pw = lasso ? Math.ceil((r.x + r.w) * dpr) - px : Math.round(r.w * dpr);
+    const ph = lasso ? Math.ceil((r.y + r.h) * dpr) - py : Math.round(r.h * dpr);
     if (pw <= 0 || ph <= 0) return null;
     // The selection takes the whole layer pixels it copied: a marquee dragged at zoom or with the
     // Pencil has fractional edges, and clearing / redrawing at those while copying whole pixels
@@ -372,12 +375,15 @@ export class Selection {
     cvs.height = ph;
     const ctx = cvs.getContext("2d")!;
 
-    if (this.lassoPath) {
+    if (lasso) {
       ctx.save();
+      // Relative to the copied pixels' corner, so the clip lands exactly where the hole is cut. It
+      // was relative to the unsnapped box: up to half a pixel off, so an untouched lift + Apply
+      // left a faded line along the outline.
       const clipPath = new Path2D();
       for (let i = 0; i < this.lassoPoints.length; i++) {
-        const lx = (this.lassoPoints[i].x - r.x) * dpr;
-        const ly = (this.lassoPoints[i].y - r.y) * dpr;
+        const lx = this.lassoPoints[i].x * dpr - px;
+        const ly = this.lassoPoints[i].y * dpr - py;
         if (i === 0) clipPath.moveTo(lx, ly);
         else clipPath.lineTo(lx, ly);
       }
