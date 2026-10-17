@@ -469,7 +469,7 @@ export function floodFill(
   const mask = fillMask(data, w, h, sx, sy, tolerance, options.gap ?? 0)!;
 
   // --- Pass 2: coverage per pixel, 0–255 ---
-  // Expand grows the fill under the lines (all of it drawn behind them), its edge feathered by
+  // Expand grows the fill under the lines (behind them), its edge feathered by
   // Soft. Without Expand, Soft fades the fill into the lines' soft edges, behind them; the tapped
   // region itself stays solid.
   const soft = options.softEdge ?? 0;
@@ -491,58 +491,35 @@ export function floodFill(
   const cover =
     expand > 0 ? atLeast(expandedCoverage(mask, w, h, expand, soft), toMiddle) : toMiddle;
 
-  // --- Pass 3: Apply fill behind existing content ---
-  if (expand > 0) {
-    // Draw fill to a temp canvas, then composite behind existing content
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = w;
-    tempCanvas.height = h;
-    const tempCtx = tempCanvas.getContext("2d")!;
-    const tempData = tempCtx.createImageData(w, h);
-    const td = tempData.data;
-
-    for (let i = 0; i < w * h; i++) {
-      if (cover[i]) {
-        const pi = i * 4;
-        td[pi] = fillColor.r;
-        td[pi + 1] = fillColor.g;
-        td[pi + 2] = fillColor.b;
-        td[pi + 3] = Math.round((fillColor.a * cover[i]) / 255);
-      }
+  // --- Pass 3: write the fill ---
+  // The tapped region takes the fill colour; what Expand and Soft add beyond it goes BEHIND what's
+  // there (the line stays on top: no halo over it). Expand used to draw the WHOLE fill
+  // destination-over, the region too, so a tap on a painted area recoloured nothing yet ringed it
+  // and pushed an undo step. From a painted tap nothing lands on an EMPTY pixel beyond the region:
+  // the transparent space round the art is no line to tuck under (Expand drew a ring there).
+  const painted = seed.a > 0;
+  for (let i = 0; i < w * h; i++) {
+    const c = cover[i];
+    if (!c) continue;
+    const pi = i * 4;
+    if (finalMask[i]) {
+      data[pi] = fillColor.r;
+      data[pi + 1] = fillColor.g;
+      data[pi + 2] = fillColor.b;
+      data[pi + 3] = fillColor.a;
+      continue;
     }
-    tempCtx.putImageData(tempData, 0, 0);
-
-    // Draw fill behind existing content using destination-over
-    ctx.save();
-    ctx.resetTransform();
-    ctx.globalCompositeOperation = "destination-over";
-    ctx.drawImage(tempCanvas, 0, 0);
-    ctx.restore();
-  } else {
-    // No expand — write directly to the image data: the tapped region takes the fill colour; what
-    // Soft edge adds under the lines goes BEHIND them (the line stays on top: no halo over it).
-    for (let i = 0; i < w * h; i++) {
-      const c = cover[i];
-      if (!c) continue;
-      const pi = i * 4;
-      if (finalMask[i]) {
-        data[pi] = fillColor.r;
-        data[pi + 1] = fillColor.g;
-        data[pi + 2] = fillColor.b;
-        data[pi + 3] = fillColor.a;
-        continue;
-      }
-      const sa = (fillColor.a / 255) * (c / 255);
-      const da = data[pi + 3] / 255;
-      const oa = da + sa * (1 - da);
-      if (oa <= 0) continue;
-      data[pi] = Math.round((data[pi] * da + fillColor.r * sa * (1 - da)) / oa);
-      data[pi + 1] = Math.round((data[pi + 1] * da + fillColor.g * sa * (1 - da)) / oa);
-      data[pi + 2] = Math.round((data[pi + 2] * da + fillColor.b * sa * (1 - da)) / oa);
-      data[pi + 3] = Math.round(oa * 255);
-    }
-    ctx.putImageData(imageData, 0, 0);
+    if (painted && data[pi + 3] === 0) continue;
+    const sa = (fillColor.a / 255) * (c / 255);
+    const da = data[pi + 3] / 255;
+    const oa = da + sa * (1 - da);
+    if (oa <= 0) continue;
+    data[pi] = Math.round((data[pi] * da + fillColor.r * sa * (1 - da)) / oa);
+    data[pi + 1] = Math.round((data[pi + 1] * da + fillColor.g * sa * (1 - da)) / oa);
+    data[pi + 2] = Math.round((data[pi + 2] * da + fillColor.b * sa * (1 - da)) / oa);
+    data[pi + 3] = Math.round(oa * 255);
   }
+  ctx.putImageData(imageData, 0, 0);
 }
 
 export function hexToRgba(
@@ -582,8 +559,8 @@ export function enclosedFillRegion(
 /**
  * Paint `region` (device px, sized to the ctx's canvas) in one pass BEHIND existing content (e.g. white under a black outline).
  *
- * Always composites with destination-over, unlike `floodFill`, which only takes that path when
- * `expand > 0`. Painting behind is the point here, not an artefact of the expand pass.
+ * Always composites with destination-over, unlike `floodFill`, which replaces the tapped region
+ * and puts only what it adds beyond it behind. Painting behind is the point here.
  */
 export function fillRegionBehind(
   ctx: CanvasRenderingContext2D,

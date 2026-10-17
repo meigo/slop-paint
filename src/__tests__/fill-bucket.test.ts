@@ -47,3 +47,31 @@ describe("floodFill: the same-colour check", () => {
     expect(at(d, 3, 3)).toEqual([10, 0, 250, 255]);
   });
 });
+
+describe("floodFill with Expand", () => {
+  // A 4×4 opaque red square at (3..6, 3..6) on a transparent 10×10 layer.
+  function redSquare() {
+    const d = new Uint8ClampedArray(W * W * 4);
+    for (let y = 3; y < 7; y++)
+      for (let x = 3; x < 7; x++) d.set([255, 0, 0, 255], (y * W + x) * 4);
+    return d;
+  }
+
+  for (const softEdge of [0, 1]) {
+    it(`recolours a painted area, with no ring round it (Soft ${softEdge})`, () => {
+      const d = redSquare();
+      floodFill(fakeCtx(W, W, d), 4, 4, BLUE, { ...HARD, expand: 2, softEdge });
+      expect(at(d, 4, 4)).toEqual([0, 0, 255, 255]);
+      expect(at(d, 2, 4)).toEqual([0, 0, 0, 0]);
+      expect(at(d, 1, 4)).toEqual([0, 0, 0, 0]);
+    });
+  }
+
+  it("still grows an empty-area fill behind the line round it", () => {
+    // Tap outside the square: the fill reaches under its edge but the edge stays red on top.
+    const d = redSquare();
+    floodFill(fakeCtx(W, W, d), 0, 0, BLUE, { ...HARD, expand: 2 });
+    expect(at(d, 0, 0)).toEqual([0, 0, 255, 255]);
+    expect(at(d, 3, 4)).toEqual([255, 0, 0, 255]);
+  });
+});
