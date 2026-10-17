@@ -3395,6 +3395,18 @@
     });
   }
 
+  // WebKit (Safari, iPad with a keyboard) fires `paste` for Cmd+V only while Edit ▸ Paste is
+  // enabled: with a text field focused, a text selection, or a `beforepaste` handler that
+  // prevents its default (slop-vector-editor 8257833). Over the canvas there is none of those, so
+  // Cmd+V did nothing there. Not in lib.dom.d.ts, so <svelte:window> can't take it.
+  $effect(() => {
+    const onBeforePaste = (e: Event) => {
+      if (!isTextEntry(e.target as HTMLElement | null) && !dialogOpen()) e.preventDefault();
+    };
+    window.addEventListener("beforepaste", onBeforePaste);
+    return () => window.removeEventListener("beforepaste", onBeforePaste);
+  });
+
   /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
   /**
    * The image on the system clipboard, if any. Browsers expose only the image types they can
