@@ -4,6 +4,16 @@ export const MAX_DOC_PX = 8192;
 
 const clampDoc = (n: number) => Math.max(1, Math.min(MAX_DOC_PX, Math.round(n)));
 
+/** A side typed in the New / Resize dialog, rounded, or null when it isn't one: empty or
+ *  unparsable (Svelte's number binding gives null for ''), or outside 1…8192 once rounded. The
+ *  dialogs refuse it with a reason: they used to clamp, so an emptied field made a 1-px side and
+ *  Resize cropped every layer to it, with the undo history gone. */
+export function docSide(v: number | null | undefined): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const n = Math.round(v);
+  return n >= 1 && n <= MAX_DOC_PX ? n : null;
+}
+
 /** The other side for `value` with the ratio locked: `value` × `to` / `from`, where `from` and
  *  `to` are the document's current sides (so the ratio never drifts as you type), clamped to
  *  1…8192 px. */

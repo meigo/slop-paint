@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Link, Unlink } from "@lucide/svelte";
   import { app } from "../appState.svelte.js";
-  import { linkedSize, MAX_DOC_PX } from "../resize";
+  import { docSide, linkedSize, MAX_DOC_PX } from "../resize";
 
   /** "canvas": crop or extend around the anchor (moves nothing); "scale": resize the drawing. */
   export type ResizeMode = "canvas" | "scale";
@@ -67,9 +67,15 @@
     { x: 1, y: 1 },
   ];
 
+  // An empty, zero or too large side is refused with a reason, never clamped (see docSide).
+  const w = $derived(docSide(width));
+  const h = $derived(docSide(height));
+  const sizeError = $derived(
+    w === null || h === null ? `Width and height must be 1 to ${MAX_DOC_PX} px` : null,
+  );
+
   function confirm() {
-    const w = Math.max(1, Math.min(MAX_DOC_PX, Math.round(width)));
-    const h = Math.max(1, Math.min(MAX_DOC_PX, Math.round(height)));
+    if (w === null || h === null) return;
     onConfirm(w, h, anchorX, anchorY, mode);
   }
 
@@ -195,6 +201,7 @@
         </div>
       </div>
 
+      {#if sizeError}<p class="text-[11px] text-warn">{sizeError}</p>{/if}
       <p class="text-[11px] text-warn">This clears the undo history.</p>
 
       <div class="flex justify-end gap-2 pt-1">
@@ -203,7 +210,9 @@
           onclick={onCancel}>Cancel</button
         >
         <button
-          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90"
+          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90 aria-disabled:opacity-40"
+          aria-disabled={sizeError !== null}
+          title={sizeError ?? "Resize the document"}
           onclick={confirm}>Resize</button
         >
       </div>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { docSide, MAX_DOC_PX } from "../resize";
+
   let {
     open = false,
     onConfirm,
@@ -34,9 +36,15 @@
     height = tmp;
   }
 
+  // An empty, zero or too large side is refused with a reason, never clamped (see docSide).
+  const w = $derived(docSide(width));
+  const h = $derived(docSide(height));
+  const sizeError = $derived(
+    w === null || h === null ? `Width and height must be 1 to ${MAX_DOC_PX} px` : null,
+  );
+
   function confirm() {
-    const w = Math.max(1, Math.min(8192, Math.round(width)));
-    const h = Math.max(1, Math.min(8192, Math.round(height)));
+    if (w === null || h === null) return;
     onConfirm(w, h, name);
   }
 
@@ -129,6 +137,7 @@
         </div>
       </div>
 
+      {#if sizeError}<p class="text-[11px] text-warn">{sizeError}</p>{/if}
       <p class="text-[11px] text-warn">
         Replaces the current drawing, its undo history and the autosaved copy. Save first (File ▸
         Save) to keep it.
@@ -140,7 +149,9 @@
           onclick={onCancel}>Cancel</button
         >
         <button
-          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90"
+          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90 aria-disabled:opacity-40"
+          aria-disabled={sizeError !== null}
+          title={sizeError ?? "Create the new document"}
           onclick={confirm}>Create</button
         >
       </div>

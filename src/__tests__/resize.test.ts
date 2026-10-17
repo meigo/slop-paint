@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { halvingSteps, layerPixelRatio, linkedSize, MAX_DOC_PX } from "../resize";
+import { docSide, halvingSteps, layerPixelRatio, linkedSize, MAX_DOC_PX } from "../resize";
 
 describe("linkedSize", () => {
   it("keeps the document's ratio", () => {
@@ -16,6 +16,25 @@ describe("linkedSize", () => {
   it("falls back to the other side for a bad input", () => {
     expect(linkedSize(Number.NaN, 1920, 1080)).toBe(1080);
     expect(linkedSize(500, 0, 1080)).toBe(1080);
+  });
+});
+
+describe("docSide", () => {
+  it("rounds a typed side", () => {
+    expect(docSide(1920)).toBe(1920);
+    expect(docSide(511.6)).toBe(512);
+    expect(docSide(1)).toBe(1);
+    expect(docSide(MAX_DOC_PX)).toBe(MAX_DOC_PX);
+  });
+
+  it("refuses an empty, zero, negative or too large side instead of clamping it", () => {
+    expect(docSide(null)).toBeNull(); // '' through Svelte's number binding
+    expect(docSide(undefined)).toBeNull();
+    expect(docSide(Number.NaN)).toBeNull();
+    expect(docSide(0)).toBeNull();
+    expect(docSide(0.4)).toBeNull(); // rounds to 0
+    expect(docSide(-3)).toBeNull();
+    expect(docSide(MAX_DOC_PX + 1)).toBeNull();
   });
 });
 
