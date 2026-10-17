@@ -1,5 +1,5 @@
 /** Fill enclosed: find the space an outline encloses (from slop-animator's fill-holes.ts). */
-import { dilateMask, erodeMask } from "./mask-ops";
+import { dilateMask, distanceToMask, erodeMask } from "./mask-ops";
 
 export interface FillEnclosedResult {
   /** w*h, 1 = part of the shape: ink, or a region the ink encloses. */
@@ -259,7 +259,12 @@ export function enclosedRegion(
   if ((opts.gap ?? 0) > 0) region = keepAreasWith(region, filled.core, w, h);
 
   const expand = Math.max(0, Math.floor(opts.expand ?? 0));
-  if (expand > 0) region = new Uint8Array(dilateMask(region, w, h, expand));
+  if (expand > 0) {
+    // `dilateMask(region, expand)` by distance: the same pixels in linear time, not O(px × r²).
+    const dist = distanceToMask(region, w, h);
+    region = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (dist[i] <= expand) region[i] = 1;
+  }
 
   let area = 0;
   for (let i = 0; i < w * h; i++) area += region[i];

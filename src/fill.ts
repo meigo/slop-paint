@@ -256,9 +256,9 @@ export function ridgeCoverage(
 
 /**
  * The fill grown `expand` px under the lines (Expand), as coverage 0–255 (2026-10-02). Soft 0: the
- * old whole-pixel round dilation (`dilateMask`). Above 0 the grown edge is a smooth round offset
- * measured by true distance (`distanceToMask`), solid up to `expand` px and fading to nothing over
- * the next max(1, 2 × Soft) px — antialiased at least. The whole-pixel dilation left a staircase
+ * old whole-pixel round dilation (what `dilateMask` gives, by distance). Above 0 the grown edge is
+ * a smooth round offset measured by true distance (`distanceToMask`), solid up to `expand` px and
+ * fading to nothing over the next max(1, 2 × Soft) px — antialiased at least. The whole-pixel dilation left a staircase
  * under the line, showing through a see-through one, and Soft's fade (`softCoverage`) starts from
  * that edge, already in the line's dark middle where it has nothing left to fade: with Expand on,
  * Soft seemed to do nothing. Pure.
@@ -271,13 +271,14 @@ export function expandedCoverage(
   soft: number,
 ): Uint8ClampedArray {
   const out = new Uint8ClampedArray(w * h);
+  const dist = distanceToMask(mask, w, h);
   if (soft <= 0) {
-    const grown = dilateMask(mask, w, h, expand);
-    for (let i = 0; i < w * h; i++) if (grown[i]) out[i] = 255;
+    // The same pixels as `dilateMask(mask, expand)` (within `expand` px), in linear time: the
+    // dilation is O(pixels × expand²), 3 s for a big fill at Expand 20.
+    for (let i = 0; i < w * h; i++) if (dist[i] <= expand) out[i] = 255;
     return out;
   }
   const width = Math.max(1, 2 * soft);
-  const dist = distanceToMask(mask, w, h);
   for (let i = 0; i < w * h; i++) {
     const c = (expand + width - dist[i]) / width;
     out[i] = c >= 1 ? 255 : c <= 0 ? 0 : Math.round(c * 255);
