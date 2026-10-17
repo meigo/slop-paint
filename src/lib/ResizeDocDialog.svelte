@@ -179,9 +179,11 @@
         </button>
       </div>
 
-      <!-- Dimmed, not removed, in Scale mode, so nothing moves: scaling keeps the whole drawing. -->
+      <!-- Dimmed, not removed, in Scale mode, so nothing moves: scaling keeps the whole drawing.
+           It still takes pointer events (its taps do nothing), or its title could never reach
+           the status bar. -->
       <div
-        class="flex flex-col gap-1.5 {mode === 'scale' ? 'pointer-events-none opacity-40' : ''}"
+        class="flex flex-col gap-1.5 {mode === 'scale' ? 'opacity-40' : ''}"
         aria-disabled={mode === "scale"}
         title={mode === "scale"
           ? "Anchor — not used when scaling: the whole drawing scales with the page"
@@ -197,6 +199,7 @@
                 ? 'ui-on border-accent'
                 : 'border-border bg-surface-hover hover:border-text-muted'}"
               onclick={() => {
+                if (mode === "scale") return;
                 anchorX = a.x;
                 anchorY = a.y;
               }}
