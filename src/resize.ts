@@ -26,7 +26,8 @@ export function linkedSize(value: number, from: number, to: number): number {
  * The sizes to shrink through, ending at the target: halve while the next halving still stays at
  * or above it, then the target. One `drawImage` from far larger reads only a few source pixels per
  * destination pixel and aliases (the stamp brushes' tip had the same problem); halving averages
- * properly. Growing or a shrink under 2× is a single step.
+ * properly. Growing or a shrink under 2× is a single step; a side that shrinks less waits at its
+ * size until the last step.
  */
 export function halvingSteps(
   fromW: number,
@@ -37,9 +38,14 @@ export function halvingSteps(
   const steps: { w: number; h: number }[] = [];
   let w = fromW;
   let h = fromH;
-  while (w / 2 >= toW && h / 2 >= toH && (w / 2 > toW || h / 2 > toH)) {
-    w = Math.max(toW, Math.round(w / 2));
-    h = Math.max(toH, Math.round(h / 2));
+  // Each side halves on its own while it still can: waiting for BOTH (as it did) drew a shrink of
+  // 2× or more on one side only — Keep ratio off — in one step.
+  for (;;) {
+    const nw = w / 2 >= toW ? Math.max(toW, Math.round(w / 2)) : w;
+    const nh = h / 2 >= toH ? Math.max(toH, Math.round(h / 2)) : h;
+    if (nw === w && nh === h) break;
+    w = nw;
+    h = nh;
     steps.push({ w, h });
   }
   const last = steps[steps.length - 1];
