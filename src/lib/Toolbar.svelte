@@ -196,6 +196,14 @@
     editingSize = true;
   }
 
+  function commitName(v: string) {
+    app.projectName = v.trim() || "untitled";
+  }
+  /** The name field commits when it is removed, too: an outside tap closes the Document menu
+   *  before the field blurs, and WebKit sends no change for a removed field, so the typed name
+   *  was lost. */
+  const commitNameOnRemove = (el: HTMLInputElement) => () => commitName(el.value);
+
   function commitSize() {
     // Escape already closed it: Chrome still fires blur as the field is removed.
     if (!editingSize) return;
@@ -608,7 +616,8 @@
             type="text"
             value={app.projectName}
             use:selectOnFocus
-            onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
+            {@attach commitNameOnRemove}
+            onchange={(e) => commitName(e.currentTarget.value)}
             class="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-2 text-sm text-text"
           />
         </label>
