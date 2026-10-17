@@ -27,6 +27,12 @@ describe("rowOrder / topSelection", () => {
     expect(rowOrder(make())).toEqual([5, 10, 4, 3, 2, 1]);
   });
 
+  it("leaves out a collapsed group's members, which have no row", () => {
+    const tree = make();
+    (tree[2] as LayerGroup).collapsed = true;
+    expect(rowOrder(tree)).toEqual([5, 10, 2, 1]);
+  });
+
   it("drops members of a selected group and unknown ids, top first", () => {
     expect(topSelection(make(), [1, 4, 10, 3, 99])).toEqual([10, 1]);
     expect(topSelection(make(), [2, 5])).toEqual([5, 2]);

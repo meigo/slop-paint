@@ -238,15 +238,16 @@ function childrenOf(tree: LayerNode[], parentId: number | null): LayerNode[] | n
   return parent?.type === "group" ? parent.children : null;
 }
 
-/** Every node's id in the order the layer panel lists them: top first, a group before its members
- *  (collapsed or not). */
+/** The rows the layer panel lists: top first, a group before its members, a collapsed group's
+ *  members left out (they have no row). A Shift+click range is picked from these: with the members
+ *  in, it picked rows the user couldn't see. */
 export function rowOrder(tree: LayerNode[]): number[] {
   const ids: number[] = [];
   const list = (nodes: LayerNode[]) => {
     for (let i = nodes.length - 1; i >= 0; i--) {
       ids.push(nodes[i].id);
       const n = nodes[i];
-      if (n.type === "group") list(n.children);
+      if (n.type === "group" && !n.collapsed) list(n.children);
     }
   };
   list(tree);

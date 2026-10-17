@@ -128,7 +128,24 @@
 
   function toggleSelecting() {
     app.layerSelecting = !app.layerSelecting;
-    app.layerSelection = app.layerSelecting ? [layers.activeId] : [];
+    // The active row starts picked — unless it is inside a collapsed group, with no row to show
+    // the check: Group and Delete then took a layer the user couldn't see.
+    const seen = rowOrder(layers.tree).includes(layers.activeId);
+    app.layerSelection = app.layerSelecting && seen ? [layers.activeId] : [];
+  }
+
+  /** Outside Select mode a pick of ONE row is that row made active: shown alone, it was highlighted
+   *  while Group, Delete, Duplicate and Merge down acted on the (unhighlighted) active row. */
+  function setPick(ids: number[]) {
+    if (app.layerSelecting || ids.length !== 1) {
+      app.layerSelection = ids;
+      return;
+    }
+    app.layerSelection = [];
+    const node = layers.findNode(ids[0]);
+    if (node?.type === "layer") layers.setActive(node.id);
+    else if (node) layers.activeId = node.id;
+    bumpLayerVersion();
   }
 
   /** A tap on a row: picks it in Select mode or with Cmd/Ctrl / Shift, else makes it active. */
@@ -140,18 +157,23 @@
     // In Select mode the pick is exactly what the checks show, even empty; a Cmd/Ctrl+click starts
     // from the active row (2026-10-02: unpicking the active row in Select mode didn't stick — the
     // next tap brought it back, as an empty pick fell back to it).
-    const cur = app.layerSelecting || picked.size > 0 ? [...picked] : [layers.activeId];
+    const cur =
+      app.layerSelecting || picked.size > 0
+        ? [...picked]
+        : rowOrder(layers.tree).includes(layers.activeId)
+          ? [layers.activeId]
+          : [];
     if (app.layerSelecting || e.metaKey || e.ctrlKey) {
-      app.layerSelection = cur.includes(node.id)
-        ? cur.filter((id) => id !== node.id)
-        : [...cur, node.id];
-      return;
+      return setPick(
+        cur.includes(node.id) ? cur.filter((id) => id !== node.id) : [...cur, node.id],
+      );
     }
     if (e.shiftKey) {
+      // From the active row, if it has one (it may be inside a collapsed group), else this row.
       const rows = rowOrder(layers.tree);
-      const a = rows.indexOf(layers.activeId);
       const b = rows.indexOf(node.id);
-      if (a >= 0 && b >= 0) app.layerSelection = rows.slice(Math.min(a, b), Math.max(a, b) + 1);
+      const a = rows.includes(layers.activeId) ? rows.indexOf(layers.activeId) : b;
+      if (b >= 0) setPick(rows.slice(Math.min(a, b), Math.max(a, b) + 1));
       return;
     }
     app.layerSelection = [];
