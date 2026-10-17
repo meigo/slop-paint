@@ -197,6 +197,8 @@
   }
 
   function commitSize() {
+    // Escape already closed it: Chrome still fires blur as the field is removed.
+    if (!editingSize) return;
     const v = parseFloat(sizeInputValue);
     if (!isNaN(v) && v >= 1 && v <= 80) {
       app.brushSettings.size = Math.round(v * 2) / 2; // snap to 0.5

@@ -502,6 +502,8 @@
   }
 
   function commitEdit(node: LayerNode) {
+    // Escape already closed it: Chrome still fires blur as the field is removed.
+    if (editingId !== node.id) return;
     const base = draft.trim();
     if (base) {
       const before = node.name;
