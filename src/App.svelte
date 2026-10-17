@@ -1160,6 +1160,8 @@
    *  only on-canvas sign of it on iPad, which has no hover cursor. Worked out when the layers, the
    *  tool or the pick change (an effect below), and only SHIFTED while dragging. */
   let moveBoxBase: { x: number; y: number; w: number; h: number } | null = null;
+  /** Set by a Move release, which shifts the box itself: the next layer change needn't measure. */
+  let moveBoxKept = false;
 
   function measureMoveBox() {
     moveBoxBase = null;
@@ -1194,7 +1196,8 @@
     void app.layerSelection;
     untrack(() => {
       if (!layersReady) return;
-      measureMoveBox();
+      if (moveBoxKept) moveBoxKept = false;
+      else measureMoveBox();
       showMoveBox();
       selection?.setMarqueeHidden(app.currentTool === "move");
     });
@@ -1306,6 +1309,18 @@
     });
     pushLayersEdit(layers, edits);
     layers.composite();
+    // The box moves with the layers, cut at the page edge as their pixels are: the re-measure the
+    // version bump would run (every target layer read whole and scanned) is skipped. It can be a
+    // little larger than the art where the cut trimmed it on the other axis too.
+    const b = moveBoxBase;
+    if (b) {
+      const x0 = Math.max(b.x + dx, 0);
+      const y0 = Math.max(b.y + dy, 0);
+      const x1 = Math.min(b.x + dx + b.w, layers.docWidth);
+      const y1 = Math.min(b.y + dy + b.h, layers.docHeight);
+      moveBoxBase = x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+    }
+    moveBoxKept = true;
     bumpLayerVersion();
   }
 
