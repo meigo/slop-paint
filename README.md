@@ -47,7 +47,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   out), expand (grows the fill under the outline so no seam shows) and **Soft** (the fill runs behind the
   line to its middle, fading as the line gets stronger, so no pixel steps show — even on a grainy
   pencil or charcoal line; Soft sets how soft it ends there, 0 for a hard pixel edge; with expand on,
-  whichever reaches further — Fill enclosed too)
+  whichever reaches further — Fill enclosed too). A tap that fills nothing says why in the status
+  bar: off the page, an empty area on an alpha-locked layer, outside the selection, already that colour
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
   it uses the same Bridge
 

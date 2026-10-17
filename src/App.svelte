@@ -1508,9 +1508,21 @@
     // Fill tool
     if (g.kind === "fill") {
       if (press) {
+        // Say why a tap fills nothing (it used to be silent).
+        const sx = Math.floor(points[0].x * dpr);
+        const sy = Math.floor(points[0].y * dpr);
+        if (sx < 0 || sy < 0 || sx >= layer.canvas.width || sy >= layer.canvas.height) {
+          return flashStatus("Tap on the page to fill");
+        }
+        // Alpha lock keeps an empty area empty, so all a tap there could change is the soft edges
+        // of the lines round it (Soft tinted them with the fill colour).
+        if (layer.alphaLock && layer.ctx.getImageData(sx, sy, 1, 1).data[3] === 0) {
+          return flashStatus("Alpha lock is on — the bucket only recolours painted pixels");
+        }
         const before = layers.getSnapshot();
         const color = hexToRgba(app.fillColor, app.fillOpacity);
         const clipSel = selection?.state === "selected" ? selection : null;
+        let filled: boolean;
         if (clipSel || layer.alphaLock) {
           // Run flood fill on a temp canvas (1:1 with layer's physical pixels), then composite
           // back through the selection clip and/or alpha lock.
@@ -1519,7 +1531,7 @@
           tmp.height = layer.canvas.height;
           const tmpCtx = tmp.getContext("2d", { willReadFrequently: true })!;
           tmpCtx.drawImage(layer.canvas, 0, 0);
-          floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, {
+          filled = floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, {
             ...app.fillSettings,
             gap: app.fillEnclosedGap,
             // Expand paints BEHIND existing content, which alpha lock would refuse entirely;
@@ -1540,13 +1552,21 @@
             layer.ctx.restore();
           }
         } else {
-          floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, {
+          filled = floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, {
             ...app.fillSettings,
             gap: app.fillEnclosedGap,
           });
         }
         // Nothing landed (already this colour, or clipped away): no empty undo step
-        if (!pushPixelEdit(layers, layer, before)) return;
+        if (!pushPixelEdit(layers, layer, before)) {
+          return flashStatus(
+            !filled
+              ? "Already this colour"
+              : clipSel
+                ? "Nothing filled — the area is outside the selection"
+                : "Nothing changed — the area is already this colour",
+          );
+        }
         layers.composite();
         bumpLayerVersion();
       }

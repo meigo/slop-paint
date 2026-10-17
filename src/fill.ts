@@ -428,13 +428,15 @@ function flood(open: Uint8Array, w: number, h: number, start: number): Uint8Arra
   return out;
 }
 
+/** Bucket-fill from the tap at (startX, startY), device px. False when it wrote nothing: a tap off
+ *  the canvas, or on an area already this colour (the caller says why). */
 export function floodFill(
   ctx: CanvasRenderingContext2D,
   startX: number,
   startY: number,
   fillColor: { r: number; g: number; b: number; a: number },
   options: FillOptions = {},
-) {
+): boolean {
   const tolerance = options.tolerance ?? 32;
   const expand = options.expand ?? 0;
 
@@ -448,21 +450,21 @@ export function floodFill(
   // or row a tap off the canvas.
   const sx = Math.floor(startX);
   const sy = Math.floor(startY);
-  if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
+  if (sx < 0 || sx >= w || sy < 0 || sy >= h) return false;
 
   // Don't fill if clicking on the same color. An empty pixel's colour means nothing: it is the
   // same only as a fill that paints nothing (comparing its RGB, black at 1–12% opacity on an
   // empty area did nothing).
   const startIdx = (sy * w + sx) * 4;
   if (data[startIdx + 3] === 0) {
-    if (fillColor.a === 0) return;
+    if (fillColor.a === 0) return false;
   } else if (
     Math.abs(data[startIdx] - fillColor.r) <= tolerance &&
     Math.abs(data[startIdx + 1] - fillColor.g) <= tolerance &&
     Math.abs(data[startIdx + 2] - fillColor.b) <= tolerance &&
     Math.abs(data[startIdx + 3] - fillColor.a) <= tolerance
   ) {
-    return;
+    return false;
   }
 
   // --- Pass 1: the region to fill ---
@@ -520,6 +522,7 @@ export function floodFill(
     data[pi + 3] = Math.round(oa * 255);
   }
   ctx.putImageData(imageData, 0, 0);
+  return true;
 }
 
 export function hexToRgba(
