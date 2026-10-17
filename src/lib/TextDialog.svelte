@@ -121,6 +121,11 @@
       if (inText && !(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       e.stopPropagation();
+      // Size and Lines reach `spec` on `change`, which the browser sends for an Enter only after
+      // this keydown, and not at all once it is prevented: a typed size was confirmed as the old
+      // one. Send it first (bubbling: Svelte listens for it on the root).
+      if (e.target instanceof HTMLInputElement && e.target.type === "number")
+        e.target.dispatchEvent(new Event("change", { bubbles: true }));
       onConfirm({ ...spec });
     }
   }
