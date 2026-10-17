@@ -44,7 +44,11 @@ export function dropTarget(
   if (y >= last.bottom) {
     drop = { parentId: null, index: 0 };
   } else {
-    const row = rows.find((r) => y >= r.top && y < r.bottom) ?? rows[0];
+    // Between rows (the 1px border under a group's block belongs to no row) the row above
+    // decides, as its lower half: falling back to the first row dropped the node at the list's
+    // top, or into the top group.
+    const row =
+      rows.find((r) => y >= r.top && y < r.bottom) ?? rows.findLast((r) => r.top <= y) ?? rows[0];
     const at = locateNode(tree, row.id);
     if (!at) return null;
     const node = at.siblings[at.index];
