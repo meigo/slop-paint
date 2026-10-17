@@ -1752,22 +1752,24 @@
     // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
     if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
 
+    // Letters compared lower-cased: with Shift (Windows, Linux) or Caps Lock the key reads "Z", and
+    // Ctrl+Shift+Z (redo), or Ctrl+Z/S/O under Caps Lock, did nothing.
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       void doSaveAs();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       doSavePsd();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "o") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
       e.preventDefault();
       void doOpenPsd();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
       e.preventDefault();
       showNewDocDialog = true;
       return;
@@ -1799,7 +1801,7 @@
       bumpLayerVersion();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       if (e.shiftKey) redo();
       else undo();
