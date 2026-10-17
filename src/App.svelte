@@ -83,7 +83,7 @@
     referenceLayerName,
     REFERENCE_OPACITY,
   } from "./paste";
-  import { Viewport, rotationDegrees, wheelZoomFactor } from "./viewport";
+  import { Viewport, rotationDegrees, wheelPx, wheelZoomFactor } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import {
@@ -3720,7 +3720,7 @@
       if (gesture) return; // as the view keys: not under an open press
       if (e.ctrlKey || e.metaKey)
         viewport.zoomAt(e.clientX, e.clientY, wheelZoomFactor(e.deltaY, e.deltaMode));
-      else viewport.panBy(-e.deltaX, -e.deltaY); // content follows the scroll
+      else viewport.panBy(-wheelPx(e.deltaX, e.deltaMode), -wheelPx(e.deltaY, e.deltaMode)); // content follows the scroll
       updateZoomDisplay();
       updateBrushCursor(e.clientX, e.clientY);
     }

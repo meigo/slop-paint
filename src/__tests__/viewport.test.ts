@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { Viewport, clampZoom, rotationDegrees, wheelZoomFactor } from "../viewport";
+import { Viewport, clampZoom, rotationDegrees, wheelPx, wheelZoomFactor } from "../viewport";
 
 // Minimal DOM mock
 function createMockElements() {
@@ -184,5 +184,14 @@ describe("rotationDegrees", () => {
     expect(rotationDegrees(rad(-90))).toBe(-90);
     expect(rotationDegrees(rad(12.4))).toBe(12);
     expect(Object.is(rotationDegrees(rad(-0.2)), 0)).toBe(true);
+  });
+});
+
+describe("wheelPx", () => {
+  it("converts lines and pages to pixels, leaves pixels alone", () => {
+    expect(wheelPx(3, 1)).toBe(48); // one Firefox mouse-wheel notch
+    expect(wheelPx(-1, 2)).toBe(-800);
+    expect(wheelPx(100, 0)).toBe(100);
+    expect(wheelPx(100)).toBe(100);
   });
 });
