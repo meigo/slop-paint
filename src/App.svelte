@@ -1903,13 +1903,16 @@
       return;
     }
 
-    if (e.key === "b") setTool("brush");
-    if (e.key === "e") setTool("eraser");
-    if (e.key === "s") setTool("select");
-    if (e.key === "l") setTool("lasso");
-    if (e.key === "v") setTool("move");
-    if (e.key === "g") setTool("fill");
-    if (e.key === "i") setTool("eyedropper");
+    // Lowercased: with Caps Lock on the key reads "B", and the tool keys and hold-X did nothing.
+    // Not with Ctrl/Cmd, so a Ctrl+Shift combination that fell through doesn't now pick a tool.
+    const letter = e.ctrlKey || e.metaKey ? "" : e.key.toLowerCase();
+    if (letter === "b") setTool("brush");
+    if (letter === "e") setTool("eraser");
+    if (letter === "s") setTool("select");
+    if (letter === "l") setTool("lasso");
+    if (letter === "v") setTool("move");
+    if (letter === "g") setTool("fill");
+    if (letter === "i") setTool("eyedropper");
 
     // The view stays put under an open press: its next point would map through the new view and
     // the line jump there in a straight chord. (A stroke's settings are fixed at its press.)
@@ -1954,7 +1957,7 @@
     }
 
     // Hold X for temporary eraser
-    if (e.key === "x" && !e.repeat && !toolBeforeEraser && app.currentTool !== "eraser") {
+    if (letter === "x" && !e.repeat && !toolBeforeEraser && app.currentTool !== "eraser") {
       toolBeforeEraser = app.currentTool;
       setTool("eraser");
     }
