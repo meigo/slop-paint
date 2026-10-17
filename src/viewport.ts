@@ -32,6 +32,17 @@ export function panKeepingScreenPoint(
   };
 }
 
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 20;
+
+/** `wanted` kept inside MIN_ZOOM–MAX_ZOOM, except that a zoom already outside them (Fit sets a big
+ *  document below 10%) may stay there: a zoom-out from it zoomed IN to the floor. */
+export function clampZoom(current: number, wanted: number): number {
+  const lo = Math.min(MIN_ZOOM, current);
+  const hi = Math.max(MAX_ZOOM, current);
+  return Math.max(lo, Math.min(hi, wanted));
+}
+
 export class Viewport {
   zoom = 1;
   // Pan in screen pixels (how far the canvas origin has moved on screen)
@@ -42,8 +53,6 @@ export class Viewport {
 
   private target: HTMLElement;
   private parent: HTMLElement;
-  private minZoom = 0.1;
-  private maxZoom = 20;
 
   private isPanning = false;
   private panStartX = 0;
@@ -101,7 +110,7 @@ export class Viewport {
     const canvas = this.screenToCanvas(screenX, screenY);
 
     const oldZoom = this.zoom;
-    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, oldZoom * factor));
+    this.zoom = clampZoom(oldZoom, oldZoom * factor);
 
     // Adjust pan so the same canvas point stays under cursor
     // Forward: screen = pan + rotate(scale(canvas))
@@ -123,7 +132,7 @@ export class Viewport {
     const centerY = rect.top + rect.height / 2;
     const canvas = this.screenToCanvas(centerX, centerY);
 
-    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, z));
+    this.zoom = clampZoom(this.zoom, z);
 
     const rx = rect.width / 2;
     const ry = rect.height / 2;

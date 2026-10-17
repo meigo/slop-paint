@@ -10,7 +10,7 @@
  * Apple Pencil (pointerType "pen") bypasses this entirely — it goes to input.ts for drawing.
  */
 
-import { Viewport } from "./viewport";
+import { Viewport, clampZoom } from "./viewport";
 
 interface ActiveTouch {
   id: number;
@@ -276,7 +276,7 @@ export function setupTouchGestures(
 
     // New zoom & rotation
     const scale = currentDist / pinchStartDist;
-    const newZoom = Math.max(0.1, Math.min(20, pinchStartZoom * scale));
+    const newZoom = clampZoom(pinchStartZoom, pinchStartZoom * scale);
     const newRotation = pinchStartRotation + (currentAngle - pinchStartAngle);
 
     // The canvas point under the original pinch midpoint (using start state)
