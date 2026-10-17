@@ -952,9 +952,17 @@ export class LayerManager {
     const below = loc.parent[loc.index - 1];
     if (below.type !== "layer") return false;
 
-    // Draw src onto below
     below.ctx.save();
     below.ctx.resetTransform();
+    // The merged layer must look as the two did. Below's opacity would also fade what lands on it,
+    // so it goes into its pixels first and the layer becomes 100% (Photoshop's result).
+    if (below.opacity < 100) {
+      below.ctx.globalCompositeOperation = "destination-in";
+      below.ctx.fillStyle = `rgba(0, 0, 0, ${below.opacity / 100})`;
+      below.ctx.fillRect(0, 0, below.canvas.width, below.canvas.height);
+      below.opacity = 100;
+    }
+    // Draw src onto below
     below.ctx.globalAlpha = src.opacity / 100;
     // In its blend mode, so the merge looks as the two layers did (a multiply layer multiplies in).
     below.ctx.globalCompositeOperation = canvasOp(src.blend);

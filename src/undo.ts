@@ -105,18 +105,23 @@ export function structuralEdit<T>(
   const beforeTree = layers.captureStructure();
   const target = pixelLayer?.() ?? null;
   const beforePixels = target ? layers.snapshotOf(target) : null;
+  // Its opacity too: merge down bakes the lower layer's opacity into its pixels.
+  const beforeOpacity = target?.opacity;
   const result = run();
   const afterTree = layers.captureStructure();
   const afterPixels = target ? layers.snapshotOf(target) : null;
+  const afterOpacity = target?.opacity;
   if (sameStructure(beforeTree, afterTree)) return result; // nothing happened: no empty step
   history.push({
     undo: () => {
       if (target && beforePixels) layers.restoreTo(target, beforePixels);
+      if (target && beforeOpacity !== undefined) target.opacity = beforeOpacity;
       layers.restoreStructure(beforeTree);
       hooks.onHistoryApplied();
     },
     redo: () => {
       if (target && afterPixels) layers.restoreTo(target, afterPixels);
+      if (target && afterOpacity !== undefined) target.opacity = afterOpacity;
       layers.restoreStructure(afterTree);
       hooks.onHistoryApplied();
     },

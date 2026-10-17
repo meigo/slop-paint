@@ -275,6 +275,11 @@
     const src = layers.findNode(layers.activeId);
     if (target && layers.isLocked(target)) return flashStatus("The layer below is locked");
     if (src && layers.isLocked(src)) return flashStatus("Layer is locked");
+    // Merge keeps what is seen: a hidden layer would be burned in, or what is merged onto a hidden
+    // one would vanish (Photoshop refuses too).
+    if (src && layers.isHidden(src)) return flashStatus("Layer is hidden — show it to merge it");
+    if (target && layers.isHidden(target))
+      return flashStatus("The layer below is hidden — show it to merge onto it");
     settlePending();
     // Merge also writes pixels onto the layer below, so that layer's pixels join the undo step.
     structuralEdit(
