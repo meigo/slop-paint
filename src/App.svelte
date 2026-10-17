@@ -1145,11 +1145,15 @@
   } | null = null;
   let moveFrame = 0;
 
-  /** What a Move drag would take now: the picked rows, else the active layer or group. */
+  /** What a Move drag would take now: the picked rows, else the active layer or group. In Select
+   *  mode the pick is exactly what the checks show, even none (as the panel's Group and Delete). */
   function moveTargets() {
     if (!layers) return { ids: [] as number[], locked: 0, hidden: 0 };
     const picks = app.layerSelection.filter((id) => layers!.findNode(id));
-    return layersToMove(layers.tree, picks.length > 0 ? picks : [layers.activeId]);
+    return layersToMove(
+      layers.tree,
+      app.layerSelecting || picks.length > 0 ? picks : [layers.activeId],
+    );
   }
 
   /** The Move box (2026-10-02): the painted bounds of what a drag would move, in page units — the
@@ -1228,7 +1232,13 @@
       const left = found.locked + found.hidden;
       if (found.ids.length === 0) {
         return flashStatus(
-          found.locked > 0 ? "Locked — nothing to move" : "Hidden — nothing to move",
+          found.locked > 0
+            ? "Locked — nothing to move"
+            : found.hidden > 0
+              ? "Hidden — nothing to move"
+              : app.layerSelecting && app.layerSelection.length === 0
+                ? "Pick the rows to move first"
+                : "Nothing to move — the group is empty",
         );
       }
       if (left > 0) {
