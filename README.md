@@ -61,7 +61,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Selection & transform**
 
 - **Move** (V) drags whole layers: the ones picked with **Select** in the layer panel, or the
-  selected layer or group (every layer in it); one undo step. A marquee is kept but hidden meanwhile
+  selected layer or group (every layer in it); one undo step. Marching ants box what a drag will
+  move (locked and hidden layers stay put). A marquee is kept but hidden meanwhile
 - Rectangle and lasso selection; brush, eraser, fill and Outline stay inside it
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
   **Mesh warp** (3×3 up to 8×8; finer keeps your bends), flip, keep proportions — with nothing
@@ -129,7 +130,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - **iPad:** the Pencil draws, fingers navigate — one finger pans; two fingers pan, zoom and rotate
   (snapping to 90° on lift); two-finger tap undoes, three-finger tap redoes; double-tap with one
-  finger to toggle the eraser
+  finger to toggle the eraser. While the Pencil draws, the view stays put
 - **Trackpad:** two-finger swipe pans, pinch zooms. **Mouse:** wheel pans, Ctrl/Cmd+wheel zooms
 - The status bar explains whatever control you touch — on iPad that is the only tooltip
 
@@ -164,28 +165,29 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 ## Keyboard shortcuts
 
-| Key                        | Action                                              |
-| -------------------------- | --------------------------------------------------- |
-| B / E / S / L / G / I      | Brush / eraser / select / lasso / fill / eyedropper |
-| X (hold)                   | Temporary eraser                                    |
-| [ / ]                      | Smaller / larger brush                              |
-| Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                         |
-| Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                  |
-| Delete or Backspace        | Clear the selection                                 |
-| W / M                      | Distort / mesh warp the selection or whole layer    |
-| Enter / Escape             | Apply / cancel a transform or Outline preview       |
-| Space+drag or middle mouse | Pan                                                 |
-| Ctrl+= / Ctrl+-            | Zoom in / out                                       |
-| 0 / 1                      | Fit the view / 100% zoom                            |
-| R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise   |
-| Ctrl+S / Ctrl+O / Ctrl+N   | Save / open project (PSD) / new document            |
-| Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)               |
-| Ctrl+G                     | Put the selected layer or group into a new group    |
-| ↑ / ↓                      | Select the layer above / below                      |
+| Key                        | Action                                                     |
+| -------------------------- | ---------------------------------------------------------- |
+| B / E / S / L / V / G / I  | Brush / eraser / select / lasso / move / fill / eyedropper |
+| X (hold)                   | Temporary eraser                                           |
+| [ / ]                      | Smaller / larger brush                                     |
+| Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                                |
+| Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                         |
+| Delete or Backspace        | Clear the selection                                        |
+| W / M                      | Distort / mesh warp the selection or whole layer           |
+| Enter / Escape             | Apply / cancel a transform or Outline preview              |
+| Space+drag or middle mouse | Pan                                                        |
+| Ctrl+= / Ctrl+-            | Zoom in / out                                              |
+| 0 / 1                      | Fit the view / 100% zoom                                   |
+| R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise          |
+| Ctrl+S / Ctrl+O            | Save / open project (PSD)                                  |
+| Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)                      |
+| Ctrl+G                     | Put the selected layer or group into a new group           |
+| ↑ / ↓                      | Select the layer above / below                             |
 
-Cmd works in place of Ctrl on a Mac. While the pen or mouse button is down, the view keys and
-the wheel do nothing, and a stroke keeps the brush it started with; a tool switch or a selection
-action (Delete, Cut, Enter/Escape, W/M) finishes the stroke or drag first. W/M are the Distort
+Cmd works in place of Ctrl on a Mac. New is in the File menu: browsers keep Ctrl+N for a new
+window. While the pen or mouse button is down, the view keys and the wheel do nothing, and a
+stroke keeps the brush it started with; a tool switch or a selection action (Delete, Cut,
+Enter/Escape, W/M) finishes the stroke or drag first. W/M are the Distort
 and Mesh buttons of the Select and Lasso tools: with nothing selected there they take the whole
 layer; from another tool they warp the selection and switch to Select.
 
