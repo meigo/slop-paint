@@ -581,7 +581,7 @@
       class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
       ondblclick={(e) => {
         e.stopPropagation();
-        startEdit(node);
+        if (!app.layerSelecting) startEdit(node); // a tap there picks the row, as the double-tap
       }}
       onpointerdown={(e) => onNamePointerDown(e, node)}
       role="presentation">{parseTags(node.name).baseName || "(unnamed)"}</span
