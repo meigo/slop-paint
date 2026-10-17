@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { Viewport, clampZoom, wheelZoomFactor } from "../viewport";
+import { Viewport, clampZoom, rotationDegrees, wheelZoomFactor } from "../viewport";
 
 // Minimal DOM mock
 function createMockElements() {
@@ -167,5 +167,22 @@ describe("clampZoom", () => {
     expect(clampZoom(0.08, 0.08 / 1.2)).toBe(0.08);
     expect(clampZoom(0.08, 0.09)).toBe(0.09);
     expect(clampZoom(0.08, 0.2)).toBe(0.2);
+  });
+});
+
+describe("rotationDegrees", () => {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  it("wraps a turn off into (−180, 180]", () => {
+    expect(rotationDegrees(rad(340))).toBe(-20);
+    expect(rotationDegrees(rad(-340))).toBe(20);
+    expect(rotationDegrees(rad(360))).toBe(0);
+    expect(rotationDegrees(rad(-180))).toBe(180);
+    expect(rotationDegrees(rad(180))).toBe(180);
+    expect(rotationDegrees(rad(735))).toBe(15);
+  });
+  it("leaves an in-range angle as whole degrees", () => {
+    expect(rotationDegrees(rad(-90))).toBe(-90);
+    expect(rotationDegrees(rad(12.4))).toBe(12);
+    expect(Object.is(rotationDegrees(rad(-0.2)), 0)).toBe(true);
   });
 });

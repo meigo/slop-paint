@@ -83,7 +83,7 @@
     referenceLayerName,
     REFERENCE_OPACITY,
   } from "./paste";
-  import { Viewport, wheelZoomFactor } from "./viewport";
+  import { Viewport, rotationDegrees, wheelZoomFactor } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import {
@@ -1106,7 +1106,7 @@
   function updateZoomDisplay() {
     if (!viewport) return;
     const zt = Math.round(viewport.zoom * 100) + "%";
-    const deg = Math.round(viewport.rotation * (180 / Math.PI));
+    const deg = rotationDegrees(viewport.rotation);
     app.zoomText = deg !== 0 ? `${zt} ${deg}\u00B0` : zt;
   }
 

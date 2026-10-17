@@ -32,6 +32,16 @@ export function panKeepingScreenPoint(
   };
 }
 
+/** The view's rotation for the zoom readout: whole degrees in (−180, 180]. The rotation itself
+ *  isn't wrapped (a twist across the pinch angle's ±180° seam, or R pressed round, left it a turn
+ *  off: the readout said 340° for a 20° turn). */
+export function rotationDegrees(radians: number): number {
+  let d = Math.round((radians * 180) / Math.PI) % 360;
+  if (d > 180) d -= 360;
+  if (d <= -180) d += 360;
+  return d === 0 ? 0 : d;
+}
+
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 20;
 
