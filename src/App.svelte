@@ -1593,10 +1593,10 @@
       from = 0,
       to = Infinity,
     ) {
-      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange, from, to);
+      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange, from, to, finished);
       else if (kind === "calligraphy") {
         drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange, from, to);
-      } else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange);
+      } else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange, finished);
       else if (kind === "watercolor") {
         drawWatercolorStroke(ctx, pts, strokeSettings, sizeRange, finished);
       } else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);

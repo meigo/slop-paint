@@ -1,6 +1,7 @@
 import { outlineOfPath, widthRange, type BrushSettings } from "./brush";
 import { hexToRgba } from "./fill";
 import type { InputPoint } from "./input";
+import { releaseCanvas } from "./dry-brush";
 import { distanceToMask } from "./mask-ops";
 import { holdRestPressure, smoothPath } from "./stroke-smoothing";
 import { lattice2, strokeSeed, wobbleAmp, wobbleOutline, wobbleScale } from "./wobble";
@@ -154,13 +155,47 @@ let strokeKey = "";
 let lastPath: InputPoint[] = [];
 let strokeBox: Box | null = null; // every pixel this stroke has written to the scratch
 let grain: Float32Array | null = null;
+// The rim window's work arrays, kept for the stroke and grown as needed: fresh ones every frame
+// were ~13 bytes of garbage per window pixel (and the ~150 ms frames in WebKit, probably its GC).
+let work: { outside: Uint8Array; grid: Float64Array; out: Float32Array } | null = null;
+function workArrays(n: number) {
+  if (!work || work.outside.length < n) {
+    const size = Math.ceil(n * 1.5);
+    work = {
+      outside: new Uint8Array(size),
+      grid: new Float64Array(size),
+      out: new Float32Array(size),
+    };
+  }
+  return work;
+}
 
 /** Dev builds: `window.slopWashFull = true` works out the whole stroke every frame, to compare. */
 function fullEveryFrame(): boolean {
   return import.meta.env.DEV && !!(window as unknown as { slopWashFull?: boolean }).slopWashFull;
 }
 
+/** `done`: the stroke's last frame — its canvases and work arrays are let go after it. */
 export function drawWatercolorStroke(
+  ctx: CanvasRenderingContext2D,
+  points: InputPoint[],
+  settings: BrushSettings,
+  sizeRange: number,
+  done: boolean,
+) {
+  paintWatercolorStroke(ctx, points, settings, sizeRange, done);
+  if (done) {
+    releaseCanvas(coverage);
+    releaseCanvas(scratch);
+    coverage = scratch = null;
+    strokeKey = "";
+    lastPath = [];
+    strokeBox = null;
+    work = null;
+  }
+}
+
+function paintWatercolorStroke(
   ctx: CanvasRenderingContext2D,
   points: InputPoint[],
   settings: BrushSettings,
@@ -267,9 +302,11 @@ export function drawWatercolorStroke(
 
     // Distance inside the edge. Outside the canvas counts as paint, so no rim runs along the page
     // edge (the wash carries on past it).
-    const outside = new Uint8Array(win.w * win.h);
-    for (let i = 0; i < outside.length; i++) outside[i] = cov[i * 4 + 3] < 128 ? 1 : 0;
-    const dist = distanceToMask(outside, win.w, win.h);
+    const n = win.w * win.h;
+    const arrays = workArrays(n);
+    const outside = arrays.outside.subarray(0, n);
+    for (let i = 0; i < n; i++) outside[i] = cov[i * 4 + 3] < 128 ? 1 : 0;
+    const dist = distanceToMask(outside, win.w, win.h, arrays);
 
     grain ??= grainTile();
     const g = settings.isEraser ? 0 : (settings.washGrain ?? 40);

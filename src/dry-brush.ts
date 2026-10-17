@@ -330,11 +330,39 @@ export function unionBox(a: Box, b: Box): Box {
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
 }
 
+/** `done`: the stroke's last frame — the scratch is let go after it (see `releaseCanvas`). */
 export function drawDryStroke(
   ctx: CanvasRenderingContext2D,
   points: InputPoint[],
   settings: BrushSettings,
   sizeRange: number = 1.0,
+  done = false,
+) {
+  paintDryStroke(ctx, points, settings, sizeRange);
+  if (done) {
+    releaseCanvas(scratch);
+    scratch = null;
+    scratchBox = null;
+  }
+}
+
+/**
+ * A layer-sized scratch canvas let go: its size set to 0 first, as WebKit holds a canvas's pixels
+ * until it is collected. The brushes' scratches lived for the session after their first stroke —
+ * one or two layers' worth each, which the Document menu's memory figure and the iPad warning
+ * don't see (2026-10-17); a new one per stroke costs an allocation, not a frame's work.
+ */
+export function releaseCanvas(c: HTMLCanvasElement | null) {
+  if (!c) return;
+  c.width = 0;
+  c.height = 0;
+}
+
+function paintDryStroke(
+  ctx: CanvasRenderingContext2D,
+  points: InputPoint[],
+  settings: BrushSettings,
+  sizeRange: number,
 ) {
   const hairs = bristleRuns(points, settings.size, sizeRange, settings.dryness ?? 50);
   if (hairs.length === 0) return;

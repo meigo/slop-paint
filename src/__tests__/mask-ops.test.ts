@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dilateMask, erodeMask } from "../mask-ops";
+import { dilateMask, distanceToMask, erodeMask } from "../mask-ops";
 
 /** Build a mask from ASCII art: '#' set, anything else clear. */
 function grid(rows: string[]): { m: Uint8Array; w: number; h: number } {
@@ -55,5 +55,22 @@ describe("erodeMask", () => {
     const { m, w, h } = grid([".....", ".....", "..#..", ".....", "....."]);
     const round = erodeMask(dilateMask(m, w, h, 1), w, h, 1);
     expect([...round]).toEqual([...m]);
+  });
+});
+
+describe("distanceToMask with work arrays", () => {
+  it("gives the same distances in reused arrays, and returns a view of them", () => {
+    const w = 7;
+    const h = 5;
+    const mask = new Uint8Array(w * h);
+    mask[2 * w + 3] = 1;
+    const buf = { grid: new Float64Array(100), out: new Float32Array(100) };
+    buf.grid.fill(123); // left over from an earlier call
+    const d = distanceToMask(mask, w, h, buf);
+    expect(Array.from(d)).toEqual(Array.from(distanceToMask(mask, w, h)));
+    expect(d.buffer).toBe(buf.out.buffer);
+    // Too small: works in fresh arrays instead.
+    const small = { grid: new Float64Array(4), out: new Float32Array(4) };
+    expect(distanceToMask(mask, w, h, small)).toHaveLength(w * h);
   });
 });

@@ -1,7 +1,7 @@
 import type { InputPoint } from "./input";
 import type { BrushSettings } from "./brush";
 import { widthRange } from "./brush";
-import { deviceBox, unionBox, type Box } from "./dry-brush";
+import { deviceBox, releaseCanvas, unionBox, type Box } from "./dry-brush";
 
 /**
  * Ink/marker brush — a quadratic curve through the running midpoints of the input points,
@@ -222,10 +222,10 @@ function strokeRuns(
  * The scratch layer a translucent stroke is painted on before being composited once.
  *
  * Kept module-level and reused rather than allocated per redraw: this runs on every
- * pointermove, and a doc-sized canvas per move would churn tens of MB a second. The cost is
- * one canvas of the target's size held after the first translucent ink stroke — the same order
- * as one cell — which is why it is only reached when `globalAlpha < 1` and an opaque stroke
- * (the common case) still draws straight to the target with no scratch at all.
+ * pointermove, and a doc-sized canvas per move would churn tens of MB a second. It is let go at
+ * the stroke's end (`done`), so it costs one canvas of the target's size only while a translucent
+ * stroke is drawn (it was held for the session); an opaque stroke (the common case) still draws
+ * straight to the target with no scratch at all.
  */
 let scratch: HTMLCanvasElement | null = null;
 /** The part of `scratch` the last frame drew into, so the next one clears it. */
@@ -286,7 +286,7 @@ export function rangeBox(
  * `from` / `to`: draw only the segments in that range (segment s is the curve through
  * `points[s]`), with the geometry still worked out from the whole stroke — so a range draws
  * exactly the pixels the whole stroke would there. App freezes the settled part of a long opaque
- * stroke this way and redraws only the rest each frame (2026-10-01).
+ * stroke this way and redraws only the rest each frame (2026-10-01). `done`: the stroke's last frame.
  */
 export function drawInkStroke(
   ctx: CanvasRenderingContext2D,
@@ -295,6 +295,23 @@ export function drawInkStroke(
   sizeRange: number = 1.0,
   from = 0,
   to = Infinity,
+  done = false,
+) {
+  paintInkStroke(ctx, points, settings, sizeRange, from, to);
+  if (done) {
+    releaseCanvas(scratch);
+    scratch = null;
+    scratchBox = null;
+  }
+}
+
+function paintInkStroke(
+  ctx: CanvasRenderingContext2D,
+  points: InputPoint[],
+  settings: BrushSettings,
+  sizeRange: number,
+  from: number,
+  to: number,
 ) {
   if (points.length < 2) return;
 

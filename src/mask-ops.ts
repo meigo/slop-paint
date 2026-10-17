@@ -72,14 +72,22 @@ export function erodeMask(mask: Uint8Array, w: number, h: number, radius: number
  * when the mask is empty). Exact, in linear time: Felzenszwalb & Huttenlocher's squared-distance
  * transform, columns then rows. Used to grow a fill by a SMOOTH round offset with an antialiased
  * edge (`expandedCoverage` in fill.ts), where `dilateMask` grows it in whole pixels. Pure.
+ * `buf`: arrays of at least w × h to work in and return a view of, for a caller that runs it every
+ * frame (the Watercolour rim): fresh ones per call were most of its garbage.
  */
-export function distanceToMask(mask: Uint8Array, w: number, h: number): Float32Array {
+export function distanceToMask(
+  mask: Uint8Array,
+  w: number,
+  h: number,
+  buf?: { grid: Float64Array; out: Float32Array },
+): Float32Array {
   const INF = 1e20;
   const f = new Float64Array(Math.max(w, h));
   const d = new Float64Array(Math.max(w, h));
   const v = new Int32Array(Math.max(w, h));
   const z = new Float64Array(Math.max(w, h) + 1);
-  const grid = new Float64Array(w * h);
+  const n = w * h;
+  const grid = buf && buf.grid.length >= n ? buf.grid.subarray(0, n) : new Float64Array(n);
   for (let i = 0; i < w * h; i++) grid[i] = mask[i] ? 0 : INF;
   // 1-D squared distance transform of f[0..n) into d.
   const pass = (n: number) => {
@@ -109,7 +117,7 @@ export function distanceToMask(mask: Uint8Array, w: number, h: number): Float32A
     pass(h);
     for (let y = 0; y < h; y++) grid[y * w + x] = d[y];
   }
-  const out = new Float32Array(w * h);
+  const out = buf && buf.out.length >= n ? buf.out.subarray(0, n) : new Float32Array(n);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) f[x] = grid[y * w + x];
     pass(w);
