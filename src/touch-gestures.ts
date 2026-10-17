@@ -137,6 +137,12 @@ export function setupTouchGestures(
     t.x = e.clientX;
     t.y = e.clientY;
     if (suppressed) return; // a hand resting during a stroke: no pan, pinch or tap until it lifts
+    // A pan or pinch already under way when the pen lands stops there: moving the view under an
+    // open stroke moved the line (a pen held still drew across the page).
+    if (callbacks.isDrawing?.()) {
+      suppressed = true;
+      return;
+    }
 
     // Check if this counts as movement
     const dx = t.x - t.startX;
@@ -172,6 +178,9 @@ export function setupTouchGestures(
     // If all fingers lifted, check for tap gestures
     if (touches.size === 0 && suppressed) {
       suppressed = false;
+      // Not snapped: the stroke may still be open. Left set, the next one-finger pan's lift snapped
+      // on this pinch's stale midpoint.
+      pinchActive = false;
       return;
     }
     if (touches.size === 0 && !gestureDidMove) {
