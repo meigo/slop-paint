@@ -32,13 +32,15 @@
    *  openings this session; off at first. */
   let locked = $state(false);
 
-  // Reset values when dialog opens
+  // Reset values when dialog opens. The mode too: the dialog stays mounted, and a Resize opened
+  // after a Scale drawing stretched the layers where the user meant to extend the canvas.
   $effect(() => {
     if (open) {
       width = app.docWidth;
       height = app.docHeight;
       anchorX = 0.5;
       anchorY = 0.5;
+      mode = "canvas";
     }
   });
 
