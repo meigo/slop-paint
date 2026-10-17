@@ -66,12 +66,13 @@ export function dropTarget(
 }
 
 /** Why node `id` can't be dragged at all, or "": a member of a locked group can't leave it or be
- *  reordered in it, as the group's lock locks every member. Its own lock doesn't stop it moving
+ *  reordered in it, as the group's lock locks every member. Also what refuses grouping or deleting
+ *  it. Its own lock doesn't stop it moving
  *  (that lock is on its pixels). */
 export function dragBlock(tree: LayerNode[], id: number): string {
   const at = locateNode(tree, id);
   return at?.group && lockedInTree(tree, at.group.id)
-    ? "It's in a locked group — unlock the group to move it"
+    ? "It's in a locked group — unlock the group first"
     : "";
 }
 

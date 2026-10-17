@@ -216,6 +216,11 @@
   function deletePicked() {
     const ids = targets();
     if (ids.length === 0) return flashStatus("Pick the rows to delete first");
+    // A member of a locked group can't leave it, deleted either (as Group and dragging).
+    for (const id of topSelection(layers.tree, ids)) {
+      const why = dragBlock(layers.tree, id);
+      if (why) return flashStatus(why);
+    }
     if (layersLeftAfter(layers.tree, ids) < 1)
       return flashStatus("The document needs at least one layer");
     structuralEdit(layers, () => layers.removeSelected(ids));
@@ -226,6 +231,8 @@
 
   function removeNode() {
     if (onPick) return deletePicked();
+    const why = dragBlock(layers.tree, layers.activeId);
+    if (why) return flashStatus(why);
     const node = layers.findNode(layers.activeId);
     const members = (n: LayerNode): number =>
       n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
