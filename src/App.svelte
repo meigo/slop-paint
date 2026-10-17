@@ -1726,18 +1726,22 @@
   }
 
   // --- Keyboard shortcuts ---
-  function handleKeyDown(e: KeyboardEvent) {
-    if (selection) selection.shiftHeld = e.shiftKey;
-    // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
-    if (
+  /** A modal dialog is open: it owns the keyboard and the clipboard. */
+  function dialogOpen(): boolean {
+    return !!(
       showNewDocDialog ||
       showResizeDialog ||
       showSettingsDialog ||
       shareFileReady ||
       textDialog ||
       restoreDialog
-    )
-      return;
+    );
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (selection) selection.shiftHeld = e.shiftKey;
+    // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
+    if (dialogOpen()) return;
     const target = e.target as HTMLElement;
     if (isTextEntry(target)) return;
     // Esc / Enter with a toolbar menu open belong to the menu (it closes on Esc): they also
@@ -3363,6 +3367,9 @@
   function handlePaste(e: ClipboardEvent) {
     const t = e.target as HTMLElement | null;
     if (isTextEntry(t)) return;
+    // Not behind a dialog: it added a reference there, and under the text dialog its undo step
+    // held the uncommitted text layer, so Cancel and then Undo brought the cancelled text back.
+    if (dialogOpen()) return;
     const file = [...(e.clipboardData?.items ?? [])]
       .find((i) => i.kind === "file" && i.type.startsWith("image/"))
       ?.getAsFile();
