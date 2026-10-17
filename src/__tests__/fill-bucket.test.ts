@@ -32,3 +32,18 @@ describe("floodFill: where a tap lands", () => {
     expect(at(d, 0, 0)).toEqual([0, 0, 255, 255]);
   });
 });
+
+describe("floodFill: the same-colour check", () => {
+  it("fills an empty area with a faint dark colour", () => {
+    const d = new Uint8ClampedArray(W * W * 4);
+    floodFill(fakeCtx(W, W, d), 3, 3, { r: 0, g: 0, b: 0, a: 20 }, HARD);
+    expect(at(d, 3, 3)).toEqual([0, 0, 0, 20]);
+  });
+
+  it("still skips a painted area already within tolerance of the colour", () => {
+    const d = new Uint8ClampedArray(W * W * 4);
+    for (let i = 0; i < W * W; i++) d.set([10, 0, 250, 255], i * 4);
+    floodFill(fakeCtx(W, W, d), 3, 3, BLUE, HARD);
+    expect(at(d, 3, 3)).toEqual([10, 0, 250, 255]);
+  });
+});

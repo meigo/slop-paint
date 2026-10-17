@@ -450,9 +450,13 @@ export function floodFill(
   const sy = Math.floor(startY);
   if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
 
-  // Don't fill if clicking on the same color
+  // Don't fill if clicking on the same color. An empty pixel's colour means nothing: it is the
+  // same only as a fill that paints nothing (comparing its RGB, black at 1–12% opacity on an
+  // empty area did nothing).
   const startIdx = (sy * w + sx) * 4;
-  if (
+  if (data[startIdx + 3] === 0) {
+    if (fillColor.a === 0) return;
+  } else if (
     Math.abs(data[startIdx] - fillColor.r) <= tolerance &&
     Math.abs(data[startIdx + 1] - fillColor.g) <= tolerance &&
     Math.abs(data[startIdx + 2] - fillColor.b) <= tolerance &&
