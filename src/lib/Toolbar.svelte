@@ -207,7 +207,8 @@
   function commitSize() {
     // Escape already closed it: Chrome still fires blur as the field is removed.
     if (!editingSize) return;
-    const v = parseFloat(sizeInputValue);
+    // A comma decimal ("2,5", as typed in comma regions) is a point: parseFloat stopped at it.
+    const v = parseFloat(sizeInputValue.replace(",", "."));
     if (!isNaN(v) && v >= 1 && v <= 80) {
       app.brushSettings.size = Math.round(v * 2) / 2; // snap to 0.5
       onSettingsChange();
