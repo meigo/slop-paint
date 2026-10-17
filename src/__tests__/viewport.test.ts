@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { Viewport } from "../viewport";
+import { Viewport, wheelZoomFactor } from "../viewport";
 
 // Minimal DOM mock
 function createMockElements() {
@@ -91,7 +91,7 @@ describe("Viewport", () => {
   it("zoomAt keeps point under cursor fixed", () => {
     // Zoom in at point (200, 150)
     const before = vp.screenToCanvas(200, 150);
-    vp.zoomAt(200, 150, -1); // zoom in (delta < 0)
+    vp.zoomAt(200, 150, 1.1); // zoom in
     const after = vp.screenToCanvas(200, 150);
     expect(after.x).toBeCloseTo(before.x, 0);
     expect(after.y).toBeCloseTo(before.y, 0);
@@ -133,5 +133,24 @@ describe("Viewport", () => {
     expect(vp.panY).toBe(20);
     vp.endPan();
     expect(vp.panning).toBe(false);
+  });
+});
+
+describe("wheelZoomFactor", () => {
+  it("follows a trackpad pinch's small deltas instead of 10% each", () => {
+    // 30 Chrome pinch events of −2: e^0.6 ≈ 1.82 (a fixed 10% per event gave 17×)
+    let z = 1;
+    for (let i = 0; i < 30; i++) z *= wheelZoomFactor(-2);
+    expect(z).toBeCloseTo(Math.exp(0.6), 5);
+  });
+
+  it("zooms a mouse notch about 10%, either way", () => {
+    expect(wheelZoomFactor(-100)).toBeCloseTo(1.105, 3);
+    expect(wheelZoomFactor(100)).toBeCloseTo(0.905, 3);
+    expect(wheelZoomFactor(-3, 1)).toBeCloseTo(1.105, 3); // Firefox: 3 lines
+  });
+
+  it("zooms nothing for deltaY 0", () => {
+    expect(wheelZoomFactor(0)).toBe(1);
   });
 });
