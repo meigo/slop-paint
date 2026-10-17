@@ -142,7 +142,7 @@
             max="8192"
             bind:value={width}
             oninput={onWidthInput}
-            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
             }}
@@ -157,7 +157,7 @@
             max="8192"
             bind:value={height}
             oninput={onHeightInput}
-            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
             }}

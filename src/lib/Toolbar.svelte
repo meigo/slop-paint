@@ -609,7 +609,7 @@
             value={app.projectName}
             use:selectOnFocus
             onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
-            class="h-7 min-w-0 flex-1 rounded border border-border bg-surface-raised px-2 text-sm text-text"
+            class="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-2 text-sm text-text"
           />
         </label>
         <div class="my-1 h-px bg-border"></div>

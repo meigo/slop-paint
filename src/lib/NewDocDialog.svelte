@@ -87,7 +87,7 @@
         <input
           type="text"
           bind:value={name}
-          class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+          class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
         />
       </label>
 
@@ -99,7 +99,7 @@
             min="1"
             max="8192"
             bind:value={width}
-            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
             }}
@@ -113,7 +113,7 @@
             min="1"
             max="8192"
             bind:value={height}
-            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
             }}
