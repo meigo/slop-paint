@@ -443,8 +443,11 @@ export function floodFill(
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
 
-  const sx = Math.round(startX);
-  const sy = Math.round(startY);
+  // Pixel k spans [k, k + 1): rounding seeded the right or lower half of a pixel from the next
+  // one (a tap just left of a line recoloured the line) and made the far half of the last column
+  // or row a tap off the canvas.
+  const sx = Math.floor(startX);
+  const sy = Math.floor(startY);
   if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
 
   // Don't fill if clicking on the same color
