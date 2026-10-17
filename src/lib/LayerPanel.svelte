@@ -448,7 +448,14 @@
     update(d);
   }
 
+  /** The pointer whose drag Escape put back: its release's click must not tap the row either. */
+  let escapedPointer: number | null = null;
+
   function endDrag(e: PointerEvent, apply: boolean) {
+    if (e.pointerId === escapedPointer) {
+      escapedPointer = null;
+      ignoreClicksUntil = performance.now() + 400;
+    }
     const d = dragging;
     if (!d || e.pointerId !== d.pointerId) return;
     d.clientY = e.clientY;
@@ -540,6 +547,7 @@
   onkeydowncapture={(e) => {
     // Escape puts the drag back — and only that: the app's own Escape mustn't also run.
     if (e.key !== "Escape" || !dragging) return;
+    escapedPointer = dragging.pointerId;
     finishDrag();
     e.preventDefault();
     e.stopPropagation();
