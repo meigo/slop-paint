@@ -1770,6 +1770,8 @@
         structuralEdit(layers, () => layers!.groupSelected(ids));
         app.layerSelection = [];
         app.layerSelecting = false;
+        // Grouping rows from different places can change the stacking, as the panel's button.
+        layers.composite();
       } else {
         structuralEdit(layers, () => layers!.groupActive());
       }
