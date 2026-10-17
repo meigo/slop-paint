@@ -2,6 +2,7 @@ import { writePsd, readPsd, type Psd, type Layer as PsdLayer, type LinkedFile } 
 import { downloadBlob } from "./download";
 import {
   layersLeftAfter,
+  newNodeId,
   type LayerNode,
   type LayerManager,
   type Layer,
@@ -12,8 +13,6 @@ import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
 import { openTextSource, textPayloadFromPng } from "./text-ref";
 import { layerBlendFromPsd } from "./blend";
-
-let importIdCounter = 1000;
 
 /**
  * Build a PSD blob from the layer tree and trigger a browser download.
@@ -136,7 +135,7 @@ export function loadPsd(
       // It's a group
       const group: LayerGroup = {
         type: "group",
-        id: importIdCounter++,
+        id: newNodeId(),
         name: psdLayer.name || "Group",
         visible: !psdLayer.hidden,
         opacity: Math.round((psdLayer.opacity ?? 1) * 100),
@@ -178,7 +177,7 @@ export function loadPsd(
 
       const layer: Layer = {
         type: "layer",
-        id: importIdCounter++,
+        id: newNodeId(),
         name: psdLayer.name || "Layer",
         canvas,
         ctx,

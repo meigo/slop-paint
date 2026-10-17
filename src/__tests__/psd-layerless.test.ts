@@ -17,6 +17,8 @@ function fakeCanvas(width: number, height: number) {
     putImageData: () => {},
     drawImage: () => {},
     scale: () => {},
+    setTransform: () => {},
+    resetTransform: () => {},
   };
   return { width, height, getContext: () => ctx } as unknown as HTMLCanvasElement;
 }
@@ -91,5 +93,24 @@ describe("loadPsd without a drawing layer", () => {
     expect(m.tree.length).toBe(1);
     expect(m.active.name).toBe("Background");
     expect([m.active.canvas.width, m.active.canvas.height]).toEqual([4, 3]);
+  });
+});
+
+describe("node ids", () => {
+  it("a layer made after many others never takes an opened layer's id", () => {
+    const m = manager();
+    const buf = writePsd(
+      { width: 8, height: 6, children: [{ name: "Ink" }, { name: "Colour" }] },
+      { generateThumbnail: false },
+    );
+    loadPsd(buf, m, 1);
+    const opened = new Set(m.flatAll().map((n) => n.id));
+    // A long session: opened files had their own counter from 1000, so the ~1000th new layer
+    // took an opened one's id.
+    for (let i = 0; i < 1100; i++) {
+      const made = m.addLayer();
+      expect(opened.has(made.id)).toBe(false);
+      m.tree = m.tree.filter((n) => n !== made);
+    }
   });
 });

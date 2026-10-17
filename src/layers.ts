@@ -445,6 +445,13 @@ function cloneTree(nodes: LayerNode[]): LayerNode[] {
 
 let nextId = 1;
 
+/** A fresh node id, shared by every node made in the session — new, duplicated or opened from a
+ *  PSD. Opened files had their own counter from 1000, so after ~1000 new layers in one session a new
+ *  layer took an opened one's id, and strokes landed on the wrong layer. */
+export function newNodeId(): number {
+  return nextId++;
+}
+
 export class LayerManager {
   /** Root-level nodes (bottom to top draw order) */
   tree: LayerNode[] = [];
@@ -746,7 +753,7 @@ export class LayerManager {
 
     return {
       type: "layer",
-      id: nextId++,
+      id: newNodeId(),
       name: name ?? `Layer ${this.flatLayers().length + 1}`,
       canvas,
       ctx,
@@ -808,7 +815,7 @@ export class LayerManager {
   private newGroup(name?: string): LayerGroup {
     return {
       type: "group",
-      id: nextId++,
+      id: newNodeId(),
       name: name ?? `Group ${this.flatAll().filter((n) => n.type === "group").length + 1}`,
       visible: true,
       opacity: 100,
@@ -892,7 +899,7 @@ export class LayerManager {
     if (!loc) return null;
     const copy = (n: LayerNode): LayerNode =>
       n.type === "group"
-        ? { ...n, id: nextId++, children: n.children.map(copy) }
+        ? { ...n, id: newNodeId(), children: n.children.map(copy) }
         : this.copyLayer(n, n.name);
     const dup = { ...(copy(src) as LayerGroup), name: src.name + " copy" };
     loc.parent.splice(loc.index + 1, 0, dup);
