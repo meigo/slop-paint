@@ -190,6 +190,9 @@
 
   function addGroup() {
     if (onPick) return groupPicked();
+    // A member of a locked group can't leave it for a new group (as dragging, and Group on a pick).
+    const why = dragBlock(layers.tree, layers.activeId);
+    if (why) return flashStatus(why);
     structuralEdit(layers, () => layers.groupActive());
     bumpLayerVersion();
   }

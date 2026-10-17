@@ -765,15 +765,27 @@ export class LayerManager {
     };
   }
 
+  /** Where a new node goes beside `id`: `id` itself, or — when `id` is inside a locked group, which
+   *  takes nothing in (as a drop into it is refused) — the outermost locked group around it. New,
+   *  duplicated and imported layers landed inside, locked, and could then not be dragged out. */
+  private outsideLocked(id: number): number {
+    let cur = id;
+    for (;;) {
+      const at = locateNode(this.tree, cur);
+      if (!at?.group || !lockedInTree(this.tree, at.group.id)) return cur;
+      cur = at.group.id;
+    }
+  }
+
   /** Insert a node relative to the current selection */
   private insertAtSelection(node: LayerNode) {
     const selected = this.findNode(this.activeId);
-    if (selected && selected.type === "group") {
+    if (selected && selected.type === "group" && !lockedInTree(this.tree, selected.id)) {
       // Selected is a group — add inside it at the top
       selected.children.push(node);
     } else if (selected) {
-      // Selected is a layer — add above it in the same parent
-      const loc = this.findParent(selected.id);
+      // Selected is a layer (or a locked group) — add above it in the same parent
+      const loc = this.findParent(this.outsideLocked(selected.id));
       if (loc) {
         loc.parent.splice(loc.index + 1, 0, node);
       } else {
@@ -793,10 +805,11 @@ export class LayerManager {
   }
 
   /** Add a layer directly BELOW the active node, in the same parent (the bottom of the tree if
-   *  nothing is active) — where a reference goes, under the drawing that traces over it. */
+   *  nothing is active; below a locked group the node is in) — where a reference goes, under the
+   *  drawing that traces over it. */
   addLayerBelow(name?: string): Layer {
     const layer = this.createLayer(name);
-    const loc = this.findParent(this.activeId);
+    const loc = this.findParent(this.outsideLocked(this.activeId));
     if (loc) loc.parent.splice(loc.index, 0, layer);
     else this.tree.unshift(layer);
     this.activeId = layer.id;
@@ -879,12 +892,12 @@ export class LayerManager {
   duplicateLayer(id: number): Layer | null {
     const src = this.findLayer(id);
     if (!src) return null;
-    const loc = this.findParent(id);
+    const loc = this.findParent(this.outsideLocked(id));
     if (!loc) return null;
 
     const dup = this.copyLayer(src, src.name + " copy");
 
-    // Insert above the source
+    // Insert above the source (above a locked group it is in)
     loc.parent.splice(loc.index + 1, 0, dup);
     this.activeId = dup.id;
     this.onChange();
@@ -896,7 +909,7 @@ export class LayerManager {
   duplicateGroup(id: number): LayerGroup | null {
     const src = this.findNode(id);
     if (!src || src.type !== "group") return null;
-    const loc = this.findParent(id);
+    const loc = this.findParent(this.outsideLocked(id));
     if (!loc) return null;
     const copy = (n: LayerNode): LayerNode =>
       n.type === "group"

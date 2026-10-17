@@ -1773,6 +1773,8 @@
         // Grouping rows from different places can change the stacking, as the panel's button.
         layers.composite();
       } else {
+        const why = dragBlock(layers.tree, layers.activeId);
+        if (why) return flashStatus(why);
         structuralEdit(layers, () => layers!.groupActive());
       }
       bumpLayerVersion();
