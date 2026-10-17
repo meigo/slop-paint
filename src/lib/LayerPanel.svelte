@@ -21,6 +21,7 @@
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import {
+    isWithin,
     layersLeftAfter,
     rowOrder,
     topSelection,
@@ -499,6 +500,23 @@
   function startEdit(node: LayerNode) {
     draft = parseTags(node.name).baseName;
     editingId = node.id;
+    // The strip's pencil can rename a row inside a collapsed group, which has no field to show:
+    // open the groups, or the field appeared unprompted whenever the group was next expanded.
+    let opened = false;
+    for (const g of layers.flatAll()) {
+      if (g.type === "group" && g.collapsed && g !== node && isWithin(layers.tree, node.id, g.id)) {
+        g.collapsed = false;
+        opened = true;
+      }
+    }
+    if (opened) bumpLayerVersion();
+  }
+
+  /** Svelte action: focus the rename field as it appears. `autofocus` acts only when nothing has
+   *  focus, and Chrome leaves it on the strip's pencil button: the field stayed unfocused and the
+   *  letters typed ran tool shortcuts. */
+  function focusNow(node: HTMLInputElement) {
+    node.focus();
   }
 
   function commitEdit(node: LayerNode) {
@@ -558,11 +576,10 @@
 
 {#snippet nameCell(node: LayerNode)}
   {#if editingId === node.id}
-    <!-- svelte-ignore a11y_autofocus -->
     <input
       class="layer-rename-input"
       value={draft}
-      autofocus
+      use:focusNow
       use:selectOnFocus
       oninput={(e) => (draft = e.currentTarget.value)}
       onblur={() => commitEdit(node)}
