@@ -2,6 +2,7 @@
   import { Link, Unlink } from "@lucide/svelte";
   import { app } from "../appState.svelte.js";
   import { docSide, linkedSize, MAX_DOC_PX } from "../resize";
+  import { isConfirmEnter } from "./dialog-keys";
 
   /** "canvas": crop or extend around the anchor (moves nothing); "scale": resize the drawing. */
   export type ResizeMode = "canvas" | "scale";
@@ -82,6 +83,7 @@
   function onWindowKey(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === "Enter") {
+      if (!isConfirmEnter(e)) return; // a focused button presses itself; IME input commits
       e.preventDefault();
       e.stopPropagation();
       confirm();

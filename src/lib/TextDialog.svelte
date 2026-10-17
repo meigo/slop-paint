@@ -17,6 +17,7 @@
     type TextAlign,
     type TextSpec,
   } from "../text-layout";
+  import { isConfirmEnter } from "./dialog-keys";
 
   let {
     open = false,
@@ -113,7 +114,9 @@
       e.stopPropagation();
       onCancel();
     } else if (e.key === "Enter") {
-      // Enter in the text is a new line; Ctrl/Cmd+Enter (or Enter anywhere else) confirms.
+      // Enter in the text is a new line; Ctrl/Cmd+Enter (or Enter anywhere else but a focused
+      // button, which presses itself) confirms.
+      if (!isConfirmEnter(e)) return;
       const inText = e.target instanceof HTMLTextAreaElement;
       if (inText && !(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();

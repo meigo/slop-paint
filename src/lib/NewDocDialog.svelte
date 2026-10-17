@@ -1,5 +1,6 @@
 <script lang="ts">
   import { docSide, MAX_DOC_PX } from "../resize";
+  import { isConfirmEnter } from "./dialog-keys";
 
   let {
     open = false,
@@ -51,6 +52,7 @@
   function onWindowKey(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === "Enter") {
+      if (!isConfirmEnter(e)) return; // a focused button presses itself; IME input commits
       e.preventDefault();
       e.stopPropagation();
       confirm();
