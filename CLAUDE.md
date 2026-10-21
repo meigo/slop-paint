@@ -108,7 +108,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 - `text-layout.ts` — pure: `TextSpec`, the bundled font list, `layoutText` (lines, box, guide rules, in layout units), `drawTextLayout`, `refitCorners`, `normalizeTextSpec`, `textLayerName`
 - `text-ref.ts` — `buildTextSource`: loads the font, lays out, draws the raster copy and its PNG (settings and box in a `tEXt` chunk); `textPayloadFromPng` reads them back, `openTextSource` rebuilds an opened text layer (or keeps its saved picture when the font is missing)
 - `png-text.ts` — pure: write/read a PNG `tEXt` chunk
-- `lib/TextDialog.svelte` — add/edit dialog for a text reference (no dim, no outside-tap cancel: the canvas behind is the preview)
+- `lib/TextDialog.svelte` — add/edit dialog for a text reference (no dim, no outside-tap cancel: the canvas behind is the preview). No full-screen layer either (2026-10-21): in the iPad Home Screen app, closing it from a transparent `fixed inset-0` wrapper left the top edge blurred by iPadOS (the system's edge effect; every page value read 0, and it cleared only when the dialog opened again). The box is `fixed` on its own and App makes the workspace `inert` while it is open, which keeps it modal
 - `paste.ts` — where pasted pixels land (`placeInternalPaste`: copied spot + 8px, kept on the page; `placeExternalImage`: centred, 1 image px = 1 doc px, scaled down to fit)
 
 ### State Management
