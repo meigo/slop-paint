@@ -2,7 +2,7 @@
   // Add / edit a text reference. Every change is previewed on the canvas at once (App re-renders
   // the layer); OK keeps it as one undo step, Cancel puts back what was there.
   import { untrack } from "svelte";
-  import { Plus, TextAlignCenter, TextAlignEnd, TextAlignStart } from "@lucide/svelte";
+  import { Dices, Plus, TextAlignCenter, TextAlignEnd, TextAlignStart } from "@lucide/svelte";
   import { FONT_FILE_ACCEPT, type FontSource } from "../text-fonts";
   import {
     DEFAULT_TEXT_SPEC,
@@ -17,7 +17,9 @@
     type TextAlign,
     type TextSpec,
   } from "../text-layout";
+  import { JITTER_MAX, hasJitter, newSeed, type JitterAmounts } from "../text-jitter";
   import { isConfirmEnter } from "./dialog-keys";
+  import { sliderFill } from "./slider-fill";
 
   let {
     open = false,
@@ -107,6 +109,32 @@
     { value: "right", title: "Align right", icon: TextAlignEnd },
   ];
 
+  // Randomise. Scale and baseline are stored as fractions and shown as percentages.
+  const jitters: { key: keyof JitterAmounts; label: string; unit: string; title: string }[] = [
+    {
+      key: "rotate",
+      label: "Rotation",
+      unit: "°",
+      title: "How far each letter may turn, either way",
+    },
+    { key: "scale", label: "Scale", unit: "%", title: "How much each letter may grow or shrink" },
+    {
+      key: "offset",
+      label: "Baseline",
+      unit: "%",
+      title: "How far each letter may sit above or below the line, as a share of the size",
+    },
+    { key: "skew", label: "Skew", unit: "°", title: "How far each letter may lean, either way" },
+  ];
+  const percent = (k: keyof JitterAmounts) => k === "scale" || k === "offset";
+  const jitterShown = (k: keyof JitterAmounts) =>
+    percent(k) ? Math.round(spec.jitter[k] * 100) : spec.jitter[k];
+  const jitterMax = (k: keyof JitterAmounts) => (percent(k) ? JITTER_MAX[k] * 100 : JITTER_MAX[k]);
+  function setJitter(k: keyof JitterAmounts, shown: number) {
+    update({ jitter: { ...spec.jitter, [k]: percent(k) ? shown / 100 : shown } });
+  }
+  const jittered = $derived(hasJitter(spec.jitter));
+
   function onWindowKey(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === "Escape") {
@@ -141,7 +169,7 @@
        mustn't throw away what was typed. The layer stays modal until OK or Cancel. -->
   <div class="fixed inset-0 z-50 flex items-start justify-start p-4 pt-24">
     <div
-      class="flex w-80 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-xl"
+      class="flex max-h-[calc(100dvh-7rem)] w-80 flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-surface p-4 shadow-xl"
       role="dialog"
       aria-label={adding ? "Add text" : "Edit text"}
     >
@@ -289,6 +317,37 @@
           Cap height, x-height (dashed) and baseline for each line
         </span>
       </label>
+
+      <div class="flex flex-col gap-2 text-xs text-text-secondary">
+        <div class="flex items-center gap-2">
+          <span class="w-16 text-text">Randomise</span>
+          <button
+            class="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-text-secondary hover:bg-surface-hover aria-disabled:opacity-40"
+            title={jittered
+              ? "Re-roll: a new random pick for every letter"
+              : "Set an amount below first — at 0 nothing is randomised"}
+            aria-disabled={!jittered}
+            onclick={() => jittered && update({ seed: newSeed() })}
+            ><Dices size={14} /> Re-roll</button
+          >
+        </div>
+        {#each jitters as j (j.key)}
+          <label class="flex items-center gap-2" title={j.title}>
+            <span class="w-16">{j.label}</span>
+            <input
+              type="range"
+              class="min-w-0 flex-1"
+              min="0"
+              max={jitterMax(j.key)}
+              step="1"
+              style={sliderFill(jitterShown(j.key), 0, jitterMax(j.key))}
+              value={jitterShown(j.key)}
+              oninput={(e) => setJitter(j.key, Number(e.currentTarget.value))}
+            />
+            <span class="w-10 text-right tabular-nums">±{jitterShown(j.key)}{j.unit}</span>
+          </label>
+        {/each}
+      </div>
 
       <div class="flex justify-end gap-2 pt-1">
         <button

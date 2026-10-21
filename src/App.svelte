@@ -3185,7 +3185,16 @@
     const now = src.text!.layout;
     edit.layer.ref = {
       src,
-      corners: refitCorners(corners, was.width, was.height, now.width, now.height, spec.align),
+      corners: refitCorners(
+        corners,
+        was.width,
+        was.height,
+        now.width,
+        now.height,
+        spec.align,
+        was.margin,
+        now.margin,
+      ),
     };
     layers.renderRef(edit.layer);
     layers.composite();

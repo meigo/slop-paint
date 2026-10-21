@@ -22,6 +22,7 @@ import {
   fontCss,
   layoutText,
   type FontMetrics,
+  type TextMargin,
   type TextSpec,
 } from "./text-layout";
 
@@ -59,7 +60,20 @@ export async function buildTextSource(spec: TextSpec, id: string = newRefId()): 
   await document.fonts.load(css, `${spec.text}Hxg`).catch(() => {});
   const ctx = measureCtx();
   ctx.font = css;
-  const layout = layoutText(drawSpec, (l) => ctx.measureText(l).width, fontMetrics(ctx, spec.size));
+  const layout = layoutText(
+    drawSpec,
+    (l) => ctx.measureText(l).width,
+    fontMetrics(ctx, spec.size),
+    (ch) => {
+      const t = ctx.measureText(ch);
+      return {
+        left: t.actualBoundingBoxLeft,
+        right: t.actualBoundingBoxRight,
+        ascent: t.actualBoundingBoxAscent,
+        descent: t.actualBoundingBoxDescent,
+      };
+    },
+  );
 
   const size = fitDecodedSize(
     Math.ceil(layout.width * RASTER_SCALE),
@@ -98,9 +112,9 @@ export function textPayloadFromPng(bytes: Uint8Array) {
  */
 export async function openTextSource(
   src: Pick<RefSource, "id" | "name" | "bytes">,
-  payload: { spec: TextSpec; box: [number, number] | null },
+  payload: { spec: TextSpec; box: [number, number] | null; margin: TextMargin },
 ): Promise<RefSource> {
-  const { spec, box } = payload;
+  const { spec, box, margin } = payload;
   if ((await fontSource(spec)) !== "missing") return buildTextSource(spec, src.id);
   const saved = await decodeRefSource(src.bytes, src.name, src.id);
   const w = box?.[0] ?? (saved.image?.width ?? 1) / RASTER_SCALE;
@@ -110,7 +124,7 @@ export async function openTextSource(
     text: {
       spec,
       drawSpec: spec,
-      layout: { width: w, height: h, lines: [], guides: [], guideWidth: 0 },
+      layout: { width: w, height: h, lines: [], glyphs: null, margin, guides: [], guideWidth: 0 },
       fontMissing: true,
       savedOnly: true,
     },
