@@ -325,6 +325,9 @@ export class Selection {
   }
 
   endCreate() {
+    // A paste mid-press ended the create (pasteFloat): the release must not treat the float as
+    // the marquee — it dropped a small paste as a tap and reset the float's matrix.
+    if (!this.isCreating) return;
     this.isCreating = false;
     // A tap (or a drag under 3 SCREEN px a side) makes no marquee. It was 3 page px: zoomed out a
     // tap's jitter kept a speck of a marquee that clipped the next stroke, and zoomed in a
@@ -464,6 +467,7 @@ export class Selection {
    *  reference floats its full-size original under the matrix that puts it where it sits. */
   pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect, matrix?: Mat, handlesOnly = false) {
     this.handlesOnly = handlesOnly;
+    this.isCreating = false; // the rest of a held marquee press would rewrite the float's rect
     this.rect = { ...rect };
     this.mode = "rect";
     this.lassoPath = null;

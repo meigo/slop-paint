@@ -308,3 +308,18 @@ describe("the Move box", () => {
     expect(rects).toContainEqual([100, 100, 50, 50]);
   });
 });
+
+describe("a paste while a marquee press is held", () => {
+  it("the rest of the press leaves the float alone", () => {
+    sel.screenScale = 1;
+    sel.mode = "rect";
+    sel.startCreate(10, 10);
+    sel.updateCreate(50, 50);
+    sel.pasteFloat(fakeCanvas(2, 2).canvas, { x: 100, y: 100, w: 2, h: 2 });
+    sel.updateCreate(60, 60);
+    sel.endCreate();
+    expect(sel.state).toBe("transforming");
+    expect(sel.hasFloating).toBe(true);
+    expect(sel.rect).toEqual({ x: 100, y: 100, w: 2, h: 2 });
+  });
+});
