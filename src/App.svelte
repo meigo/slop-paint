@@ -2937,6 +2937,9 @@
     }
     // Leaving a float applies it (undoable; Cancel isn't). setTool only does that when the tool
     // CHANGES, so on Select the float was cancelled below and a transform was lost.
+    // A press still down (a marquee being drawn on Select, where setTool below changes nothing)
+    // finishes first: its later events would act on the float.
+    endGesture();
     if (selection.hasFloating) selection.commit();
     setTool("select");
     if (selection.active) selection.cancel(); // a plain marquee
