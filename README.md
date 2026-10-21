@@ -142,6 +142,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   it at an anchor; **Keep ratio** fills in the other side as you type
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
   groups, reference Smart Objects and text layers, and open PSDs from Photoshop, GIMP and others
+- A file dragged onto the app does nothing (the browser used to open it in place of the app): use
+  **File ▸ Open** or **File ▸ Import image…**
 - **Chrome and Edge on desktop:** Save writes back to the project's file (asking where only the
   first time), **Save as…** picks a new one, and a file you open saves back to itself. Elsewhere
   Save downloads the PSD — in Safari, Settings ▸ General ▸ File download location ▸ "Ask for each

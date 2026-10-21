@@ -3437,6 +3437,15 @@
     return () => window.removeEventListener("beforepaste", onBeforePaste);
   });
 
+  /** A FILE dragged over or dropped anywhere is refused: the browser's own drop opened it in the
+   *  tab in the app's place, unsaved work and all (slop-vector-editor's report). Dragged text
+   *  still drops into a field. Use File ▸ Open / Import image… instead. */
+  function refuseFileDrop(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "none";
+  }
+
   /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
   /**
    * The image on the system clipboard, if any. Browsers expose only the image types they can
@@ -3848,6 +3857,8 @@
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
   onpaste={handlePaste}
+  ondragover={refuseFileDrop}
+  ondrop={refuseFileDrop}
   bind:innerWidth={viewportW}
   onresize={() => {
     // Keep the panel inside half the viewport when the window shrinks.
