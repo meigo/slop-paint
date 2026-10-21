@@ -27,6 +27,33 @@ export function rimWidth(width: number): number {
 }
 
 /**
+ * The wash's outline for the smoothed `path`: Smooth's (steady spacing, no taper), wobbled by
+ * `wobble` (0–100), its noise seeded by `seed` (`strokeSeed` of the raw first point). Smooth's
+ * inward cap (pathSpine): a light stroke keeps at least half its width at any Wobble — it pinched
+ * to 0.29 of it at Wobble 100, Press 8. A drawn part still never moves as the stroke grows (each
+ * edge point keeps the earliest pass that holds it), which the rim window needs. Pure.
+ */
+export function washOutline(
+  path: InputPoint[],
+  size: number,
+  sizeRange: number,
+  wobble: number,
+  seed: number,
+  done: boolean,
+): number[][] {
+  const maxW = widthRange(size, sizeRange).max;
+  const amp = wobbleAmp(maxW, wobble);
+  return wobbleOutline(
+    outlineOfPath(path, size, sizeRange, done, false, true),
+    seed,
+    amp,
+    wobbleScale(maxW),
+    true,
+    amp > 0 ? pathSpine(path, size, sizeRange) : undefined,
+  );
+}
+
+/**
  * The wash's density at `dist` px inside the edge, 0–1: the middle is lighter by up to 60% at Edge
  * 100, rising to full at the edge over `rim` px (squared, so it gathers right at the edge). Edge 0
  * is an even wash. Pure.
@@ -229,17 +256,13 @@ function paintWatercolorStroke(
   );
   const maxW = widthRange(settings.size, sizeRange).max;
   const amp = wobbleAmp(maxW, settings.washWobble ?? 30);
-  const seed = strokeSeed(points[0]);
-  // Smooth's inward cap (pathSpine): a light stroke keeps at least half its width at any Wobble —
-  // it pinched to 0.29 of it at Wobble 100, Press 8. A drawn part still never moves as the stroke
-  // grows (each edge point keeps the earliest pass that holds it), which the rim window needs.
-  const outline = wobbleOutline(
-    outlineOfPath(path, settings.size, sizeRange, done, false, true),
-    seed,
-    amp,
-    wobbleScale(maxW),
-    true,
-    amp > 0 ? pathSpine(path, settings.size, sizeRange) : undefined,
+  const outline = washOutline(
+    path,
+    settings.size,
+    sizeRange,
+    settings.washWobble ?? 30,
+    strokeSeed(points[0]),
+    done,
   );
   if (outline.length < 2) return;
   const rimPx = rimWidth(maxW) * m.a;
