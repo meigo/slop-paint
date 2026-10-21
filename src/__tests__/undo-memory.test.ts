@@ -80,10 +80,11 @@ describe("pixel undo steps keep only their tiles", () => {
     const move = () => {
       const edits = Array.from({ length: 3 }, () => {
         const before = image(new Uint8ClampedArray(W * H * 4));
+        before.data[(W * H - 1) * 4 + 3] = 255; // paint the move carries off the canvas
         befores.push(new WeakRef(before));
         return { layer, before };
       });
-      pushLayersEdit(layers, edits);
+      pushLayersEdit(layers, edits, 3, 2);
     };
     move();
     await collect();

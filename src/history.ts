@@ -56,6 +56,23 @@ export function changedTiles(
   return out;
 }
 
+/** The parts of a `width` × `height` canvas that a shift by (`dx`, `dy`) whole px carries off it
+ *  — a strip at the far side of each axis it moves along (the Move tool's release cuts them). Up
+ *  to two rects that don't overlap; none when the shift is 0, everything when it is a canvas or
+ *  more. */
+export function offCanvasRects(width: number, height: number, dx: number, dy: number): PixelRect[] {
+  const ax = Math.min(Math.abs(dx), width);
+  const ay = Math.min(Math.abs(dy), height);
+  const out: PixelRect[] = [];
+  // Columns that leave sideways, full height.
+  if (ax > 0) out.push({ x: dx > 0 ? width - ax : 0, y: 0, w: ax, h: height });
+  // Rows that leave up or down, without the columns already counted.
+  if (ay > 0 && ax < width) {
+    out.push({ x: dx > 0 ? 0 : ax, y: dy > 0 ? height - ay : 0, w: width - ax, h: ay });
+  }
+  return out;
+}
+
 /** `r`'s pixels out of a `width`-wide RGBA buffer, as a tightly packed buffer. */
 export function cropPixels(
   data: Uint8ClampedArray,

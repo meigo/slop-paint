@@ -3,7 +3,7 @@
  * delete, duplicate, merge, group, reorder) go on the same stack, so undo walks back through what
  * you actually did rather than through the active layer's own history.
  */
-import { History, changedTiles, cropPixels } from "./history";
+import { History, changedTiles, cropPixels, offCanvasRects } from "./history";
 import {
   detachedLayerBytes,
   refSourceBytes,
@@ -66,31 +66,69 @@ function diffTiles(before: ImageData, full: ImageData) {
   }));
 }
 
-/** Record a change already made to several layers at once as ONE step (the Move tool,
- *  2026-10-02): each layer's changed tiles, and a reference's placement before and after (its
- *  pixels are drawn from it, so undo must put both back). */
+/** Record a Move already made (2026-10-02) as ONE step: several layers shifted by (`dx`, `dy`)
+ *  whole canvas px, and references placed anew. Stored COMPACTLY (2026-10-21): each shifted layer
+ *  keeps only the inked tiles of what the shift carried off the canvas (`offCanvasRects`), and
+ *  undo / redo shift the pixels back and forth (`LayerManager.shiftPixels`) — the same exact copy
+ *  the release made. Kept as changed tiles, a Move of a few full layers took both sides of every
+ *  tile it touched: past the 256 MB budget it cleared all older history, and the next stroke then
+ *  evicted the Move itself. A reference re-drawn from its original (`redrawn`) keeps no pixels at
+ *  all: undo puts its placement back and draws it again, as `pushRefEdit` does. `before` is each
+ *  layer's pixels from before the shift (only read here, not kept). */
 export function pushLayersEdit(
   layers: LayerManager,
-  edits: { layer: Layer; before: ImageData; refBefore?: RefPlacement }[],
+  edits: { layer: Layer; before?: ImageData; refBefore?: RefPlacement; redrawn?: boolean }[],
+  dx: number,
+  dy: number,
 ) {
   const parts = edits
     .map((e) => ({
       layer: e.layer,
-      diff: pixelDiff(layers, e.layer, e.before),
+      lost: e.redrawn || !e.before ? null : lostTiles(e.before, dx, dy),
       refBefore: e.refBefore,
       refAfter: e.layer.ref,
     }))
-    .filter((p) => !p.diff.empty || p.refBefore !== p.refAfter);
-  if (parts.length === 0) return; // nothing moved (empty layers): no empty step to wipe redo
+    // An empty layer moved changes nothing: no empty step to wipe redo.
+    .filter((p) => (p.lost && p.lost.inked) || p.refBefore !== p.refAfter);
+  if (parts.length === 0) return;
   const put = (side: "was" | "now") => {
     for (const p of parts) {
-      p.diff.put(side);
       if (p.refBefore || p.refAfter) p.layer.ref = side === "was" ? p.refBefore : p.refAfter;
+      if (!p.lost) {
+        layers.renderRef(p.layer);
+        continue;
+      }
+      if (side === "now") layers.shiftPixels(p.layer, dx, dy);
+      else {
+        layers.shiftPixels(p.layer, -dx, -dy);
+        for (const t of p.lost.tiles) layers.restoreTo(p.layer, t.data, t.x, t.y);
+      }
     }
     hooks.onHistoryApplied();
   };
-  const bytes = parts.reduce((sum, p) => sum + p.diff.bytes, 0);
+  const bytes = parts.reduce(
+    (sum, p) => sum + (p.lost?.tiles.reduce((n, t) => n + t.data.data.byteLength, 0) ?? 0),
+    0,
+  );
   history.push({ undo: () => put("was"), redo: () => put("now"), bytes, layers: parts.length });
+}
+
+/** What a shift by (`dx`, `dy`) carries off the canvas, as the tiles of it holding any paint, and
+ *  whether the layer held any paint at all. Its own function, so no closure keeps `before`. */
+function lostTiles(before: ImageData, dx: number, dy: number) {
+  const { width: w, height: h, data } = before;
+  const px = new Uint32Array(data.buffer, data.byteOffset, w * h);
+  const inked = px.some((v) => v !== 0);
+  const tiles: { x: number; y: number; data: ImageData }[] = [];
+  if (!inked) return { inked, tiles };
+  for (const r of offCanvasRects(w, h, dx, dy)) {
+    const strip = cropPixels(data, w, r);
+    for (const t of changedTiles(strip, new Uint8ClampedArray(strip.length), r.w, r.h)) {
+      const at = { x: r.x + t.x, y: r.y + t.y, w: t.w, h: t.h };
+      tiles.push({ x: at.x, y: at.y, data: new ImageData(cropPixels(data, w, at), t.w, t.h) });
+    }
+  }
+  return { inked, tiles };
 }
 
 /**

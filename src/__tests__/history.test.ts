@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { History, type Command } from "../history";
+import { History, offCanvasRects, type Command } from "../history";
 
 function counterCmd(state: { n: number }, delta: number): Command {
   return {
@@ -154,5 +154,30 @@ describe("History.layerChanges", () => {
     expect(h.layerChanges).toBe(10);
     h.clear();
     expect(h.layerChanges).toBe(10); // only grows: the guard takes differences
+  });
+});
+
+describe("offCanvasRects", () => {
+  it("is the strips a shift carries off the canvas, without overlap", () => {
+    expect(offCanvasRects(100, 50, 0, 0)).toEqual([]);
+    expect(offCanvasRects(100, 50, 10, 0)).toEqual([{ x: 90, y: 0, w: 10, h: 50 }]);
+    expect(offCanvasRects(100, 50, -10, 0)).toEqual([{ x: 0, y: 0, w: 10, h: 50 }]);
+    expect(offCanvasRects(100, 50, 0, -5)).toEqual([{ x: 0, y: 0, w: 100, h: 5 }]);
+    expect(offCanvasRects(100, 50, 10, 5)).toEqual([
+      { x: 90, y: 0, w: 10, h: 50 },
+      { x: 0, y: 45, w: 90, h: 5 },
+    ]);
+    expect(offCanvasRects(100, 50, -10, -5)).toEqual([
+      { x: 0, y: 0, w: 10, h: 50 },
+      { x: 10, y: 0, w: 90, h: 5 },
+    ]);
+  });
+
+  it("is the whole canvas once the shift is a canvas or more", () => {
+    expect(offCanvasRects(100, 50, 300, 7)).toEqual([{ x: 0, y: 0, w: 100, h: 50 }]);
+    expect(offCanvasRects(100, 50, 3, -80)).toEqual([
+      { x: 97, y: 0, w: 3, h: 50 },
+      { x: 0, y: 0, w: 97, h: 50 },
+    ]);
   });
 });

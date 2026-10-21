@@ -1140,7 +1140,7 @@
     layers: Layer[];
     /** References among them, with their pixels and placement from before the press: the preview
      *  re-draws them, so undo can't read "before" at the release. */
-    refs: { layer: Layer; before: ImageData; refBefore: RefPlacement }[];
+    refs: { layer: Layer; refBefore: RefPlacement }[];
     dx: number;
     dy: number;
   } | null = null;
@@ -1260,7 +1260,7 @@
         // Shifting the placement alone left the pixels behind, and a save then stored the two apart.
         refs: moving
           .filter((l) => l.ref?.src.image && isParallelogram(l.ref.corners))
-          .map((l) => ({ layer: l, before: layers!.snapshotOf(l), refBefore: l.ref! })),
+          .map((l) => ({ layer: l, refBefore: l.ref! })),
         dx: 0,
         dy: 0,
       };
@@ -1287,28 +1287,22 @@
       return;
     }
     const refs = new Map(g.refs.map((r) => [r.layer, r]));
+    const sx = Math.round(dx * dpr);
+    const sy = Math.round(dy * dpr);
     const edits = g.layers.map((layer) => {
       const r = refs.get(layer);
       if (r) {
         layer.ref = { src: r.refBefore.src, corners: shiftedCorners(r.refBefore, dx, dy) };
         layers!.renderRef(layer);
-        return { layer, before: r.before, refBefore: r.refBefore };
+        return { layer, refBefore: r.refBefore, redrawn: true };
       }
       const before = layers!.snapshotOf(layer);
-      const refBefore = layer.ref; // a reference not decoded yet
+      const refBefore = layer.ref; // a reference not decoded yet (or distorted)
       if (refBefore) layer.ref = { src: refBefore.src, corners: shiftedCorners(refBefore, dx, dy) };
-      const tmp = document.createElement("canvas");
-      tmp.width = layer.canvas.width;
-      tmp.height = layer.canvas.height;
-      tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
-      layer.ctx.save();
-      layer.ctx.resetTransform();
-      layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-      layer.ctx.drawImage(tmp, Math.round(dx * dpr), Math.round(dy * dpr));
-      layer.ctx.restore();
+      layers!.shiftPixels(layer, sx, sy);
       return { layer, before, refBefore };
     });
-    pushLayersEdit(layers, edits);
+    pushLayersEdit(layers, edits, sx, sy);
     layers.composite();
     // The box moves with the layers, cut at the page edge as their pixels are: the re-measure the
     // version bump would run (every target layer read whole and scanned) is skipped. It can be a

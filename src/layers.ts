@@ -1070,6 +1070,20 @@ export class LayerManager {
     return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
   }
 
+  /** Shift one layer's pixels by (`dx`, `dy`) whole canvas px — an exact copy, no resampling;
+   *  what leaves the canvas is cut and what it uncovers is empty (the Move tool, and its undo). */
+  shiftPixels(layer: Layer, dx: number, dy: number) {
+    const tmp = document.createElement("canvas");
+    tmp.width = layer.canvas.width;
+    tmp.height = layer.canvas.height;
+    tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+    layer.ctx.save();
+    layer.ctx.resetTransform();
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.drawImage(tmp, dx, dy);
+    layer.ctx.restore();
+  }
+
   /** Put pixels back on one layer, at (`x`, `y`) in canvas pixels for a partial snapshot.
    *  putImageData ignores the ctx transform. */
   restoreTo(layer: Layer, data: ImageData, x = 0, y = 0) {
