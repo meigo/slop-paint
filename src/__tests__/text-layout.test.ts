@@ -12,6 +12,7 @@ import {
   refitCorners,
   textLayerName,
   textPadding,
+  NO_MARGIN,
   type TextSpec,
 } from "../text-layout";
 import { cornersFromRect, type Corners } from "../ref-placement";
@@ -63,6 +64,83 @@ describe("layoutText", () => {
   });
 });
 
+describe("layoutText with jitter", () => {
+  const J = { rotate: 20, scale: 0.2, offset: 0.2, skew: 10 };
+  /** Every letter inks its whole advance box, cap height tall. */
+  const ink = (ch: string) => ({ left: 0, right: measure(ch), ascent: 30, descent: 0 });
+
+  it("draws by line, with no margin, when every amount is zero", () => {
+    const l = layoutText(spec({ text: "abc", seed: 9 }), measure, M, ink);
+    expect(l.glyphs).toBeNull();
+    expect(l.margin).toEqual(NO_MARGIN);
+  });
+
+  it("places each letter where the text before it ends, skipping spaces", () => {
+    const l = layoutText(spec({ text: "ab c", jitter: J, seed: 3 }), measure, M, ink);
+    const x = l.lines[0].x;
+    expect(l.glyphs!.map((g) => [g.text, g.x - x])).toEqual([
+      ["a", 0],
+      ["b", 10],
+      ["c", 30],
+    ]);
+  });
+
+  it("keeps an accented letter or an emoji in one piece", () => {
+    const l = layoutText(spec({ text: "e\u0301👍🏽", jitter: J }), measure, M, ink);
+    expect(l.glyphs!.map((g) => g.text)).toEqual(["e\u0301", "👍🏽"]);
+  });
+
+  it("doesn't re-roll a line when another line is edited", () => {
+    const a = layoutText(spec({ text: "abc\nxyz", jitter: J, seed: 5 }), measure, M, ink);
+    const b = layoutText(spec({ text: "abc\nxyzzy", jitter: J, seed: 5 }), measure, M, ink);
+    const rel = (l: typeof a) =>
+      l.glyphs!.slice(0, 3).map((g) => [g.m.a, g.m.b, g.m.c, g.m.d, g.m.e - l.margin.left]);
+    expect(rel(b)).toEqual(rel(a));
+  });
+
+  it("grows the box so no letter reaches past half the padding", () => {
+    const s = spec({ text: "abcdefghij", jitter: { ...J, rotate: 45, scale: 0.5 }, seed: 11 });
+    // Letters as tall as the font's box, so a turned one must poke out of it.
+    const tall = (ch: string) => ({ left: 0, right: measure(ch), ascent: 40, descent: 10 });
+    const l = layoutText(s, measure, M, tall);
+    const plain = layoutText(
+      { ...s, jitter: { rotate: 0, scale: 0, offset: 0, skew: 0 } },
+      measure,
+      M,
+    );
+    const g = l.margin;
+    expect(g.left + g.top + g.right + g.bottom).toBeGreaterThan(0);
+    expect(l.width).toBeCloseTo(plain.width + g.left + g.right);
+    expect(l.height).toBeCloseTo(plain.height + g.top + g.bottom);
+    const keep = textPadding(40) / 2 - 1e-9;
+    for (const gl of l.glyphs!) {
+      const w = measure(gl.text);
+      for (const [px, py] of [
+        [gl.x, gl.y - 40],
+        [gl.x + w, gl.y - 40],
+        [gl.x + w, gl.y + 10],
+        [gl.x, gl.y + 10],
+      ]) {
+        const qx = gl.m.a * px + gl.m.c * py + gl.m.e;
+        const qy = gl.m.b * px + gl.m.d * py + gl.m.f;
+        expect(qx).toBeGreaterThanOrEqual(keep);
+        expect(qy).toBeGreaterThanOrEqual(keep);
+        expect(qx).toBeLessThanOrEqual(l.width - keep);
+        expect(qy).toBeLessThanOrEqual(l.height - keep);
+      }
+    }
+    // Lines and guides move with the margin, so the rules stay under the text.
+    expect(l.lines[0].baseline).toBeCloseTo(plain.lines[0].baseline + g.top);
+    expect(l.guides[2].y).toBeCloseTo(plain.guides[2].y + g.top);
+  });
+
+  it("changes with the seed", () => {
+    const at = (seed: number) =>
+      layoutText(spec({ text: "abc", jitter: J, seed }), measure, M, ink).glyphs![1].m;
+    expect(at(1)).not.toEqual(at(2));
+  });
+});
+
 describe("refitCorners", () => {
   const box = cornersFromRect({ x: 100, y: 50, w: 200, h: 80 });
 
@@ -79,6 +157,22 @@ describe("refitCorners", () => {
     expect(refitCorners(box, 200, 80, 100, 80, "right")).toEqual(
       cornersFromRect({ x: 200, y: 50, w: 100, h: 80 }),
     );
+  });
+
+  it("keeps the text in place when only the jitter margin changes", () => {
+    const g = { left: 10, top: 6, right: 4, bottom: 8 };
+    for (const align of ["left", "center", "right"] as const) {
+      expect(refitCorners(box, 200, 80, 214, 94, align, NO_MARGIN, g)).toEqual(
+        cornersFromRect({ x: 90, y: 44, w: 214, h: 94 }),
+      );
+    }
+  });
+
+  it("anchors centred text on the box without its margin", () => {
+    // Was 200 wide with no margin; now 100 of text plus a 20 margin on the left only.
+    expect(
+      refitCorners(box, 200, 80, 120, 80, "center", NO_MARGIN, { ...NO_MARGIN, left: 20 }),
+    ).toEqual(cornersFromRect({ x: 130, y: 50, w: 120, h: 80 }));
   });
 
   it("keeps the placement's scale and rotation", () => {
@@ -132,6 +226,26 @@ describe("normalizeTextSpec", () => {
     expect(normalizeTextSpec({ font: "x".repeat(201) }).font).toBe(DEFAULT_TEXT_SPEC.font);
   });
 
+  it("keeps a valid seed and jitter, and clamps or drops a bad one", () => {
+    const s = normalizeTextSpec({
+      seed: 123,
+      jitter: { rotate: 10, scale: 0.1, offset: 0, skew: 5 },
+    });
+    expect(s.seed).toBe(123);
+    expect(s.jitter).toEqual({ rotate: 10, scale: 0.1, offset: 0, skew: 5 });
+    const bad = normalizeTextSpec({ seed: -1, jitter: { rotate: 999, scale: "x", skew: -3 } });
+    expect(bad.seed).toBe(0);
+    expect(bad.jitter).toEqual({ rotate: 45, scale: 0, offset: 0, skew: 0 });
+    expect(normalizeTextSpec({ seed: 1.5 }).seed).toBe(0);
+    expect(normalizeTextSpec({ seed: 2 ** 32 }).seed).toBe(0);
+  });
+
+  it("reads files saved before the randomiser as unjittered", () => {
+    const s = normalizeTextSpec({ font: "bangers", text: "hi" });
+    expect(s.seed).toBe(0);
+    expect(s.jitter).toEqual(DEFAULT_TEXT_SPEC.jitter);
+  });
+
   it("reads files saved before fonts had a weight", () => {
     const s = normalizeTextSpec({ font: "bangers", text: "hi" });
     expect(s.weight).toBe(400);
@@ -178,12 +292,24 @@ describe("text payload", () => {
   it("round-trips the settings and the box", () => {
     const spec = { ...DEFAULT_TEXT_SPEC, font: "Komika Axis", weight: 700, text: "Hi" };
     const out = decodeTextPayload(encodeTextPayload(spec, { width: 120, height: 40 }));
-    expect(out).toEqual({ spec, box: [120, 40] });
+    expect(out).toEqual({ spec, box: [120, 40], margin: NO_MARGIN });
+  });
+
+  it("round-trips the jitter and its margin", () => {
+    const spec = {
+      ...DEFAULT_TEXT_SPEC,
+      seed: 77,
+      jitter: { rotate: 12, scale: 0.1, offset: 0.05, skew: 4 },
+    };
+    const margin = { left: 3, top: 1, right: 2, bottom: 5 };
+    const out = decodeTextPayload(encodeTextPayload(spec, { width: 120, height: 40, margin }));
+    expect(out).toEqual({ spec, box: [120, 40], margin });
   });
 
   it("reads a payload saved before the box was", () => {
     const out = decodeTextPayload(JSON.stringify({ ...DEFAULT_TEXT_SPEC, text: "old" }));
     expect(out?.box).toBeNull();
+    expect(out?.margin).toEqual(NO_MARGIN);
     expect(out?.spec.text).toBe("old");
     expect(decodeTextPayload("{nope")).toBeNull();
   });
