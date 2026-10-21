@@ -87,7 +87,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   scale, the top handle rotates — without losing detail. **Bake** turns it into a plain layer to paint on or
   warp it
 - Saved in the PSD as a **Smart Object** (the original embedded), so it stays a reference when
-  reopened here or in Photoshop
+  reopened here or in Photoshop. A Smart Object **distorted** in Photoshop (perspective) keeps the
+  look it was saved with: it can be moved with the Move tool, but to scale, rotate or flip it, Bake it
 
 **Text**
 

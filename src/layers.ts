@@ -1,4 +1,4 @@
-import { matrixFromCorners, type Corners } from "./ref-placement";
+import { isParallelogram, matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
 import { halvingSteps } from "./resize";
@@ -578,10 +578,12 @@ export class LayerManager {
 
   /** Redraw a reference layer from its original at its placement (a no-op until it has decoded).
    *  `corners` draws it somewhere else without storing that (a drag in progress); `fast` trades
-   *  resampling quality for speed while it moves. */
+   *  resampling quality for speed while it moves. A Smart Object distorted in Photoshop (not a
+   *  parallelogram) is never re-drawn: one matrix can't, and drawing it from three corners
+   *  flattened it for good — it keeps its saved pixels (shifted or resampled with the page). */
   renderRef(layer: Layer, corners?: Corners, fast = false) {
     const ref = layer.ref;
-    if (!ref?.src.image) return;
+    if (!ref?.src.image || !isParallelogram(ref.corners)) return;
     const img = ref.src.image;
     const m = matrixFromCorners(img.width, img.height, corners ?? ref.corners);
     const d = this.dpr;

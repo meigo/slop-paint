@@ -30,6 +30,7 @@
   import {
     cornersFromMatrix,
     cornersFromRect,
+    isParallelogram,
     matrixFromCorners,
     type Corners,
   } from "./ref-placement";
@@ -1254,11 +1255,11 @@
       moveGesture = {
         start: p,
         layers: moving,
-        // Re-drawn from the original — once it is decoded. One still decoding (or that can't be)
-        // has only its saved pixels: they shift as a plain layer's, its placement along with them.
+        // Re-drawn from the original — once it is decoded. One still decoding (or that can't be,
+        // or distorted in Photoshop) has only its saved pixels: they shift as a plain layer's, its placement along with them.
         // Shifting the placement alone left the pixels behind, and a save then stored the two apart.
         refs: moving
-          .filter((l) => l.ref?.src.image)
+          .filter((l) => l.ref?.src.image && isParallelogram(l.ref.corners))
           .map((l) => ({ layer: l, before: layers!.snapshotOf(l), refBefore: l.ref! })),
         dx: 0,
         dy: 0,
@@ -3247,6 +3248,10 @@
   const REF_PAINT_REFUSED = "It's a reference — Bake it (in the layer strip) to paint on it";
   const REF_UNDECODABLE =
     "This browser can't read the reference's original — it shows its saved pixels; Bake it to edit them";
+  /** A Smart Object distorted in Photoshop: one matrix can't draw it, so it keeps its saved pixels
+   *  (`renderRef` won't re-draw it) and only Bake or a whole-layer Move apply, as an undecodable one. */
+  const REF_DISTORTED =
+    "This reference is distorted (from Photoshop) — it shows its saved pixels; Bake it to edit it";
 
   /** An opened reference whose original can't be decoded: said once, as its handles never come. */
   function refDecodeFailed(name: string) {
@@ -3258,6 +3263,7 @@
   function refHandlesBlock(layer: Layer): string {
     if (!layer.ref) return "";
     if (layer.ref.src.decodeFailed) return REF_UNDECODABLE;
+    if (!isParallelogram(layer.ref.corners)) return REF_DISTORTED;
     if (!layer.ref.src.image) return "The reference is still loading — try again in a moment";
     if (layers.isLocked(layer)) return "Layer is locked";
     if (layers.isHidden(layer)) return "Layer is hidden";

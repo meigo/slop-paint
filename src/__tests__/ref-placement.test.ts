@@ -9,6 +9,7 @@ import {
   newRefId,
   smartObjectFor,
   refFromPlaced,
+  isParallelogram,
 } from "../ref-placement";
 
 const rect = { x: 10, y: 20, w: 200, h: 100 };
@@ -114,5 +115,18 @@ describe("Smart Object mapping", () => {
       refFromPlaced({ ...placedLayer, transform: [1] }, [smartObjectFor(ref).linkedFile]),
     ).toBeNull();
     expect(refFromPlaced(undefined, [])).toBeNull();
+  });
+
+  it("tells a Photoshop-distorted placement from one a matrix can draw", () => {
+    expect(isParallelogram(cornersFromRect(rect))).toBe(true);
+    // Rotated, sheared and flipped placements made here stay parallelograms.
+    const m = { a: 0.3, b: 0.8, c: -0.9, d: 0.2, e: 40, f: -7 };
+    expect(isParallelogram(cornersFromMatrix(rect, m))).toBe(true);
+    expect(isParallelogram(cornersFromMatrix(rect, { ...m, a: -0.3 }))).toBe(true);
+    // Perspective (Photoshop's Distort): the bottom edge wider than the top.
+    const persp = fromPsdTransform([10, 20, 210, 20, 260, 120, -40, 120])!;
+    expect(isParallelogram(persp)).toBe(false);
+    // A sub-pixel float error in a saved file still counts as one.
+    expect(isParallelogram(fromPsdTransform([10, 20, 210, 20, 210.2, 120, 10, 120.1])!)).toBe(true);
   });
 });
