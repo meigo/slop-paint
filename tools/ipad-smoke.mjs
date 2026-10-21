@@ -1524,6 +1524,33 @@ try {
       heights.every((h) => / 40$/.test(h)),
       `portrait: the tool-options row is one line for every tool (${heights.join(", ")} px)`,
     );
+
+    // With a marquee kept, every other tool's row ends in the amber Deselect chip: still one line
+    // (its word made the brush row wrap at 834 px; below 960 px it is the icon alone).
+    await pp.locator('button[title^="Rect Select"]').first().tap();
+    await pp.waitForTimeout(200);
+    await pp.locator('button[title="Select all"]').tap();
+    await pp.waitForTimeout(200);
+    const chipped = [];
+    for (const t of ["Brush (B)", "Eraser (E)", "Paint Bucket", "Eyedropper"]) {
+      await pp.locator(`button[title^="${t}"]`).first().tap();
+      await pp.waitForTimeout(200);
+      const r = await pp.evaluate(() => {
+        const row = [...document.querySelectorAll("div")].find(
+          (e) => getComputedStyle(e).gridRowStart === "row2",
+        );
+        return {
+          h: row.getBoundingClientRect().height,
+          chip: !!row.querySelector('button[title^="A selection limits"]'),
+        };
+      });
+      chipped.push(`${t.split(" (")[0]} ${Math.round(r.h)}${r.chip ? "" : " (no chip)"}`);
+      if (t === "Brush (B)") await pp.screenshot({ path: `${OUT}/92-portrait-brush-chip.png` });
+    }
+    check(
+      chipped.every((h) => / 40$/.test(h)),
+      `portrait: with a marquee (Deselect chip) the tool-options row is still one line (${chipped.join(", ")} px)`,
+    );
   } catch (e) {
     check(false, `portrait threw: ${e.message.split("\n")[0]}`);
   }
