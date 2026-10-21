@@ -7,7 +7,7 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange, type BrushSettings } from "./brush";
-  import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
+  import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX, STILL_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
   import type { PressureCurve } from "./pressure-curve";
   import { dragBlock } from "./lib/layer-drop";
@@ -1381,6 +1381,8 @@
           pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
           // A resting pen's jitter is on screen too (`holdRestPressure`).
           restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
+          // And a pausing one's, for Sharp corners: the same stillness Stream's pause uses.
+          pauseRadius: viewport.zoom > 0 ? STILL_PX / viewport.zoom : undefined,
         },
       };
     }

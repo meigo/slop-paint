@@ -54,6 +54,8 @@ export interface BrushSettings {
   pathSmoothRadius?: number;
   /** Smooth and Watercolour: how far a resting pen may jitter, document px (`holdRestPressure`). */
   restRadius?: number;
+  /** Smooth's Sharp corners: how far a pausing pen may tremble, document px (`pauseBreaks`). */
+  pauseRadius?: number;
   /** Smooth only, 0–100: how uneven the outline is (`wobble.ts`); 0 by default. */
   smoothWobble?: number;
   /** Calligraphy only, 0–100: how uneven the nib's edge is; 0 by default. */
@@ -110,6 +112,7 @@ export function drawStroke(
     settings.taper ?? false,
     settings.sharpCorners ?? false,
     settings.restRadius ?? 0,
+    settings.pauseRadius,
   );
   if (strokePoints.length < 2) return;
   const maxW = widthRange(settings.size, sizeRange).max;
@@ -165,9 +168,10 @@ export function strokeOutline(
   taper: boolean = false,
   sharpCorners: boolean = false,
   restRadius: number = 0,
+  pauseRadius?: number,
 ): number[][] {
   return outlineOfPath(
-    smoothPath(holdRestPressure(points, restRadius), smoothRadius, sharpCorners),
+    smoothPath(holdRestPressure(points, restRadius), smoothRadius, sharpCorners, pauseRadius),
     size,
     sizeRange,
     done,
