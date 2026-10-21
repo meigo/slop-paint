@@ -186,7 +186,7 @@
     {#if refLayer?.ref?.src.text}
       <button
         class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
-        title="Edit the text, font and guide lines"
+        title="Edit the text: font, spacing, guide lines, randomise"
         onclick={onEditText}><Type size={13} /></button
       >
     {/if}

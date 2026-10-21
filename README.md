@@ -94,7 +94,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - **Ghost text to letter over:** the T in the layer panel adds a text layer — faint, tagged
   `[ignore]` for Spine, moved, scaled and rotated like a reference and redrawn sharp at any size.
-  Pick a font, size, line spacing, alignment and colour; **guide lines** rule the cap height,
+  Pick a font, size, line spacing, letter spacing, alignment and colour; **guide lines** rule the cap height,
   x-height and baseline under each line (blank lines too), for lettering by hand
 - **Randomise** the letters for a bouncy, hand-lettered layout: rotation, scale, baseline and skew,
   each by its own amount, and **Re-roll** until you like the pick. The same text looks the same on

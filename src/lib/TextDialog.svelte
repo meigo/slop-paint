@@ -11,6 +11,8 @@
     fontLabel,
     LINE_HEIGHT_MAX,
     LINE_HEIGHT_MIN,
+    SPACING_MAX,
+    SPACING_MIN,
     TEXT_FONTS,
     TEXT_SIZE_MAX,
     TEXT_SIZE_MIN,
@@ -275,6 +277,24 @@
           />
         </label>
       </div>
+
+      <label
+        class="flex items-center gap-2 text-xs text-text-secondary"
+        title="Letter spacing: extra room between letters, as a share of the size (below 0 tightens)"
+      >
+        <span class="w-16">Spacing</span>
+        <input
+          type="range"
+          class="min-w-0 flex-1"
+          min={SPACING_MIN * 100}
+          max={SPACING_MAX * 100}
+          step="1"
+          style={sliderFill(Math.round(spec.spacing * 100), SPACING_MIN * 100, SPACING_MAX * 100)}
+          value={Math.round(spec.spacing * 100)}
+          oninput={(e) => update({ spacing: Number(e.currentTarget.value) / 100 })}
+        />
+        <span class="w-10 text-right tabular-nums">{Math.round(spec.spacing * 100)}%</span>
+      </label>
 
       <div class="flex items-center gap-2 text-xs text-text-secondary">
         <span class="w-16">Align</span>
