@@ -21,6 +21,7 @@
   } from "../text-layout";
   import { JITTER_MAX, hasJitter, newSeed, type JitterAmounts } from "../text-jitter";
   import { isConfirmEnter } from "./dialog-keys";
+  import NumberField from "./NumberField.svelte";
   import { sliderFill } from "./slider-fill";
 
   let {
@@ -102,9 +103,6 @@
     if (face) update(face);
   }
 
-  const clamp = (v: number, lo: number, hi: number) =>
-    Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : lo;
-
   const aligns: { value: TextAlign; title: string; icon: typeof TextAlignStart }[] = [
     { value: "left", title: "Align left", icon: TextAlignStart },
     { value: "center", title: "Align centre", icon: TextAlignCenter },
@@ -151,11 +149,9 @@
       if (inText && !(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       e.stopPropagation();
-      // Size and Lines reach `spec` on `change`, which the browser sends for an Enter only after
-      // this keydown, and not at all once it is prevented: a typed size was confirmed as the old
-      // one. Send it first (bubbling: Svelte listens for it on the root).
-      if (e.target instanceof HTMLInputElement && e.target.type === "number")
-        e.target.dispatchEvent(new Event("change", { bubbles: true }));
+      // A typed Size or Lines is already in `spec`: the field commits on its own Enter keydown,
+      // which reaches it before this window listener (a typed size was once confirmed as the old
+      // one).
       onConfirm({ ...spec });
     }
   }
@@ -249,31 +245,27 @@
       {/if}
 
       <div class="flex items-center gap-2 text-xs text-text-secondary">
-        <label class="flex items-center gap-2" title="Font size, in document pixels">
+        <label class="flex items-center gap-2">
           <span class="w-16">Size</span>
-          <input
-            type="number"
-            class="{field} w-16"
+          <NumberField
+            class="w-16"
+            title="Font size, in document pixels"
+            value={spec.size}
             min={TEXT_SIZE_MIN}
             max={TEXT_SIZE_MAX}
-            value={spec.size}
-            onchange={(e) =>
-              update({ size: clamp(Number(e.currentTarget.value), TEXT_SIZE_MIN, TEXT_SIZE_MAX) })}
+            onchange={(v) => update({ size: v })}
           />
         </label>
-        <label class="flex items-center gap-2" title="Line spacing, as a multiple of the font size">
+        <label class="flex items-center gap-2">
           Lines
-          <input
-            type="number"
-            class="{field} w-16"
+          <NumberField
+            class="w-16"
+            title="Line spacing, as a multiple of the font size"
+            value={spec.lineHeight}
             min={LINE_HEIGHT_MIN}
             max={LINE_HEIGHT_MAX}
-            step="0.1"
-            value={spec.lineHeight}
-            onchange={(e) =>
-              update({
-                lineHeight: clamp(Number(e.currentTarget.value), LINE_HEIGHT_MIN, LINE_HEIGHT_MAX),
-              })}
+            step={0.1}
+            onchange={(v) => update({ lineHeight: v })}
           />
         </label>
       </div>

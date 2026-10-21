@@ -1,6 +1,7 @@
 <script lang="ts">
   import { docSide, MAX_DOC_PX } from "../resize";
   import { isConfirmEnter } from "./dialog-keys";
+  import NumberField from "./NumberField.svelte";
 
   let {
     open = false,
@@ -94,29 +95,29 @@
       <div class="flex flex-col gap-2">
         <label class="flex items-center gap-2 text-xs text-text-secondary">
           Width
-          <input
-            type="number"
-            min="1"
-            max="8192"
-            bind:value={width}
-            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
-            onkeydown={(e: KeyboardEvent) => {
-              if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
-            }}
+          <NumberField
+            class="flex-1"
+            title="Width, in pixels"
+            value={width}
+            min={1}
+            max={MAX_DOC_PX}
+            pxPerStep={1}
+            clamp={false}
+            onchange={(v) => (width = v)}
           />
           <span class="text-text-muted">px</span>
         </label>
         <label class="flex items-center gap-2 text-xs text-text-secondary">
           Height
-          <input
-            type="number"
-            min="1"
-            max="8192"
-            bind:value={height}
-            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
-            onkeydown={(e: KeyboardEvent) => {
-              if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
-            }}
+          <NumberField
+            class="flex-1"
+            title="Height, in pixels"
+            value={height}
+            min={1}
+            max={MAX_DOC_PX}
+            pxPerStep={1}
+            clamp={false}
+            onchange={(v) => (height = v)}
           />
           <span class="text-text-muted">px</span>
         </label>
