@@ -64,6 +64,32 @@ describe("layoutText", () => {
   });
 });
 
+describe("layoutText with letter spacing", () => {
+  it("adds the spacing between letters, not after the last, and widens the line by it", () => {
+    // 10% of size 40 = 4 units after each of the first 7 of 8 letters.
+    const l = layoutText(spec({ text: "abcdefgh", spacing: 0.1, align: "left" }), measure, M);
+    const x = l.lines[0].x;
+    expect(l.glyphs!.map((g) => g.x - x)).toEqual([0, 14, 28, 42, 56, 70, 84, 98]);
+    expect(l.width).toBe(108 + 2 * textPadding(40) + l.margin.left + l.margin.right);
+  });
+
+  it("aligns by the spaced width", () => {
+    const l = layoutText(spec({ text: "abcdefghij\nab", spacing: 0.1 }), measure, M);
+    // Line 1 is 100 + 9 × 4 = 136 wide, line 2 is 20 + 4 = 24: centred 56 in.
+    expect(l.lines[1].x - l.lines[0].x).toBe(56);
+  });
+
+  it("tightens with a negative spacing, and leaves the letters upright", () => {
+    const l = layoutText(spec({ text: "ab", spacing: -0.25 }), measure, M);
+    expect(l.glyphs![1].x - l.glyphs![0].x).toBe(0);
+    expect(l.glyphs![0].m).toEqual({ a: 1, b: 0, c: 0, d: 1, e: l.margin.left, f: l.margin.top });
+  });
+
+  it("draws by line at 0", () => {
+    expect(layoutText(spec({ text: "ab" }), measure, M).glyphs).toBeNull();
+  });
+});
+
 describe("layoutText with jitter", () => {
   const J = { rotate: 20, scale: 0.2, offset: 0.2, skew: 10 };
   /** Every letter inks its whole advance box, cap height tall. */
@@ -238,6 +264,13 @@ describe("normalizeTextSpec", () => {
     expect(bad.jitter).toEqual({ rotate: 45, scale: 0, offset: 0, skew: 0 });
     expect(normalizeTextSpec({ seed: 1.5 }).seed).toBe(0);
     expect(normalizeTextSpec({ seed: 2 ** 32 }).seed).toBe(0);
+  });
+
+  it("clamps letter spacing, and reads files saved before it as 0", () => {
+    expect(normalizeTextSpec({ spacing: 0.2 }).spacing).toBe(0.2);
+    expect(normalizeTextSpec({ spacing: 9 }).spacing).toBe(1);
+    expect(normalizeTextSpec({ spacing: -9 }).spacing).toBe(-0.5);
+    expect(normalizeTextSpec({ text: "old" }).spacing).toBe(0);
   });
 
   it("reads files saved before the randomiser as unjittered", () => {

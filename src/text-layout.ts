@@ -41,6 +41,8 @@ export interface TextSpec {
   size: number;
   /** Line pitch as a multiple of `size`. */
   lineHeight: number;
+  /** Extra room between letters, as a fraction of `size` (negative tightens). */
+  spacing: number;
   align: TextAlign;
   /** `#rrggbb`. */
   color: string;
@@ -58,6 +60,7 @@ export const DEFAULT_TEXT_SPEC: TextSpec = {
   italic: false,
   size: 48,
   lineHeight: 1.3,
+  spacing: 0,
   align: "center",
   color: "#1a1a1a",
   guides: true,
@@ -69,6 +72,8 @@ export const TEXT_SIZE_MIN = 4;
 export const TEXT_SIZE_MAX = 1000;
 export const LINE_HEIGHT_MIN = 0.6;
 export const LINE_HEIGHT_MAX = 3;
+export const SPACING_MIN = -0.5;
+export const SPACING_MAX = 1;
 
 /** Guide lines are drawn in non-photo blue, the letterer's colour for rules. */
 export const GUIDE_COLOR = "#4aa3df";
@@ -90,6 +95,7 @@ export function normalizeTextSpec(raw: unknown): TextSpec {
     italic: typeof r.italic === "boolean" ? r.italic : d.italic,
     size: clamp(num(r.size, d.size), TEXT_SIZE_MIN, TEXT_SIZE_MAX),
     lineHeight: clamp(num(r.lineHeight, d.lineHeight), LINE_HEIGHT_MIN, LINE_HEIGHT_MAX),
+    spacing: clamp(num(r.spacing, d.spacing), SPACING_MIN, SPACING_MAX),
     align: r.align === "left" || r.align === "right" || r.align === "center" ? r.align : d.align,
     color: typeof r.color === "string" && /^#[0-9a-f]{6}$/i.test(r.color) ? r.color : d.color,
     guides: typeof r.guides === "boolean" ? r.guides : d.guides,
@@ -232,8 +238,8 @@ export interface TextLayout {
   height: number;
   /** Each line's left edge and baseline (text is drawn left-aligned at `x`). */
   lines: { text: string; x: number; baseline: number }[];
-  /** With jitter on, the text is drawn character by character instead of by line: each one at
-   *  its pen position (`x`, `y`) under its own matrix `m`. Null without jitter. */
+  /** With jitter or letter spacing, the text is drawn character by character instead of by
+   *  line: each one at its pen position (`x`, `y`) under its own matrix `m`. Null without. */
   glyphs: { text: string; x: number; y: number; m: Mat }[] | null;
   /** How much the box grew to hold the jittered letters (already in `width` / `height`). */
   margin: TextMargin;
@@ -251,8 +257,9 @@ export function textPadding(size: number): number {
 /**
  * Lay out `spec` line by line (lines break only where the text has a newline — lettering is broken
  * by hand). `measure` gives a line's advance width at the spec's size. Empty lines keep their
- * place, so blank ruled lines can be left for lettering. With jitter, `ink` gives a character's
- * ink box (each one turns about its centre; without it, the advance box stands in).
+ * place, so blank ruled lines can be left for lettering. Letter spacing goes between characters
+ * (not after the last). With jitter, `ink` gives a character's ink box (each one turns about its
+ * centre; without it, the advance box stands in).
  */
 export function layoutText(
   spec: TextSpec,
@@ -262,7 +269,8 @@ export function layoutText(
 ): TextLayout {
   const pad = textPadding(spec.size);
   const texts = spec.text.split("\n");
-  const widths = texts.map((t) => (t ? measure(t) : 0));
+  const gap = spec.spacing * spec.size;
+  const widths = texts.map((t) => (t ? measure(t) + (graphemes(t).length - 1) * gap : 0));
   // An empty or tiny text still gets a box to grab (and a ruled line to letter on).
   const contentW = Math.max(spec.size * 2, ...widths);
   const pitch = spec.size * spec.lineHeight;
@@ -293,7 +301,7 @@ export function layoutText(
     guides,
     guideWidth: Math.max(0.5, spec.size / 36),
   };
-  return hasJitter(spec.jitter) ? withJitter(layout, spec, measure, m, ink) : layout;
+  return hasJitter(spec.jitter) || gap !== 0 ? withGlyphs(layout, spec, measure, m, ink) : layout;
 }
 
 /** Characters as the reader sees them (an accented letter or an emoji is one). */
@@ -305,12 +313,13 @@ const graphemes = (s: string): string[] =>
 
 /**
  * `layout` drawn character by character, each jittered by `charTransform`. A character sits where
- * the line's text before it ends (`measure` of the prefix, so kerning keeps its place), and turns
+ * the line's text before it ends (`measure` of the prefix, so kerning keeps its place) plus the
+ * letter spacing once per character before it, and turns
  * about the centre of its ink box. The index counts characters across the whole text, newlines
  * included, so editing one line doesn't re-roll the others. The box grows wherever a letter now
  * comes within half the padding of an edge.
  */
-function withJitter(
+function withGlyphs(
   layout: TextLayout,
   spec: TextSpec,
   measure: (line: string) => number,
@@ -325,9 +334,10 @@ function withJitter(
   let index = 0;
   for (const line of layout.lines) {
     let prefix = "";
+    let k = 0;
     for (const ch of graphemes(line.text)) {
       const i = index++;
-      const x = line.x + (prefix ? measure(prefix) : 0);
+      const x = line.x + (prefix ? measure(prefix) : 0) + k++ * spec.spacing * spec.size;
       prefix += ch;
       if (!ch.trim()) continue;
       const box = ink?.(ch) ?? {
