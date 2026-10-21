@@ -164,215 +164,215 @@
 
 {#if open}
   <!-- No dim and no cancel on an outside tap: the canvas behind is the preview, and a stray tap
-       mustn't throw away what was typed. The layer stays modal until OK or Cancel. -->
-  <div class="fixed inset-0 z-50 flex items-start justify-start p-4 pt-24">
-    <div
-      class="flex max-h-[calc(100dvh-7rem)] w-80 flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-surface p-4 shadow-xl"
-      role="dialog"
-      aria-label={adding ? "Add text" : "Edit text"}
-    >
-      <h2 class="text-sm font-semibold text-text">{adding ? "Add text" : "Edit text"}</h2>
+       mustn't throw away what was typed. Modal until OK or Cancel, but NOT through a full-screen
+       layer: in the iPad Home Screen app a transparent `fixed inset-0` layer here left the top
+       edge blurred by iPadOS after it closed (2026-10-21). App makes the rest `inert` instead. -->
+  <div
+    class="fixed top-24 left-4 z-50 flex max-h-[calc(100dvh-7rem)] w-80 flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-surface p-4 shadow-xl"
+    role="dialog"
+    aria-label={adding ? "Add text" : "Edit text"}
+  >
+    <h2 class="text-sm font-semibold text-text">{adding ? "Add text" : "Edit text"}</h2>
 
-      <textarea
-        bind:this={textareaEl}
-        class="min-h-24 resize-y rounded-md border border-border bg-surface-raised p-2 text-sm text-text focus:border-accent"
-        title="The text — a new line where you want the line to break"
-        placeholder="Type, or leave empty for ruled lines"
-        value={spec.text}
-        oninput={(e) => update({ text: e.currentTarget.value })}
-        onkeydown={(e) => {
-          if (e.key !== "Escape" && e.key !== "Enter") e.stopPropagation();
-        }}></textarea>
+    <textarea
+      bind:this={textareaEl}
+      class="min-h-24 resize-y rounded-md border border-border bg-surface-raised p-2 text-sm text-text focus:border-accent"
+      title="The text — a new line where you want the line to break"
+      placeholder="Type, or leave empty for ruled lines"
+      value={spec.text}
+      oninput={(e) => update({ text: e.currentTarget.value })}
+      onkeydown={(e) => {
+        if (e.key !== "Escape" && e.key !== "Enter") e.stopPropagation();
+      }}></textarea>
 
-      <div class="flex items-center gap-2 text-xs text-text-secondary">
-        <span class="w-16">Font</span>
-        <select
-          class="{field} min-w-0 flex-1"
-          title="Font"
-          value={current}
-          onchange={(e) => pickFont(e.currentTarget.value)}
-        >
-          <optgroup label="Built in">
-            {#each builtIn as f (fontKey(f))}
+    <div class="flex items-center gap-2 text-xs text-text-secondary">
+      <span class="w-16">Font</span>
+      <select
+        class="{field} min-w-0 flex-1"
+        title="Font"
+        value={current}
+        onchange={(e) => pickFont(e.currentTarget.value)}
+      >
+        <optgroup label="Built in">
+          {#each builtIn as f (fontKey(f))}
+            <option value={fontKey(f)}>{fontLabel(f)}</option>
+          {/each}
+        </optgroup>
+        {#if fonts.length}
+          <optgroup label="Your fonts">
+            {#each fonts as f (fontKey(f))}
               <option value={fontKey(f)}>{fontLabel(f)}</option>
             {/each}
           </optgroup>
-          {#if fonts.length}
-            <optgroup label="Your fonts">
-              {#each fonts as f (fontKey(f))}
-                <option value={fontKey(f)}>{fontLabel(f)}</option>
-              {/each}
-            </optgroup>
-          {/if}
-          {#if !listed}
-            <option value={current}
-              >{fontLabel(spec)}{source === "installed"
-                ? " (installed)"
-                : source === "missing"
-                  ? " — not on this device"
-                  : ""}</option
-            >
-          {/if}
-        </select>
-        <!-- A button, not an entry in the list: iPad opens a file picker only from a direct tap. -->
-        <button
-          class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-surface-raised text-text-secondary hover:bg-surface-hover aria-disabled:opacity-40"
-          title="Add a font file (TTF, OTF, WOFF or WOFF2) — kept on this device for every document"
-          aria-disabled={addingFont}
-          onclick={(e) => {
-            e.preventDefault();
-            if (!addingFont) fontInputEl?.click();
-          }}><Plus size={14} /></button
-        >
-        <input
-          bind:this={fontInputEl}
-          type="file"
-          class="hidden"
-          accept={FONT_FILE_ACCEPT}
-          onchange={addFont}
-        />
-      </div>
-      {#if source === "missing" && !bundledFont(spec.font)}
-        <p class="-mt-1 text-[11px] text-warn">
-          {fontLabel(spec)} isn't on this device: the layer shows its saved picture, and changes are drawn
-          in {fontLabel(DEFAULT_TEXT_SPEC)}. Add the font file with + to use it here — the layer
-          keeps asking for it by name.
-        </p>
-      {:else if source === "installed"}
-        <p class="-mt-1 text-[11px] text-text-muted">
-          Installed on this computer — another device needs it installed too, or added with +.
-        </p>
-      {/if}
-
-      <div class="flex items-center gap-2 text-xs text-text-secondary">
-        <label class="flex items-center gap-2">
-          <span class="w-16">Size</span>
-          <NumberField
-            class="w-16"
-            title="Font size, in document pixels"
-            value={spec.size}
-            min={TEXT_SIZE_MIN}
-            max={TEXT_SIZE_MAX}
-            onchange={(v) => update({ size: v })}
-          />
-        </label>
-        <label class="flex items-center gap-2">
-          Lines
-          <NumberField
-            class="w-16"
-            title="Line spacing, as a multiple of the font size"
-            value={spec.lineHeight}
-            min={LINE_HEIGHT_MIN}
-            max={LINE_HEIGHT_MAX}
-            step={0.1}
-            onchange={(v) => update({ lineHeight: v })}
-          />
-        </label>
-      </div>
-
-      <label
-        class="flex items-center gap-2 text-xs text-text-secondary"
-        title="Letter spacing: extra room between letters, as a share of the size (below 0 tightens)"
-      >
-        <span class="w-16">Spacing</span>
-        <input
-          type="range"
-          class="min-w-0 flex-1"
-          min={SPACING_MIN * 100}
-          max={SPACING_MAX * 100}
-          step="1"
-          style={sliderFill(Math.round(spec.spacing * 100), SPACING_MIN * 100, SPACING_MAX * 100)}
-          value={Math.round(spec.spacing * 100)}
-          oninput={(e) => update({ spacing: Number(e.currentTarget.value) / 100 })}
-        />
-        <span class="w-10 text-right tabular-nums">{Math.round(spec.spacing * 100)}%</span>
-      </label>
-
-      <div class="flex items-center gap-2 text-xs text-text-secondary">
-        <span class="w-16">Align</span>
-        <div class="flex gap-1">
-          {#each aligns as a (a.value)}
-            <button
-              class="flex size-7 cursor-pointer items-center justify-center rounded-md {spec.align ===
-              a.value
-                ? 'ui-on'
-                : 'text-text-secondary hover:bg-surface-hover'}"
-              title={a.title}
-              aria-pressed={spec.align === a.value}
-              onclick={() => update({ align: a.value })}><a.icon size={14} /></button
-            >
-          {/each}
-        </div>
-        <label class="ml-auto flex items-center gap-2" title="Text colour">
-          Colour
-          <input
-            type="color"
-            class="h-7 w-9 cursor-pointer rounded-md border border-border bg-surface-raised"
-            value={spec.color}
-            oninput={(e) => update({ color: e.currentTarget.value })}
-          />
-        </label>
-      </div>
-
-      <label
-        class="flex cursor-pointer items-start gap-2 text-xs text-text-secondary"
-        title="Cap height, x-height and baseline rules under each line, to letter on"
-      >
-        <input
-          type="checkbox"
-          class="mt-0.5 accent-accent"
-          checked={spec.guides}
-          onchange={(e) => update({ guides: e.currentTarget.checked })}
-        />
-        <span>
-          <span class="text-text">Guide lines</span><br />
-          Cap height, x-height (dashed) and baseline for each line
-        </span>
-      </label>
-
-      <div class="flex flex-col gap-2 text-xs text-text-secondary">
-        <div class="flex items-center gap-2">
-          <span class="w-16 text-text">Randomise</span>
-          <button
-            class="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-text-secondary hover:bg-surface-hover aria-disabled:opacity-40"
-            title={jittered
-              ? "Re-roll: a new random pick for every letter"
-              : "Set an amount below first — at 0 nothing is randomised"}
-            aria-disabled={!jittered}
-            onclick={() => jittered && update({ seed: newSeed() })}
-            ><Dices size={14} /> Re-roll</button
+        {/if}
+        {#if !listed}
+          <option value={current}
+            >{fontLabel(spec)}{source === "installed"
+              ? " (installed)"
+              : source === "missing"
+                ? " — not on this device"
+                : ""}</option
           >
-        </div>
-        {#each jitters as j (j.key)}
-          <label class="flex items-center gap-2" title={j.title}>
-            <span class="w-16">{j.label}</span>
-            <input
-              type="range"
-              class="min-w-0 flex-1"
-              min="0"
-              max={jitterMax(j.key)}
-              step="1"
-              style={sliderFill(jitterShown(j.key), 0, jitterMax(j.key))}
-              value={jitterShown(j.key)}
-              oninput={(e) => setJitter(j.key, Number(e.currentTarget.value))}
-            />
-            <span class="w-10 text-right tabular-nums">±{jitterShown(j.key)}{j.unit}</span>
-          </label>
+        {/if}
+      </select>
+      <!-- A button, not an entry in the list: iPad opens a file picker only from a direct tap. -->
+      <button
+        class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-surface-raised text-text-secondary hover:bg-surface-hover aria-disabled:opacity-40"
+        title="Add a font file (TTF, OTF, WOFF or WOFF2) — kept on this device for every document"
+        aria-disabled={addingFont}
+        onclick={(e) => {
+          e.preventDefault();
+          if (!addingFont) fontInputEl?.click();
+        }}><Plus size={14} /></button
+      >
+      <input
+        bind:this={fontInputEl}
+        type="file"
+        class="hidden"
+        accept={FONT_FILE_ACCEPT}
+        onchange={addFont}
+      />
+    </div>
+    {#if source === "missing" && !bundledFont(spec.font)}
+      <p class="-mt-1 text-[11px] text-warn">
+        {fontLabel(spec)} isn't on this device: the layer shows its saved picture, and changes are drawn
+        in {fontLabel(DEFAULT_TEXT_SPEC)}. Add the font file with + to use it here — the layer keeps
+        asking for it by name.
+      </p>
+    {:else if source === "installed"}
+      <p class="-mt-1 text-[11px] text-text-muted">
+        Installed on this computer — another device needs it installed too, or added with +.
+      </p>
+    {/if}
+
+    <div class="flex items-center gap-2 text-xs text-text-secondary">
+      <label class="flex items-center gap-2">
+        <span class="w-16">Size</span>
+        <NumberField
+          class="w-16"
+          title="Font size, in document pixels"
+          value={spec.size}
+          min={TEXT_SIZE_MIN}
+          max={TEXT_SIZE_MAX}
+          onchange={(v) => update({ size: v })}
+        />
+      </label>
+      <label class="flex items-center gap-2">
+        Lines
+        <NumberField
+          class="w-16"
+          title="Line spacing, as a multiple of the font size"
+          value={spec.lineHeight}
+          min={LINE_HEIGHT_MIN}
+          max={LINE_HEIGHT_MAX}
+          step={0.1}
+          onchange={(v) => update({ lineHeight: v })}
+        />
+      </label>
+    </div>
+
+    <label
+      class="flex items-center gap-2 text-xs text-text-secondary"
+      title="Letter spacing: extra room between letters, as a share of the size (below 0 tightens)"
+    >
+      <span class="w-16">Spacing</span>
+      <input
+        type="range"
+        class="min-w-0 flex-1"
+        min={SPACING_MIN * 100}
+        max={SPACING_MAX * 100}
+        step="1"
+        style={sliderFill(Math.round(spec.spacing * 100), SPACING_MIN * 100, SPACING_MAX * 100)}
+        value={Math.round(spec.spacing * 100)}
+        oninput={(e) => update({ spacing: Number(e.currentTarget.value) / 100 })}
+      />
+      <span class="w-10 text-right tabular-nums">{Math.round(spec.spacing * 100)}%</span>
+    </label>
+
+    <div class="flex items-center gap-2 text-xs text-text-secondary">
+      <span class="w-16">Align</span>
+      <div class="flex gap-1">
+        {#each aligns as a (a.value)}
+          <button
+            class="flex size-7 cursor-pointer items-center justify-center rounded-md {spec.align ===
+            a.value
+              ? 'ui-on'
+              : 'text-text-secondary hover:bg-surface-hover'}"
+            title={a.title}
+            aria-pressed={spec.align === a.value}
+            onclick={() => update({ align: a.value })}><a.icon size={14} /></button
+          >
         {/each}
       </div>
+      <label class="ml-auto flex items-center gap-2" title="Text colour">
+        Colour
+        <input
+          type="color"
+          class="h-7 w-9 cursor-pointer rounded-md border border-border bg-surface-raised"
+          value={spec.color}
+          oninput={(e) => update({ color: e.currentTarget.value })}
+        />
+      </label>
+    </div>
 
-      <div class="flex justify-end gap-2 pt-1">
+    <label
+      class="flex cursor-pointer items-start gap-2 text-xs text-text-secondary"
+      title="Cap height, x-height and baseline rules under each line, to letter on"
+    >
+      <input
+        type="checkbox"
+        class="mt-0.5 accent-accent"
+        checked={spec.guides}
+        onchange={(e) => update({ guides: e.currentTarget.checked })}
+      />
+      <span>
+        <span class="text-text">Guide lines</span><br />
+        Cap height, x-height (dashed) and baseline for each line
+      </span>
+    </label>
+
+    <div class="flex flex-col gap-2 text-xs text-text-secondary">
+      <div class="flex items-center gap-2">
+        <span class="w-16 text-text">Randomise</span>
         <button
-          class="rounded border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-hover"
-          title="Put back what was there"
-          onclick={onCancel}>Cancel</button
-        >
-        <button
-          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90"
-          title={adding ? "Add the text layer (Ctrl+Enter)" : "Keep the changes (Ctrl+Enter)"}
-          onclick={() => onConfirm({ ...spec })}>{adding ? "Add" : "OK"}</button
+          class="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-text-secondary hover:bg-surface-hover aria-disabled:opacity-40"
+          title={jittered
+            ? "Re-roll: a new random pick for every letter"
+            : "Set an amount below first — at 0 nothing is randomised"}
+          aria-disabled={!jittered}
+          onclick={() => jittered && update({ seed: newSeed() })}
+          ><Dices size={14} /> Re-roll</button
         >
       </div>
+      {#each jitters as j (j.key)}
+        <label class="flex items-center gap-2" title={j.title}>
+          <span class="w-16">{j.label}</span>
+          <input
+            type="range"
+            class="min-w-0 flex-1"
+            min="0"
+            max={jitterMax(j.key)}
+            step="1"
+            style={sliderFill(jitterShown(j.key), 0, jitterMax(j.key))}
+            value={jitterShown(j.key)}
+            oninput={(e) => setJitter(j.key, Number(e.currentTarget.value))}
+          />
+          <span class="w-10 text-right tabular-nums">±{jitterShown(j.key)}{j.unit}</span>
+        </label>
+      {/each}
+    </div>
+
+    <div class="flex justify-end gap-2 pt-1">
+      <button
+        class="rounded border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-hover"
+        title="Put back what was there"
+        onclick={onCancel}>Cancel</button
+      >
+      <button
+        class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90"
+        title={adding ? "Add the text layer (Ctrl+Enter)" : "Keep the changes (Ctrl+Enter)"}
+        onclick={() => onConfirm({ ...spec })}>{adding ? "Add" : "OK"}</button
+      >
     </div>
   </div>
 {/if}

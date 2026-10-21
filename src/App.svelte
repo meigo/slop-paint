@@ -3880,9 +3880,12 @@
 />
 
 <div class="flex h-full w-full flex-col bg-canvas-bg">
-  <!-- One grid, two arrangements, so switching never re-mounts the toolbar, canvas or panel. -->
+  <!-- One grid, two arrangements, so switching never re-mounts the toolbar, canvas or panel.
+       `inert` while the text dialog is open keeps it modal: it has no full-screen layer to catch
+       taps, as one left the Home Screen app's top edge blurred after it closed (iPadOS). -->
   <div
     class="workspace-layout grid min-h-0 flex-1 overflow-hidden"
+    inert={!!textDialog}
     style:grid-template-columns="minmax(0, 1fr) auto"
     style:grid-template-rows="auto auto minmax(0, 1fr)"
     style:grid-template-areas={panelBeside
