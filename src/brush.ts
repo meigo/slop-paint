@@ -103,24 +103,29 @@ export function drawStroke(
 ) {
   if (points.length === 0) return;
 
-  const strokePoints = strokeOutline(
-    points,
-    settings.size,
+  const centre = smoothPath(
+    holdRestPressure(points, settings.restRadius ?? 0),
     settings.pathSmoothRadius ?? 0,
+    settings.sharpCorners ?? false,
+    settings.pauseRadius,
+  );
+  const strokePoints = outlineOfPath(
+    centre,
+    settings.size,
     sizeRange,
     done,
     settings.taper ?? false,
-    settings.sharpCorners ?? false,
-    settings.restRadius ?? 0,
-    settings.pauseRadius,
   );
   if (strokePoints.length < 2) return;
   const maxW = widthRange(settings.size, sizeRange).max;
+  const amp = wobbleAmp(maxW, settings.smoothWobble ?? 0);
   const outline = wobbleOutline(
     strokePoints,
     strokeSeed(points[0]),
-    wobbleAmp(maxW, settings.smoothWobble ?? 0),
+    amp,
     wobbleScale(maxW),
+    true,
+    amp > 0 ? pathSpine(centre, settings.size, sizeRange) : undefined,
   );
 
   ctx.save();
@@ -158,7 +163,8 @@ export const TAPER_WIDTHS = 4;
 const OUTLINE_SPACING = 0.5;
 
 /** The filled outline polygon for a smooth stroke (pure — no canvas). `smoothRadius` (document
- *  px) averages the path first — see `smoothPath`. */
+ *  px) averages the path first — see `smoothPath`. `drawStroke` does the same in two steps, as
+ *  Wobble needs the smoothed path too (`pathSpine`). */
 export function strokeOutline(
   points: InputPoint[],
   size: number,
@@ -225,6 +231,13 @@ export function outlineOfPath(
     // (which reflects the envelope) out of sync with the rendered stroke.
     simulatePressure: false,
   });
+}
+
+/** The stroke's centre line as [x, y, half-width] — the widths `outlineOfPath` draws at — for
+ *  Wobble's inward cap (`wobbleOutline`'s `spine`). Pure. */
+export function pathSpine(path: InputPoint[], size: number, sizeRange: number): number[][] {
+  const { min, max } = widthRange(size, sizeRange);
+  return path.map((p) => [p.x, p.y, (min + p.pressure * (max - min)) / 2]);
 }
 
 /**
