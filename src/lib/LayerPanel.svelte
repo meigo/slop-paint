@@ -18,6 +18,7 @@
     Circle,
     CircleCheck,
   } from "@lucide/svelte";
+  import { untrack } from "svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import {
@@ -498,6 +499,9 @@
   };
   const slideTransition = $derived(ghost ? "transform 150ms ease" : null);
 
+  /** Each shown thumbnail's redraw, by layer id (the floating drag row can show a second one). */
+  const thumbDraws = new Map<number, Set<() => void>>();
+
   /** Svelte action: draw a layer's pixels into its thumbnail canvas. */
   function thumbnail(node: HTMLCanvasElement, layer: AppLayer) {
     const draw = () => {
@@ -507,8 +511,21 @@
       ctx.drawImage(layer.canvas, 0, 0, node.width, node.height);
     };
     draw();
-    return { update: draw };
+    const id = layer.id;
+    if (!thumbDraws.has(id)) thumbDraws.set(id, new Set());
+    thumbDraws.get(id)!.add(draw);
+    return {
+      update: draw,
+      destroy: () => thumbDraws.get(id)?.delete(draw),
+    };
   }
+
+  // A pixel edit on one layer (a stroke, a fill) redraws just its thumbnail: a `layerVersion` bump
+  // per stroke rebuilt every row and thumbnail (2026-10-17 review).
+  $effect(() => {
+    void app.pixelVersion;
+    untrack(() => thumbDraws.get(app.pixelLayerId)?.forEach((draw) => draw()));
+  });
 
   // --- Rename: double-click (mouse) or double-tap (iPad doesn't fire dblclick reliably) ---
 

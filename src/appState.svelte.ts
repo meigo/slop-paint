@@ -20,6 +20,12 @@ interface AppStateShape {
   fillSettings: FillOptions;
   zoomText: string;
   layerVersion: number;
+  /** Bumped by a pixel edit on ONE layer (`pixelLayerId`) — a stroke, a fill, a clear — which
+   *  changes no row: the panel redraws just that thumbnail, instead of rebuilding every row and
+   *  thumbnail as a `layerVersion` bump does. What reads pixels (autosave, the Move box) watches
+   *  both. */
+  pixelVersion: number;
+  pixelLayerId: number;
   /** Rows selected together (2026-10-02): empty = just the active row. Delete and Group act on
    *  them; painting stays on the active layer. Session only. */
   layerSelection: number[];
@@ -99,6 +105,8 @@ export const app: AppStateShape = $state({
   },
   zoomText: "100%",
   layerVersion: 0,
+  pixelVersion: 0,
+  pixelLayerId: -1,
   layerSelection: [],
   layerSelecting: false,
   selectionVersion: 0,
@@ -135,6 +143,12 @@ export function activePressureCurve(): PressureCurve {
 
 export function bumpLayerVersion() {
   app.layerVersion++;
+}
+
+/** A pixel edit on `layerId` alone: see `pixelVersion`. */
+export function bumpPixelVersion(layerId: number) {
+  app.pixelLayerId = layerId;
+  app.pixelVersion++;
 }
 
 export function bumpSelectionVersion() {

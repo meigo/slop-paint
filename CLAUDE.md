@@ -115,6 +115,7 @@ task with a conventional subject (`fix:`, `feat:`, `chore:`, `docs:`), and merge
 - UI state uses Svelte 5 runes (`$state`, `$derived`) in `appState.svelte.ts`
 - Canvas engine objects (LayerManager, Viewport, Selection) are imperative instances, NOT wrapped in `$state`
 - `layerVersion` counter bridges imperative mutations to Svelte reactivity — bump it to trigger re-renders
+- `pixelVersion` + `pixelLayerId` (`bumpPixelVersion(id)`, 2026-10-21): a pixel edit on ONE layer that changes nothing else — a stroke's end, a bucket fill, Fill enclosed, Clear layer, Delete/Cut of a marquee — bumps this instead, and the layer panel redraws only that layer's thumbnail (a `layerVersion` bump rebuilds every row and thumbnail, per stroke). Whatever reacts to PIXELS must watch both: autosave and the Move box do; the other `layerVersion` watchers (ref handles and tool follow, the float and Outline guards, the layer strip, layer memory) read only the tree's shape or node fields. Anything that changes the tree, a node field, a reference or the active row still bumps `layerVersion`
 - Settings persist to localStorage via debounced `$effect` in App.svelte
 
 ### Styling

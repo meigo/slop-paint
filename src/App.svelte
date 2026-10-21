@@ -134,6 +134,7 @@
     pressureCurves,
     activePressureCurve,
     bumpLayerVersion,
+    bumpPixelVersion,
     bumpSelectionVersion,
     flashStatus,
     clearSticky,
@@ -771,7 +772,7 @@
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     if (!pushPixelEdit(layers, layer, before)) return flashStatus("The layer is already empty");
     layers.composite();
-    bumpLayerVersion();
+    bumpPixelVersion(layer.id);
   }
 
   /** Run `fn` (a save, an export, the blank-layers probe) on the document as it stands without
@@ -1193,6 +1194,7 @@
 
   $effect(() => {
     void app.layerVersion;
+    void app.pixelVersion;
     void app.currentTool;
     void app.layerSelection;
     untrack(() => {
@@ -1565,7 +1567,7 @@
           );
         }
         layers.composite();
-        bumpLayerVersion();
+        bumpPixelVersion(layer.id);
       }
       return;
     }
@@ -1652,7 +1654,7 @@
           pushPixelEdit(layers, layer, preStrokeSnapshot);
           preStrokeSnapshot = null;
         }
-        bumpLayerVersion();
+        bumpPixelVersion(layer.id);
       } else {
         const alreadyScheduled = smoothPendingPoints !== null;
         smoothPendingPoints = points;
@@ -1689,7 +1691,7 @@
           pushPixelEdit(layers, layer, preStrokeSnapshot);
           preStrokeSnapshot = null;
         }
-        bumpLayerVersion();
+        bumpPixelVersion(layer.id);
       }
     }
   }
@@ -1985,10 +1987,11 @@
     }
   }
 
-  // Re-save 3s after the last document change. layerVersion covers strokes, fills, layer edits and
-  // undo; the doc size covers a resize.
+  // Re-save 3s after the last document change. layerVersion covers layer edits and undo,
+  // pixelVersion strokes, fills and clears; the doc size covers a resize.
   $effect(() => {
     void app.layerVersion;
+    void app.pixelVersion;
     void app.docWidth;
     void app.docHeight;
     if (!autosaveReady) return;
@@ -2090,7 +2093,7 @@
       return flashStatus("Nothing filled — the enclosed areas are outside the selection");
     }
     layers.composite();
-    bumpLayerVersion();
+    bumpPixelVersion(layer.id);
   }
 
   // --- Outline tool (from slop-animator) ---
@@ -2908,7 +2911,7 @@
     selection.cancel(); // drop the marquee
     if (!pushPixelEdit(layers, layer, before)) return;
     layers.composite();
-    bumpLayerVersion();
+    bumpPixelVersion(layer.id);
   }
 
   function cutSelection() {
