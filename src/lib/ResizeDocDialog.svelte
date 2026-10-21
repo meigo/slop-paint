@@ -3,6 +3,7 @@
   import { app } from "../appState.svelte.js";
   import { docSide, linkedSize, MAX_DOC_PX } from "../resize";
   import { isConfirmEnter } from "./dialog-keys";
+  import NumberField from "./NumberField.svelte";
 
   /** "canvas": crop or extend around the anchor (moves nothing); "scale": resize the drawing. */
   export type ResizeMode = "canvas" | "scale";
@@ -44,13 +45,13 @@
     }
   });
 
-  function onWidthInput(e: Event) {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
-    if (locked && Number.isFinite(v)) height = linkedSize(v, app.docWidth, app.docHeight);
+  function setWidth(v: number) {
+    width = v;
+    if (locked) height = linkedSize(v, app.docWidth, app.docHeight);
   }
-  function onHeightInput(e: Event) {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
-    if (locked && Number.isFinite(v)) width = linkedSize(v, app.docHeight, app.docWidth);
+  function setHeight(v: number) {
+    height = v;
+    if (locked) width = linkedSize(v, app.docHeight, app.docWidth);
   }
   function toggleLock() {
     locked = !locked;
@@ -136,31 +137,29 @@
         <span class="text-[11px] text-text-muted">Current: {app.docWidth} x {app.docHeight}</span>
         <label class="flex items-center gap-2 text-xs text-text-secondary">
           Width
-          <input
-            type="number"
-            min="1"
-            max="8192"
-            bind:value={width}
-            oninput={onWidthInput}
-            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
-            onkeydown={(e: KeyboardEvent) => {
-              if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
-            }}
+          <NumberField
+            class="flex-1"
+            title="Width, in pixels"
+            value={width}
+            min={1}
+            max={MAX_DOC_PX}
+            pxPerStep={1}
+            clamp={false}
+            onchange={setWidth}
           />
           <span class="text-text-muted">px</span>
         </label>
         <label class="flex items-center gap-2 text-xs text-text-secondary">
           Height
-          <input
-            type="number"
-            min="1"
-            max="8192"
-            bind:value={height}
-            oninput={onHeightInput}
-            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
-            onkeydown={(e: KeyboardEvent) => {
-              if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
-            }}
+          <NumberField
+            class="flex-1"
+            title="Height, in pixels"
+            value={height}
+            min={1}
+            max={MAX_DOC_PX}
+            pxPerStep={1}
+            clamp={false}
+            onchange={setHeight}
           />
           <span class="text-text-muted">px</span>
         </label>

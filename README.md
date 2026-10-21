@@ -137,6 +137,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   finger to toggle the eraser. While the Pencil draws, the view stays put
 - **Trackpad:** two-finger swipe pans, pinch zooms. **Mouse:** wheel pans, Ctrl/Cmd+wheel zooms
 - The status bar explains whatever control you touch — on iPad that is the only tooltip
+- **Number boxes drag:** press one and slide sideways to change it (Shift for finer steps), or tap
+  it to type — text Size and Lines, and the Width and Height of New and Resize
 
 **Files**
 
