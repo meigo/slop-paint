@@ -1,7 +1,8 @@
 <script lang="ts">
   import { Link, Unlink } from "@lucide/svelte";
   import { app } from "../appState.svelte.js";
-  import { linkedSize, MAX_DOC_PX } from "../resize";
+  import { docSide, linkedSize, MAX_DOC_PX } from "../resize";
+  import { isConfirmEnter } from "./dialog-keys";
 
   /** "canvas": crop or extend around the anchor (moves nothing); "scale": resize the drawing. */
   export type ResizeMode = "canvas" | "scale";
@@ -31,13 +32,15 @@
    *  openings this session; off at first. */
   let locked = $state(false);
 
-  // Reset values when dialog opens
+  // Reset values when dialog opens. The mode too: the dialog stays mounted, and a Resize opened
+  // after a Scale drawing stretched the layers where the user meant to extend the canvas.
   $effect(() => {
     if (open) {
       width = app.docWidth;
       height = app.docHeight;
       anchorX = 0.5;
       anchorY = 0.5;
+      mode = "canvas";
     }
   });
 
@@ -67,15 +70,22 @@
     { x: 1, y: 1 },
   ];
 
+  // An empty, zero or too large side is refused with a reason, never clamped (see docSide).
+  const w = $derived(docSide(width));
+  const h = $derived(docSide(height));
+  const sizeError = $derived(
+    w === null || h === null ? `Width and height must be 1 to ${MAX_DOC_PX} px` : null,
+  );
+
   function confirm() {
-    const w = Math.max(1, Math.min(MAX_DOC_PX, Math.round(width)));
-    const h = Math.max(1, Math.min(MAX_DOC_PX, Math.round(height)));
+    if (w === null || h === null) return;
     onConfirm(w, h, anchorX, anchorY, mode);
   }
 
   function onWindowKey(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === "Enter") {
+      if (!isConfirmEnter(e)) return; // a focused button presses itself; IME input commits
       e.preventDefault();
       e.stopPropagation();
       confirm();
@@ -132,7 +142,7 @@
             max="8192"
             bind:value={width}
             oninput={onWidthInput}
-            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
             }}
@@ -147,7 +157,7 @@
             max="8192"
             bind:value={height}
             oninput={onHeightInput}
-            class="h-7 flex-1 rounded border border-border bg-surface px-2 text-xs text-text"
+            class="h-7 flex-1 rounded-md border border-border bg-surface-raised px-2 text-xs text-text"
             onkeydown={(e: KeyboardEvent) => {
               if (e.key !== "Enter" && e.key !== "Escape") e.stopPropagation();
             }}
@@ -169,9 +179,11 @@
         </button>
       </div>
 
-      <!-- Dimmed, not removed, in Scale mode, so nothing moves: scaling keeps the whole drawing. -->
+      <!-- Dimmed, not removed, in Scale mode, so nothing moves: scaling keeps the whole drawing.
+           It still takes pointer events (its taps do nothing), or its title could never reach
+           the status bar. -->
       <div
-        class="flex flex-col gap-1.5 {mode === 'scale' ? 'pointer-events-none opacity-40' : ''}"
+        class="flex flex-col gap-1.5 {mode === 'scale' ? 'opacity-40' : ''}"
         aria-disabled={mode === "scale"}
         title={mode === "scale"
           ? "Anchor — not used when scaling: the whole drawing scales with the page"
@@ -187,6 +199,7 @@
                 ? 'ui-on border-accent'
                 : 'border-border bg-surface-hover hover:border-text-muted'}"
               onclick={() => {
+                if (mode === "scale") return;
                 anchorX = a.x;
                 anchorY = a.y;
               }}
@@ -195,6 +208,7 @@
         </div>
       </div>
 
+      {#if sizeError}<p class="text-[11px] text-warn">{sizeError}</p>{/if}
       <p class="text-[11px] text-warn">This clears the undo history.</p>
 
       <div class="flex justify-end gap-2 pt-1">
@@ -203,7 +217,9 @@
           onclick={onCancel}>Cancel</button
         >
         <button
-          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90"
+          class="rounded bg-accent px-3 py-1.5 text-xs text-accent-text hover:opacity-90 aria-disabled:opacity-40"
+          aria-disabled={sizeError !== null}
+          title={sizeError ?? "Resize the document"}
           onclick={confirm}>Resize</button
         >
       </div>

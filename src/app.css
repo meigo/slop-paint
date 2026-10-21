@@ -252,30 +252,3 @@ input[type="color"] {
   background: var(--color-surface-raised);
   color: var(--color-text);
 }
-
-/* Responsive: mobile layer panel */
-@media (max-width: 700px) {
-  .workspace-layout {
-    flex-direction: column !important;
-  }
-
-  .layer-panel {
-    width: 100% !important;
-    min-width: unset !important;
-    max-height: 150px !important;
-    border-left: none !important;
-    border-top: 1px solid var(--color-border) !important;
-  }
-
-  .layer-list {
-    display: flex !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-  }
-
-  .layer-item {
-    flex-shrink: 0;
-    border-bottom: none !important;
-    border-right: 1px solid var(--color-border-light) !important;
-  }
-}

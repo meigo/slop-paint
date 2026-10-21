@@ -3,6 +3,7 @@
   import { Plus, Trash2 } from "@lucide/svelte";
   import { app } from "../appState.svelte.js";
   import { FONT_FILE_ACCEPT } from "../text-fonts";
+  import { isConfirmEnter } from "./dialog-keys";
 
   let {
     open = false,
@@ -29,7 +30,8 @@
 
   function onWindowKey(e: KeyboardEvent) {
     if (!open) return;
-    if (e.key === "Enter" || e.key === "Escape") {
+    // Not an Enter on a focused button (a font's remove, Add font…): that Enter presses it.
+    if (isConfirmEnter(e) || e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       onClose();

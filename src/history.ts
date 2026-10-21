@@ -5,6 +5,8 @@ export interface Command {
   label?: string;
   /** Retained RAM for this command (e.g. two ImageData copies). Used to evict old pixel undos. */
   bytes?: number;
+  /** How many layers it can change at once (default 1): a Move of several layers is one step. */
+  layers?: number;
 }
 
 /** Default pixel-undo budget. Pixel steps keep only the tiles they changed (`changedTiles`):
@@ -54,6 +56,23 @@ export function changedTiles(
   return out;
 }
 
+/** The parts of a `width` × `height` canvas that a shift by (`dx`, `dy`) whole px carries off it
+ *  — a strip at the far side of each axis it moves along (the Move tool's release cuts them). Up
+ *  to two rects that don't overlap; none when the shift is 0, everything when it is a canvas or
+ *  more. */
+export function offCanvasRects(width: number, height: number, dx: number, dy: number): PixelRect[] {
+  const ax = Math.min(Math.abs(dx), width);
+  const ay = Math.min(Math.abs(dy), height);
+  const out: PixelRect[] = [];
+  // Columns that leave sideways, full height.
+  if (ax > 0) out.push({ x: dx > 0 ? width - ax : 0, y: 0, w: ax, h: height });
+  // Rows that leave up or down, without the columns already counted.
+  if (ay > 0 && ax < width) {
+    out.push({ x: dx > 0 ? 0 : ax, y: dy > 0 ? height - ay : 0, w: width - ax, h: ay });
+  }
+  return out;
+}
+
 /** `r`'s pixels out of a `width`-wide RGBA buffer, as a tightly packed buffer. */
 export function cropPixels(
   data: Uint8ClampedArray,
@@ -76,6 +95,11 @@ export class History {
   private undoStack: Command[] = [];
   private redoStack: Command[] = [];
   private bytes = 0;
+  /** Layers changed by pushes, undos and redos so far, each step counted by its `layers`. Only
+   *  ever grows: the blank-layers guard compares it with its value at the last save (every way the
+   *  user empties a layer is a step, so more layers emptied than this grew by means something
+   *  else emptied them). */
+  layerChanges = 0;
   private maxSize: number;
   private maxBytes: number;
   constructor(maxSize = 50, maxBytes = DEFAULT_HISTORY_BYTES) {
@@ -87,15 +111,20 @@ export class History {
     for (const c of this.redoStack) this.bytes -= c.bytes ?? 0;
     this.redoStack = [];
     this.undoStack.push(cmd);
+    this.layerChanges += cmd.layers ?? 1;
     this.bytes += cmd.bytes ?? 0;
-    this.trim();
+    this.trim(cmd.bytes ?? 0);
     this.onChange?.();
   }
 
-  private trim(): void {
+  /** Drops the oldest steps over the count, and over the byte budget — but only when the new step
+   *  brought pixels of its own. A step with none (eye, rename, opacity) adds no memory, and evicting
+   *  for it threw away a step that alone was over the budget (a Move of many layers: one eye toggle
+   *  later it could no longer be undone). The newest step always stays. */
+  private trim(added: number): void {
     while (
       this.undoStack.length > this.maxSize ||
-      (this.bytes > this.maxBytes && this.undoStack.length > 1)
+      (added > 0 && this.bytes > this.maxBytes && this.undoStack.length > 1)
     ) {
       const old = this.undoStack.shift();
       if (!old) break;
@@ -108,6 +137,7 @@ export class History {
     const cmd = this.undoStack.pop();
     if (!cmd) return;
     cmd.undo();
+    this.layerChanges += cmd.layers ?? 1;
     this.redoStack.push(cmd);
     this.onChange?.();
   }
@@ -116,6 +146,7 @@ export class History {
     const cmd = this.redoStack.pop();
     if (!cmd) return;
     cmd.redo();
+    this.layerChanges += cmd.layers ?? 1;
     this.undoStack.push(cmd);
     this.onChange?.();
   }

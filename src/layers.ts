@@ -1,4 +1,4 @@
-import { matrixFromCorners, type Corners } from "./ref-placement";
+import { isParallelogram, matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
 import { halvingSteps } from "./resize";
@@ -13,8 +13,11 @@ export interface RefSource {
   /** The original's own pixel size (the file's, not the capped decode's). */
   width: number;
   height: number;
-  /** Decoded copy, or null while an opened file is still decoding. */
+  /** Decoded copy, or null while an opened file is still decoding (or couldn't decode it). */
   image: HTMLCanvasElement | null;
+  /** The opened file's original couldn't be decoded here (a format the browser can't read): it
+   *  stays its saved pixels, and only Bake or a whole-layer Move apply to it. */
+  decodeFailed?: boolean;
   /** Set on a text reference: `image` is only its raster copy (for the handles and the PSD); the
    *  layer is drawn from this, sharp at any scale. `bytes` is a PNG carrying `spec` (text-ref.ts). */
   text?: {
@@ -235,15 +238,16 @@ function childrenOf(tree: LayerNode[], parentId: number | null): LayerNode[] | n
   return parent?.type === "group" ? parent.children : null;
 }
 
-/** Every node's id in the order the layer panel lists them: top first, a group before its members
- *  (collapsed or not). */
+/** The rows the layer panel lists: top first, a group before its members, a collapsed group's
+ *  members left out (they have no row). A Shift+click range is picked from these: with the members
+ *  in, it picked rows the user couldn't see. */
 export function rowOrder(tree: LayerNode[]): number[] {
   const ids: number[] = [];
   const list = (nodes: LayerNode[]) => {
     for (let i = nodes.length - 1; i >= 0; i--) {
       ids.push(nodes[i].id);
       const n = nodes[i];
-      if (n.type === "group") list(n.children);
+      if (n.type === "group" && !n.collapsed) list(n.children);
     }
   };
   list(tree);
@@ -423,8 +427,17 @@ export function detachedLayerBytes(a: StructSnapshot, b: StructSnapshot): number
   const x = layersOf(a.tree);
   const y = layersOf(b.tree);
   let bytes = 0;
-  for (const l of x) if (!y.has(l)) bytes += l.canvas.width * l.canvas.height * 4;
+  for (const l of x)
+    if (!y.has(l)) bytes += l.canvas.width * l.canvas.height * 4 + refSourceBytes(l.ref?.src);
   return bytes;
+}
+
+/** What a reference's source holds in memory: the original file's bytes and its decoded copy.
+ *  Undo keeps a source alive once nothing else does (a text edit makes a new one, a deleted
+ *  reference layer takes its own along), so those steps count it toward the budget. */
+export function refSourceBytes(src: RefSource | undefined): number {
+  if (!src) return 0;
+  return src.bytes.byteLength + (src.image ? src.image.width * src.image.height * 4 : 0);
 }
 
 function cloneTree(nodes: LayerNode[]): LayerNode[] {
@@ -432,6 +445,13 @@ function cloneTree(nodes: LayerNode[]): LayerNode[] {
 }
 
 let nextId = 1;
+
+/** A fresh node id, shared by every node made in the session — new, duplicated or opened from a
+ *  PSD. Opened files had their own counter from 1000, so after ~1000 new layers in one session a new
+ *  layer took an opened one's id, and strokes landed on the wrong layer. */
+export function newNodeId(): number {
+  return nextId++;
+}
 
 export class LayerManager {
   /** Root-level nodes (bottom to top draw order) */
@@ -450,7 +470,8 @@ export class LayerManager {
    *  float into its layer first (`withFloatApplied`). */
   floatPreview: (() => FloatPreview | null) | null = null;
   /** The Move tool's drag in progress (2026-10-02): these layers are DRAWN offset by (dx, dy)
-   *  document units, their pixels untouched until the release. Screen only. */
+   *  document units, their pixels untouched until the release. Screen only: `composite` hands it
+   *  to `drawTree`, the exports don't, so a drag left open can't shift a saved file. */
   moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
   /** The float's layer, combined with the float each frame (reused, resized as needed). */
   private floatScratch: HTMLCanvasElement | null = null;
@@ -532,6 +553,14 @@ export class LayerManager {
     return this.findNode(this.activeId)?.type === "group";
   }
 
+  /** The active row when it is a reference layer, else null. Never `active`'s fallback: with a
+   *  group row selected that is the bottom layer, and a reference there took the tool to Select
+   *  and showed handles that moved a layer nobody had picked. */
+  get activeRef(): Layer | null {
+    const layer = this.findLayer(this.activeId);
+    return layer?.ref ? layer : null;
+  }
+
   /** Find the parent array and index of a node by id */
   findParent(id: number): { parent: LayerNode[]; index: number } | null {
     function search(nodes: LayerNode[]): { parent: LayerNode[]; index: number } | null {
@@ -549,10 +578,12 @@ export class LayerManager {
 
   /** Redraw a reference layer from its original at its placement (a no-op until it has decoded).
    *  `corners` draws it somewhere else without storing that (a drag in progress); `fast` trades
-   *  resampling quality for speed while it moves. */
+   *  resampling quality for speed while it moves. A Smart Object distorted in Photoshop (not a
+   *  parallelogram) is never re-drawn: one matrix can't, and drawing it from three corners
+   *  flattened it for good — it keeps its saved pixels (shifted or resampled with the page). */
   renderRef(layer: Layer, corners?: Corners, fast = false) {
     const ref = layer.ref;
-    if (!ref?.src.image) return;
+    if (!ref?.src.image || !isParallelogram(ref.corners)) return;
     const img = ref.src.image;
     const m = matrixFromCorners(img.width, img.height, corners ?? ref.corners);
     const d = this.dpr;
@@ -571,6 +602,28 @@ export class LayerManager {
       ctx.drawImage(img, 0, 0);
     }
     ctx.restore();
+  }
+
+  /** How many layers have a canvas that didn't get its memory. An iPad refuses a canvas over its
+   *  size or memory limit WITHOUT an error (a Resize up, Sharp layers on a big document): it then
+   *  draws nothing and reads back empty. So a pixel is written at the far corner, read back and put
+   *  back as it was. */
+  unbackedLayerCount(): number {
+    let n = 0;
+    for (const { canvas, ctx } of this.flatLayers()) {
+      const x = canvas.width - 1;
+      const y = canvas.height - 1;
+      try {
+        const was = ctx.getImageData(x, y, 1, 1);
+        ctx.putImageData(new ImageData(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1), x, y);
+        const back = ctx.getImageData(x, y, 1, 1).data;
+        ctx.putImageData(was, x, y);
+        if (back[0] !== 1 || back[1] !== 2 || back[2] !== 3 || back[3] !== 255) n++;
+      } catch {
+        n++;
+      }
+    }
+    return n;
   }
 
   /** Pixels per document unit that the layers are kept at (the layer resolution). */
@@ -593,8 +646,12 @@ export class LayerManager {
       layer.canvas.width = pxW;
       layer.canvas.height = pxH;
       layer.ctx.resetTransform();
+      // Up nearest-neighbour, as opening a file is: a smoothed scale up blurred the art, and the
+      // next save kept the blur (saves are document pixels). Down smoothed, as a save is.
+      layer.ctx.imageSmoothingEnabled = old.width >= pxW;
       layer.ctx.imageSmoothingQuality = "high";
       layer.ctx.drawImage(old, 0, 0, pxW, pxH);
+      layer.ctx.imageSmoothingEnabled = true;
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (layer.ref) this.renderRef(layer);
     }
@@ -699,7 +756,7 @@ export class LayerManager {
 
     return {
       type: "layer",
-      id: nextId++,
+      id: newNodeId(),
       name: name ?? `Layer ${this.flatLayers().length + 1}`,
       canvas,
       ctx,
@@ -710,15 +767,27 @@ export class LayerManager {
     };
   }
 
+  /** Where a new node goes beside `id`: `id` itself, or — when `id` is inside a locked group, which
+   *  takes nothing in (as a drop into it is refused) — the outermost locked group around it. New,
+   *  duplicated and imported layers landed inside, locked, and could then not be dragged out. */
+  private outsideLocked(id: number): number {
+    let cur = id;
+    for (;;) {
+      const at = locateNode(this.tree, cur);
+      if (!at?.group || !lockedInTree(this.tree, at.group.id)) return cur;
+      cur = at.group.id;
+    }
+  }
+
   /** Insert a node relative to the current selection */
   private insertAtSelection(node: LayerNode) {
     const selected = this.findNode(this.activeId);
-    if (selected && selected.type === "group") {
+    if (selected && selected.type === "group" && !lockedInTree(this.tree, selected.id)) {
       // Selected is a group — add inside it at the top
       selected.children.push(node);
     } else if (selected) {
-      // Selected is a layer — add above it in the same parent
-      const loc = this.findParent(selected.id);
+      // Selected is a layer (or a locked group) — add above it in the same parent
+      const loc = this.findParent(this.outsideLocked(selected.id));
       if (loc) {
         loc.parent.splice(loc.index + 1, 0, node);
       } else {
@@ -738,10 +807,11 @@ export class LayerManager {
   }
 
   /** Add a layer directly BELOW the active node, in the same parent (the bottom of the tree if
-   *  nothing is active) — where a reference goes, under the drawing that traces over it. */
+   *  nothing is active; below a locked group the node is in) — where a reference goes, under the
+   *  drawing that traces over it. */
   addLayerBelow(name?: string): Layer {
     const layer = this.createLayer(name);
-    const loc = this.findParent(this.activeId);
+    const loc = this.findParent(this.outsideLocked(this.activeId));
     if (loc) loc.parent.splice(loc.index, 0, layer);
     else this.tree.unshift(layer);
     this.activeId = layer.id;
@@ -761,7 +831,7 @@ export class LayerManager {
   private newGroup(name?: string): LayerGroup {
     return {
       type: "group",
-      id: nextId++,
+      id: newNodeId(),
       name: name ?? `Group ${this.flatAll().filter((n) => n.type === "group").length + 1}`,
       visible: true,
       opacity: 100,
@@ -824,12 +894,12 @@ export class LayerManager {
   duplicateLayer(id: number): Layer | null {
     const src = this.findLayer(id);
     if (!src) return null;
-    const loc = this.findParent(id);
+    const loc = this.findParent(this.outsideLocked(id));
     if (!loc) return null;
 
     const dup = this.copyLayer(src, src.name + " copy");
 
-    // Insert above the source
+    // Insert above the source (above a locked group it is in)
     loc.parent.splice(loc.index + 1, 0, dup);
     this.activeId = dup.id;
     this.onChange();
@@ -841,11 +911,11 @@ export class LayerManager {
   duplicateGroup(id: number): LayerGroup | null {
     const src = this.findNode(id);
     if (!src || src.type !== "group") return null;
-    const loc = this.findParent(id);
+    const loc = this.findParent(this.outsideLocked(id));
     if (!loc) return null;
     const copy = (n: LayerNode): LayerNode =>
       n.type === "group"
-        ? { ...n, id: nextId++, children: n.children.map(copy) }
+        ? { ...n, id: newNodeId(), children: n.children.map(copy) }
         : this.copyLayer(n, n.name);
     const dup = { ...(copy(src) as LayerGroup), name: src.name + " copy" };
     loc.parent.splice(loc.index + 1, 0, dup);
@@ -884,9 +954,17 @@ export class LayerManager {
     const below = loc.parent[loc.index - 1];
     if (below.type !== "layer") return false;
 
-    // Draw src onto below
     below.ctx.save();
     below.ctx.resetTransform();
+    // The merged layer must look as the two did. Below's opacity would also fade what lands on it,
+    // so it goes into its pixels first and the layer becomes 100% (Photoshop's result).
+    if (below.opacity < 100) {
+      below.ctx.globalCompositeOperation = "destination-in";
+      below.ctx.fillStyle = `rgba(0, 0, 0, ${below.opacity / 100})`;
+      below.ctx.fillRect(0, 0, below.canvas.width, below.canvas.height);
+      below.opacity = 100;
+    }
+    // Draw src onto below
     below.ctx.globalAlpha = src.opacity / 100;
     // In its blend mode, so the merge looks as the two layers did (a multiply layer multiplies in).
     below.ctx.globalCompositeOperation = canvasOp(src.blend);
@@ -924,7 +1002,7 @@ export class LayerManager {
     const docPxH = Math.round(this.docHeight * dpr);
     ctx.resetTransform();
     ctx.clearRect(0, 0, docPxW, docPxH);
-    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null);
+    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null, this.moveOffset);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
@@ -953,7 +1031,13 @@ export class LayerManager {
    * its members blend straight into what's below). The export paths used to loop the layers alone
    * and missed group visibility and opacity — a hidden group still showed in the PNG.
    */
-  drawTree(ctx: CanvasRenderingContext2D, w: number, h: number, float: FloatPreview | null = null) {
+  drawTree(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    float: FloatPreview | null = null,
+    move: LayerManager["moveOffset"] = null,
+  ) {
     ctx.save();
     ctx.resetTransform();
     const drawNodes = (nodes: LayerNode[], parentAlpha: number) => {
@@ -965,7 +1049,7 @@ export class LayerManager {
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
           const source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
-          const off = this.moveOffset?.ids.has(node.id) ? this.moveOffset : null;
+          const off = move?.ids.has(node.id) ? move : null;
           if (off) {
             const k = w / this.docWidth;
             ctx.drawImage(source, off.dx * k, off.dy * k, w, h);
@@ -984,6 +1068,20 @@ export class LayerManager {
   /** Pixels of one layer (not just the active one), for undo. */
   snapshotOf(layer: Layer): ImageData {
     return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
+  }
+
+  /** Shift one layer's pixels by (`dx`, `dy`) whole canvas px — an exact copy, no resampling;
+   *  what leaves the canvas is cut and what it uncovers is empty (the Move tool, and its undo). */
+  shiftPixels(layer: Layer, dx: number, dy: number) {
+    const tmp = document.createElement("canvas");
+    tmp.width = layer.canvas.width;
+    tmp.height = layer.canvas.height;
+    tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+    layer.ctx.save();
+    layer.ctx.resetTransform();
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.drawImage(tmp, dx, dy);
+    layer.ctx.restore();
   }
 
   /** Put pixels back on one layer, at (`x`, `y`) in canvas pixels for a partial snapshot.

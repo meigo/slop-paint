@@ -18,9 +18,11 @@
     Circle,
     CircleCheck,
   } from "@lucide/svelte";
+  import { untrack } from "svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import {
+    isWithin,
     layersLeftAfter,
     rowOrder,
     topSelection,
@@ -45,6 +47,7 @@
     onAddText,
     onEditText,
     settlePending,
+    beforeShut,
   }: {
     layers: LayerManager;
     /** Called when a resize drag ends, so the width can be saved. */
@@ -56,6 +59,9 @@
     /** Before an action that copies or merges a layer's pixels: apply a lifted float and cancel an
      *  Outline preview, or the copy took the float's hole / the unapplied preview. */
     settlePending: () => void;
+    /** Before the node is locked or hidden: a float lifted from it (or from inside it) is applied
+     *  while its layer still takes edits. */
+    beforeShut: (id: number) => void;
   } = $props();
 
   // Panel resize. The panel is docked RIGHT, so dragging its left-edge grip LEFT makes it wider —
@@ -124,7 +130,24 @@
 
   function toggleSelecting() {
     app.layerSelecting = !app.layerSelecting;
-    app.layerSelection = app.layerSelecting ? [layers.activeId] : [];
+    // The active row starts picked — unless it is inside a collapsed group, with no row to show
+    // the check: Group and Delete then took a layer the user couldn't see.
+    const seen = rowOrder(layers.tree).includes(layers.activeId);
+    app.layerSelection = app.layerSelecting && seen ? [layers.activeId] : [];
+  }
+
+  /** Outside Select mode a pick of ONE row is that row made active: shown alone, it was highlighted
+   *  while Group, Delete, Duplicate and Merge down acted on the (unhighlighted) active row. */
+  function setPick(ids: number[]) {
+    if (app.layerSelecting || ids.length !== 1) {
+      app.layerSelection = ids;
+      return;
+    }
+    app.layerSelection = [];
+    const node = layers.findNode(ids[0]);
+    if (node?.type === "layer") layers.setActive(node.id);
+    else if (node) layers.activeId = node.id;
+    bumpLayerVersion();
   }
 
   /** A tap on a row: picks it in Select mode or with Cmd/Ctrl / Shift, else makes it active. */
@@ -136,18 +159,23 @@
     // In Select mode the pick is exactly what the checks show, even empty; a Cmd/Ctrl+click starts
     // from the active row (2026-10-02: unpicking the active row in Select mode didn't stick — the
     // next tap brought it back, as an empty pick fell back to it).
-    const cur = app.layerSelecting || picked.size > 0 ? [...picked] : [layers.activeId];
+    const cur =
+      app.layerSelecting || picked.size > 0
+        ? [...picked]
+        : rowOrder(layers.tree).includes(layers.activeId)
+          ? [layers.activeId]
+          : [];
     if (app.layerSelecting || e.metaKey || e.ctrlKey) {
-      app.layerSelection = cur.includes(node.id)
-        ? cur.filter((id) => id !== node.id)
-        : [...cur, node.id];
-      return;
+      return setPick(
+        cur.includes(node.id) ? cur.filter((id) => id !== node.id) : [...cur, node.id],
+      );
     }
     if (e.shiftKey) {
+      // From the active row, if it has one (it may be inside a collapsed group), else this row.
       const rows = rowOrder(layers.tree);
-      const a = rows.indexOf(layers.activeId);
       const b = rows.indexOf(node.id);
-      if (a >= 0 && b >= 0) app.layerSelection = rows.slice(Math.min(a, b), Math.max(a, b) + 1);
+      const a = rows.includes(layers.activeId) ? rows.indexOf(layers.activeId) : b;
+      if (b >= 0) setPick(rows.slice(Math.min(a, b), Math.max(a, b) + 1));
       return;
     }
     app.layerSelection = [];
@@ -163,6 +191,9 @@
 
   function addGroup() {
     if (onPick) return groupPicked();
+    // A member of a locked group can't leave it for a new group (as dragging, and Group on a pick).
+    const why = dragBlock(layers.tree, layers.activeId);
+    if (why) return flashStatus(why);
     structuralEdit(layers, () => layers.groupActive());
     bumpLayerVersion();
   }
@@ -186,6 +217,11 @@
   function deletePicked() {
     const ids = targets();
     if (ids.length === 0) return flashStatus("Pick the rows to delete first");
+    // A member of a locked group can't leave it, deleted either (as Group and dragging).
+    for (const id of topSelection(layers.tree, ids)) {
+      const why = dragBlock(layers.tree, id);
+      if (why) return flashStatus(why);
+    }
     if (layersLeftAfter(layers.tree, ids) < 1)
       return flashStatus("The document needs at least one layer");
     structuralEdit(layers, () => layers.removeSelected(ids));
@@ -196,6 +232,8 @@
 
   function removeNode() {
     if (onPick) return deletePicked();
+    const why = dragBlock(layers.tree, layers.activeId);
+    if (why) return flashStatus(why);
     const node = layers.findNode(layers.activeId);
     const members = (n: LayerNode): number =>
       n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
@@ -238,6 +276,11 @@
     const src = layers.findNode(layers.activeId);
     if (target && layers.isLocked(target)) return flashStatus("The layer below is locked");
     if (src && layers.isLocked(src)) return flashStatus("Layer is locked");
+    // Merge keeps what is seen: a hidden layer would be burned in, or what is merged onto a hidden
+    // one would vanish (Photoshop refuses too).
+    if (src && layers.isHidden(src)) return flashStatus("Layer is hidden — show it to merge it");
+    if (target && layers.isHidden(target))
+      return flashStatus("The layer below is hidden — show it to merge onto it");
     settlePending();
     // Merge also writes pixels onto the layer below, so that layer's pixels join the undo step.
     structuralEdit(
@@ -422,7 +465,14 @@
     update(d);
   }
 
+  /** The pointer whose drag Escape put back: its release's click must not tap the row either. */
+  let escapedPointer: number | null = null;
+
   function endDrag(e: PointerEvent, apply: boolean) {
+    if (e.pointerId === escapedPointer) {
+      escapedPointer = null;
+      ignoreClicksUntil = performance.now() + 400;
+    }
     const d = dragging;
     if (!d || e.pointerId !== d.pointerId) return;
     d.clientY = e.clientY;
@@ -449,6 +499,9 @@
   };
   const slideTransition = $derived(ghost ? "transform 150ms ease" : null);
 
+  /** Each shown thumbnail's redraw, by layer id (the floating drag row can show a second one). */
+  const thumbDraws = new Map<number, Set<() => void>>();
+
   /** Svelte action: draw a layer's pixels into its thumbnail canvas. */
   function thumbnail(node: HTMLCanvasElement, layer: AppLayer) {
     const draw = () => {
@@ -458,17 +511,49 @@
       ctx.drawImage(layer.canvas, 0, 0, node.width, node.height);
     };
     draw();
-    return { update: draw };
+    const id = layer.id;
+    if (!thumbDraws.has(id)) thumbDraws.set(id, new Set());
+    thumbDraws.get(id)!.add(draw);
+    return {
+      update: draw,
+      destroy: () => thumbDraws.get(id)?.delete(draw),
+    };
   }
+
+  // A pixel edit on one layer (a stroke, a fill) redraws just its thumbnail: a `layerVersion` bump
+  // per stroke rebuilt every row and thumbnail (2026-10-17 review).
+  $effect(() => {
+    void app.pixelVersion;
+    untrack(() => thumbDraws.get(app.pixelLayerId)?.forEach((draw) => draw()));
+  });
 
   // --- Rename: double-click (mouse) or double-tap (iPad doesn't fire dblclick reliably) ---
 
   function startEdit(node: LayerNode) {
     draft = parseTags(node.name).baseName;
     editingId = node.id;
+    // The strip's pencil can rename a row inside a collapsed group, which has no field to show:
+    // open the groups, or the field appeared unprompted whenever the group was next expanded.
+    let opened = false;
+    for (const g of layers.flatAll()) {
+      if (g.type === "group" && g.collapsed && g !== node && isWithin(layers.tree, node.id, g.id)) {
+        g.collapsed = false;
+        opened = true;
+      }
+    }
+    if (opened) bumpLayerVersion();
+  }
+
+  /** Svelte action: focus the rename field as it appears. `autofocus` acts only when nothing has
+   *  focus, and Chrome leaves it on the strip's pencil button: the field stayed unfocused and the
+   *  letters typed ran tool shortcuts. */
+  function focusNow(node: HTMLInputElement) {
+    node.focus();
   }
 
   function commitEdit(node: LayerNode) {
+    // Escape already closed it: Chrome still fires blur as the field is removed.
+    if (editingId !== node.id) return;
     const base = draft.trim();
     if (base) {
       const before = node.name;
@@ -514,6 +599,7 @@
   onkeydowncapture={(e) => {
     // Escape puts the drag back — and only that: the app's own Escape mustn't also run.
     if (e.key !== "Escape" || !dragging) return;
+    escapedPointer = dragging.pointerId;
     finishDrag();
     e.preventDefault();
     e.stopPropagation();
@@ -522,11 +608,10 @@
 
 {#snippet nameCell(node: LayerNode)}
   {#if editingId === node.id}
-    <!-- svelte-ignore a11y_autofocus -->
     <input
       class="layer-rename-input"
       value={draft}
-      autofocus
+      use:focusNow
       use:selectOnFocus
       oninput={(e) => (draft = e.currentTarget.value)}
       onblur={() => commitEdit(node)}
@@ -547,7 +632,7 @@
       class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
       ondblclick={(e) => {
         e.stopPropagation();
-        startEdit(node);
+        if (!app.layerSelecting) startEdit(node); // a tap there picks the row, as the double-tap
       }}
       onpointerdown={(e) => onNamePointerDown(e, node)}
       role="presentation">{parseTags(node.name).baseName || "(unnamed)"}</span
@@ -667,6 +752,7 @@
           : "Unlocked — click to lock drawing"}
       onclick={(e) => {
         e.stopPropagation();
+        if (!layer.locked) beforeShut(layer.id);
         layer.locked = !layer.locked;
         pushNodeFieldEdit(layers, layer.id, "locked", !layer.locked, layer.locked);
         bumpLayerVersion();
@@ -679,6 +765,7 @@
       title={layer.visible ? "Visible — click to hide" : "Hidden — click to show"}
       onclick={(e) => {
         e.stopPropagation();
+        if (layer.visible) beforeShut(layer.id);
         layers.toggleVisibility(layer.id);
         pushNodeFieldEdit(layers, layer.id, "visible", !layer.visible, layer.visible);
         bumpLayerVersion();
@@ -738,6 +825,7 @@
             : "Unlocked — click to lock every layer in this group"}
         onclick={(e) => {
           e.stopPropagation();
+          if (!group.locked) beforeShut(group.id);
           group.locked = !group.locked;
           pushNodeFieldEdit(layers, group.id, "locked", !group.locked, group.locked);
           bumpLayerVersion();
@@ -750,6 +838,7 @@
         title={group.visible ? "Group visible — click to hide" : "Group hidden — click to show"}
         onclick={(e) => {
           e.stopPropagation();
+          if (group.visible) beforeShut(group.id);
           layers.toggleVisibility(group.id);
           pushNodeFieldEdit(layers, group.id, "visible", !group.visible, group.visible);
           bumpLayerVersion();

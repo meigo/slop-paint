@@ -17,6 +17,7 @@
     type TextAlign,
     type TextSpec,
   } from "../text-layout";
+  import { isConfirmEnter } from "./dialog-keys";
 
   let {
     open = false,
@@ -113,11 +114,18 @@
       e.stopPropagation();
       onCancel();
     } else if (e.key === "Enter") {
-      // Enter in the text is a new line; Ctrl/Cmd+Enter (or Enter anywhere else) confirms.
+      // Enter in the text is a new line; Ctrl/Cmd+Enter (or Enter anywhere else but a focused
+      // button, which presses itself) confirms.
+      if (!isConfirmEnter(e)) return;
       const inText = e.target instanceof HTMLTextAreaElement;
       if (inText && !(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       e.stopPropagation();
+      // Size and Lines reach `spec` on `change`, which the browser sends for an Enter only after
+      // this keydown, and not at all once it is prevented: a typed size was confirmed as the old
+      // one. Send it first (bubbling: Svelte listens for it on the root).
+      if (e.target instanceof HTMLInputElement && e.target.type === "number")
+        e.target.dispatchEvent(new Event("change", { bubbles: true }));
       onConfirm({ ...spec });
     }
   }

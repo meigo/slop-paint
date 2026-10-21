@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fillMask, hexToRgba, rgbToHex, sameImageData } from "../fill";
+import { fillMask, hexToRgba, rgbToHex } from "../fill";
 
 describe("hexToRgba", () => {
   it("parses black at full opacity", () => {
@@ -43,22 +43,6 @@ describe("rgbToHex", () => {
   it("round-trips with hexToRgba", () => {
     const { r, g, b } = hexToRgba("#1a2b3c", 100);
     expect(rgbToHex(r, g, b)).toBe("#1a2b3c");
-  });
-});
-
-describe("sameImageData", () => {
-  const img = (...v: number[]) => ({ data: new Uint8ClampedArray(v) }) as ImageData;
-
-  it("is true for identical pixels", () => {
-    expect(sameImageData(img(1, 2, 3, 4), img(1, 2, 3, 4))).toBe(true);
-  });
-
-  it("is false when any byte differs", () => {
-    expect(sameImageData(img(1, 2, 3, 4), img(1, 2, 3, 5))).toBe(false);
-  });
-
-  it("is false for different sizes", () => {
-    expect(sameImageData(img(1, 2, 3, 4), img(1, 2, 3, 4, 5, 6, 7, 8))).toBe(false);
   });
 });
 
@@ -110,6 +94,23 @@ describe("fillMask", () => {
     // A 3px-wide closed channel: thickening its walls by 2 swallows it.
     const data = image(20, 20, (x, y) => x === 4 || x === 8 || y === 2 || y === 17);
     expect(count(fillMask(data, 20, 20, 6, 10, 32, 2))).toBe(3 * 14);
+  });
+
+  it("bridges a tap next to a line or a speck too, not only one far from them", () => {
+    // Bridge 2 thickens the walls 2 px: a tap 1 px from the left wall, and one beside a stray dot,
+    // still fill the inside alone (they fell back to the unbridged flood and leaked).
+    const speck = box(3);
+    speck[(15 * 30 + 12) * 4 + 3] = 255;
+    for (const [x, y] of [
+      [6, 15],
+      [15, 6],
+      [13, 15],
+    ]) {
+      const m = fillMask(speck, 30, 30, x, y, 32, 2)!;
+      expect(m[y * 30 + x]).toBe(1);
+      expect(m[1 * 30 + 1]).toBe(0);
+      expect(count(m)).toBeLessThan(INSIDE + 3 + 12);
+    }
   });
 
   it("doesn't slip through a 1px diagonal line while growing back", () => {

@@ -7,6 +7,7 @@ import {
   parseOs2,
   sfntTables,
   tableBytes,
+  weightAndSlopeOnly,
   weightFromStyle,
   woffTables,
 } from "../font-file";
@@ -116,6 +117,37 @@ describe("reading a TTF", () => {
       ]),
     );
     expect(parseNameTable(t)).toEqual({ family: "Komika Axis", subfamily: "Bold" });
+  });
+
+  it("keeps the legacy family for a width or optical-size face", () => {
+    // Its typographic family is the Regular's, at the same weight: on one library key, adding the
+    // Condensed face replaced the Regular one (2026-10-17 review, V12-4).
+    const cond = Uint8Array.from(
+      nameTable([
+        [3, 0x0409, 1, "Myriad Pro Cond"],
+        [3, 0x0409, 2, "Regular"],
+        [3, 0x0409, 16, "Myriad Pro"],
+        [3, 0x0409, 17, "Condensed"],
+      ]),
+    );
+    expect(parseNameTable(cond)).toEqual({ family: "Myriad Pro Cond", subfamily: "Regular" });
+    const caption = Uint8Array.from(
+      nameTable([
+        [3, 0x0409, 1, "Minion Pro SmBd Caption"],
+        [3, 0x0409, 2, "Italic"],
+        [3, 0x0409, 16, "Minion Pro"],
+        [3, 0x0409, 17, "Semibold Italic Caption"],
+      ]),
+    );
+    expect(parseNameTable(caption)?.family).toBe("Minion Pro SmBd Caption");
+  });
+
+  it("tells weight and slope names from the rest", () => {
+    expect(weightAndSlopeOnly("Semibold Italic")).toBe(true);
+    expect(weightAndSlopeOnly("Extra Light")).toBe(true);
+    expect(weightAndSlopeOnly("Regular")).toBe(true);
+    expect(weightAndSlopeOnly("Condensed Bold")).toBe(false);
+    expect(weightAndSlopeOnly("Display")).toBe(false);
   });
 
   it("reads a Mac-only name table", () => {

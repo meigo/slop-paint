@@ -49,7 +49,7 @@
     {#if app.statusMessage}
       <span class="text-text">{app.statusMessage}</span>
     {:else if app.statusSticky}
-      <span class="text-warn">{app.statusSticky}</span>
+      <span class="text-warn" title={app.statusSticky}>{app.statusSticky}</span>
     {:else if app.statusHint}
       {app.statusHint}
     {:else if state === "reference"}

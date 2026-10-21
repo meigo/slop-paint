@@ -3,9 +3,10 @@
  * delete, duplicate, merge, group, reorder) go on the same stack, so undo walks back through what
  * you actually did rather than through the active layer's own history.
  */
-import { History, changedTiles, cropPixels } from "./history";
+import { History, changedTiles, cropPixels, offCanvasRects } from "./history";
 import {
   detachedLayerBytes,
+  refSourceBytes,
   sameStructure,
   type Layer,
   type LayerManager,
@@ -25,58 +26,109 @@ export function setOnHistoryApplied(fn: () => void) {
 
 /** Record a pixel change already made to `layer`, given its pixels from before the change. Only
  *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
- *  not the whole layer twice over. */
-export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData) {
+ *  not the whole layer twice over. Pushes nothing when no pixel changed — an empty step would wipe
+ *  redo — and says whether it pushed, so a caller can report the no-op. */
+export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData): boolean {
   const d = pixelDiff(layers, layer, before);
+  if (d.empty) return false;
   const put = (side: "was" | "now") => {
     d.put(side);
     hooks.onHistoryApplied();
   };
   history.push({ undo: () => put("was"), redo: () => put("now"), bytes: d.bytes });
+  return true;
 }
 
 /** The tiles of `layer` that changed since `before`, both sides, and how to put either back. */
 function pixelDiff(layers: LayerManager, layer: Layer, before: ImageData) {
-  const full = layers.snapshotOf(layer);
-  const w = full.width;
-  const sameSize = before.width === w && before.height === full.height;
-  const tiles = sameSize
-    ? changedTiles(before.data, full.data, w, full.height).map((r) => ({
-        r,
-        was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
-        now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
-      }))
-    : [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
+  const tiles = diffTiles(before, layers.snapshotOf(layer));
   return {
     put: (side: "was" | "now") => {
       for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
     },
     bytes: tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0),
+    empty: tiles.length === 0,
   };
 }
 
-/** Record a change already made to several layers at once as ONE step (the Move tool,
- *  2026-10-02): each layer's changed tiles, and a reference's placement before and after (its
- *  pixels are drawn from it, so undo must put both back). */
+/** The changed tiles of two snapshots, each side cropped out. Its own function, not inline in
+ *  `pixelDiff`: closures made in one scope share it, so `put` kept the `.map` callback's `before`
+ *  and `full` reachable — every step held BOTH whole-layer snapshots while `bytes` counted only
+ *  the tiles (2026-10-17 review: 50 strokes on a 2732×2048 iPad layer kept ~2.2 GB alive). */
+function diffTiles(before: ImageData, full: ImageData) {
+  const w = full.width;
+  if (before.width !== w || before.height !== full.height)
+    return [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
+  return changedTiles(before.data, full.data, w, full.height).map((r) => ({
+    r,
+    was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
+    now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
+  }));
+}
+
+/** Record a Move already made (2026-10-02) as ONE step: several layers shifted by (`dx`, `dy`)
+ *  whole canvas px, and references placed anew. Stored COMPACTLY (2026-10-21): each shifted layer
+ *  keeps only the inked tiles of what the shift carried off the canvas (`offCanvasRects`), and
+ *  undo / redo shift the pixels back and forth (`LayerManager.shiftPixels`) — the same exact copy
+ *  the release made. Kept as changed tiles, a Move of a few full layers took both sides of every
+ *  tile it touched: past the 256 MB budget it cleared all older history, and the next stroke then
+ *  evicted the Move itself. A reference re-drawn from its original (`redrawn`) keeps no pixels at
+ *  all: undo puts its placement back and draws it again, as `pushRefEdit` does. `before` is each
+ *  layer's pixels from before the shift (only read here, not kept). */
 export function pushLayersEdit(
   layers: LayerManager,
-  edits: { layer: Layer; before: ImageData; refBefore?: RefPlacement }[],
+  edits: { layer: Layer; before?: ImageData; refBefore?: RefPlacement; redrawn?: boolean }[],
+  dx: number,
+  dy: number,
 ) {
-  const parts = edits.map((e) => ({
-    layer: e.layer,
-    diff: pixelDiff(layers, e.layer, e.before),
-    refBefore: e.refBefore,
-    refAfter: e.layer.ref,
-  }));
+  const parts = edits
+    .map((e) => ({
+      layer: e.layer,
+      lost: e.redrawn || !e.before ? null : lostTiles(e.before, dx, dy),
+      refBefore: e.refBefore,
+      refAfter: e.layer.ref,
+    }))
+    // An empty layer moved changes nothing: no empty step to wipe redo.
+    .filter((p) => (p.lost && p.lost.inked) || p.refBefore !== p.refAfter);
+  if (parts.length === 0) return;
   const put = (side: "was" | "now") => {
     for (const p of parts) {
-      p.diff.put(side);
       if (p.refBefore || p.refAfter) p.layer.ref = side === "was" ? p.refBefore : p.refAfter;
+      if (!p.lost) {
+        layers.renderRef(p.layer);
+        continue;
+      }
+      if (side === "now") layers.shiftPixels(p.layer, dx, dy);
+      else {
+        layers.shiftPixels(p.layer, -dx, -dy);
+        for (const t of p.lost.tiles) layers.restoreTo(p.layer, t.data, t.x, t.y);
+      }
     }
     hooks.onHistoryApplied();
   };
-  const bytes = parts.reduce((sum, p) => sum + p.diff.bytes, 0);
-  history.push({ undo: () => put("was"), redo: () => put("now"), bytes });
+  const bytes = parts.reduce(
+    (sum, p) => sum + (p.lost?.tiles.reduce((n, t) => n + t.data.data.byteLength, 0) ?? 0),
+    0,
+  );
+  history.push({ undo: () => put("was"), redo: () => put("now"), bytes, layers: parts.length });
+}
+
+/** What a shift by (`dx`, `dy`) carries off the canvas, as the tiles of it holding any paint, and
+ *  whether the layer held any paint at all. Its own function, so no closure keeps `before`. */
+function lostTiles(before: ImageData, dx: number, dy: number) {
+  const { width: w, height: h, data } = before;
+  const px = new Uint32Array(data.buffer, data.byteOffset, w * h);
+  const inked = px.some((v) => v !== 0);
+  const tiles: { x: number; y: number; data: ImageData }[] = [];
+  if (!inked) return { inked, tiles };
+  for (const r of offCanvasRects(w, h, dx, dy)) {
+    const strip = cropPixels(data, w, r);
+    for (const t of changedTiles(strip, new Uint8ClampedArray(strip.length), r.w, r.h)) {
+      const at = { x: r.x + t.x, y: r.y + t.y, w: t.w, h: t.h };
+      tiles.push({ x: at.x, y: at.y, data: new ImageData(cropPixels(data, w, at), t.w, t.h) });
+    }
+  }
+  return { inked, tiles };
 }
 
 /**
@@ -91,18 +143,23 @@ export function structuralEdit<T>(
   const beforeTree = layers.captureStructure();
   const target = pixelLayer?.() ?? null;
   const beforePixels = target ? layers.snapshotOf(target) : null;
+  // Its opacity too: merge down bakes the lower layer's opacity into its pixels.
+  const beforeOpacity = target?.opacity;
   const result = run();
   const afterTree = layers.captureStructure();
   const afterPixels = target ? layers.snapshotOf(target) : null;
+  const afterOpacity = target?.opacity;
   if (sameStructure(beforeTree, afterTree)) return result; // nothing happened: no empty step
   history.push({
     undo: () => {
       if (target && beforePixels) layers.restoreTo(target, beforePixels);
+      if (target && beforeOpacity !== undefined) target.opacity = beforeOpacity;
       layers.restoreStructure(beforeTree);
       hooks.onHistoryApplied();
     },
     redo: () => {
       if (target && afterPixels) layers.restoreTo(target, afterPixels);
+      if (target && afterOpacity !== undefined) target.opacity = afterOpacity;
       layers.restoreStructure(afterTree);
       hooks.onHistoryApplied();
     },
@@ -174,5 +231,8 @@ export function pushRefEdit(
     if (value) layers.renderRef(layer);
     hooks.onHistoryApplied();
   };
-  history.push({ undo: () => apply(before), redo: () => apply(after) });
+  // A placement change keeps the same source; a text edit or a bake leaves one only undo holds.
+  const bytes =
+    before?.src === after?.src ? 0 : refSourceBytes(before?.src) + refSourceBytes(after?.src);
+  history.push({ undo: () => apply(before), redo: () => apply(after), bytes });
 }

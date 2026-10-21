@@ -124,6 +124,14 @@
   }
 </script>
 
+<!-- Esc closes the tag popover, as a toolbar menu: App leaves Esc to any open role="menu", so
+     with no handler here Esc did nothing at all (nor cancelled a transform behind it). -->
+<svelte:window
+  onkeydown={(e) => {
+    if (tagsOpen && e.key === "Escape") tagsOpen = false;
+  }}
+/>
+
 <!-- One compact row, as slop-animator's strip: an icon names each control (no tooltips on iPad; the
      status bar reads the titles). Fixed height whatever is selected, so the list below never shifts.
      `pr-[6px]` puts the pencil's right edge on the rows' eye column. -->

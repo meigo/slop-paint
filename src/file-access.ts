@@ -64,15 +64,21 @@ export async function pickOpenFile(): Promise<FileSystemFileHandle | null> {
   }
 }
 
-/** Write `data` over the file. A file that was OPENED was granted reading only, so the first save
- *  to it asks for write permission (the save's key press or click is the gesture Chrome needs). */
-export async function writeFile(handle: FileSystemFileHandle, data: ArrayBuffer): Promise<void> {
+/** Write what `encode` returns over the file. A file that was OPENED was granted reading only, so
+ *  the first save to it asks for write permission (the save's key press or click is the gesture
+ *  Chrome needs) — BEFORE encoding: the gesture counts only for a few seconds, and encoding a large
+ *  document first outlasted it, so that save was refused every time. */
+export async function writeFile(
+  handle: FileSystemFileHandle,
+  encode: () => ArrayBuffer,
+): Promise<void> {
   const h = handle as PermissionHandle;
   if (h.queryPermission && (await h.queryPermission({ mode: "readwrite" })) !== "granted") {
     if ((await h.requestPermission?.({ mode: "readwrite" })) !== "granted") {
       throw new Error("permission to write the file was refused");
     }
   }
+  const data = encode();
   const out = await handle.createWritable();
   try {
     await out.write(data);

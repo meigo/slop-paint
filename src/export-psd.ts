@@ -1,12 +1,18 @@
 import { writePsd, readPsd, type Psd, type Layer as PsdLayer, type LinkedFile } from "ag-psd";
 import { downloadBlob } from "./download";
-import type { LayerNode, LayerManager, Layer, LayerGroup, RefSource } from "./layers";
+import {
+  layersLeftAfter,
+  newNodeId,
+  type LayerNode,
+  type LayerManager,
+  type Layer,
+  type LayerGroup,
+  type RefSource,
+} from "./layers";
 import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
 import { openTextSource, textPayloadFromPng } from "./text-ref";
 import { layerBlendFromPsd } from "./blend";
-
-let importIdCounter = 1000;
 
 /**
  * Build a PSD blob from the layer tree and trigger a browser download.
@@ -38,11 +44,16 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
           children: buildChildren(node.children),
         };
       }
-      const cvs = document.createElement("canvas");
-      cvs.width = w;
-      cvs.height = h;
-      // node.canvas is dpr-scaled (physical pixels); scale down to CSS-sized PSD canvas.
-      cvs.getContext("2d")!.drawImage(node.canvas, 0, 0, w, h);
+      // node.canvas is dpr-scaled (physical pixels); scale down to CSS-sized PSD canvas. At 1×
+      // (iPad's default) it already is that size, and ag-psd only reads it: a copy doubled the
+      // layers' memory at every autosave, the tab-hide flush included.
+      let cvs = node.canvas;
+      if (cvs.width !== w || cvs.height !== h) {
+        cvs = document.createElement("canvas");
+        cvs.width = w;
+        cvs.height = h;
+        cvs.getContext("2d")!.drawImage(node.canvas, 0, 0, w, h);
+      }
       const out: PsdLayer = {
         name: node.name,
         canvas: cvs,
@@ -102,8 +113,12 @@ export function loadPsd(
   dpr: number,
   /** Called as each reference's original finishes decoding (it can be transformed from then on). */
   onRefDecoded?: () => void,
+  /** Called with a reference's name when its original can't be decoded. */
+  onRefFailed?: (name: string) => void,
 ): { width: number; height: number } {
-  const psd = readPsd(buffer);
+  // No thumbnail (unused), and no composite when the file has layers (ag-psd still reads it for a
+  // flat file, which needs it): each was another decoded image held through the open.
+  const psd = readPsd(buffer, { skipThumbnail: true, skipCompositeImageData: true });
   const w = psd.width;
   const h = psd.height;
   // Smart Objects become references again. Their originals decode in the background, one decode
@@ -120,7 +135,7 @@ export function loadPsd(
       // It's a group
       const group: LayerGroup = {
         type: "group",
-        id: importIdCounter++,
+        id: newNodeId(),
         name: psdLayer.name || "Group",
         visible: !psdLayer.hidden,
         opacity: Math.round((psdLayer.opacity ?? 1) * 100),
@@ -151,14 +166,18 @@ export function loadPsd(
         // pixels come back down to exactly the stored ones.
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(psdLayer.canvas, left, top);
+        // Back on: the layer keeps this context, and every later draw onto it (stamps, a
+        // transform's Apply, a reference's re-draw) came out point-sampled and jagged.
+        ctx.imageSmoothingEnabled = true;
         ctx.resetTransform();
+        psdLayer.canvas = undefined; // drawn: let the decoded copy go while the rest are built
       }
       // Set dpr transform for future CSS-coord operations
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       const layer: Layer = {
         type: "layer",
-        id: importIdCounter++,
+        id: newNodeId(),
         name: psdLayer.name || "Layer",
         canvas,
         ctx,
@@ -178,42 +197,52 @@ export function loadPsd(
     }
   }
 
-  if (psd.children) {
-    for (const child of psd.children) {
-      const node = buildNode(child);
-      if (node) tree.push(node);
-    }
-  } else if (psd.canvas) {
-    // No layers, just a flat image (a Photoshop file with only a Background). createLayer sizes
-    // the canvas from the manager's document size, which is still the OLD one here: the image came
-    // in stretched to it. Take the file's size while it's made (the caller sets it for good).
+  /** A layer at the FILE's size: createLayer sizes it from the manager's document size, which is
+   *  still the OLD one here (a flat image came in stretched to it). The caller sets it for good. */
+  function fileSizedLayer(name: string): Layer {
     const [oldW, oldH] = [manager.docWidth, manager.docHeight];
     manager.docWidth = w;
     manager.docHeight = h;
     try {
-      const layer = manager.createLayer("Background");
-      layer.ctx.drawImage(psd.canvas, 0, 0);
-      tree.push(layer);
+      return manager.createLayer(name);
     } finally {
       manager.docWidth = oldW; // a failure leaves the open document as it was
       manager.docHeight = oldH;
     }
   }
 
+  // `children` is [] for a file whose layer section holds no records: that one is flat too.
+  if (psd.children?.length) {
+    for (const child of psd.children) {
+      const node = buildNode(child);
+      if (node) tree.push(node);
+    }
+  } else if (psd.canvas) {
+    // No layers, just a flat image (a Photoshop file with only a Background).
+    const layer = fileSizedLayer("Background");
+    layer.ctx.drawImage(psd.canvas, 0, 0);
+    tree.push(layer);
+  }
+  // Nothing to draw on (only empty groups, e.g. a Spine template, or no image at all): the app
+  // needs an active layer — without one every tool and the layer strip threw.
+  if (layersLeftAfter(tree, []) === 0) tree.push(fileSizedLayer("Layer 1"));
+
   manager.tree = tree;
   // Set active to the topmost layer
   const flat = manager.flatLayers();
-  if (flat.length > 0) {
-    manager.activeId = flat[flat.length - 1].id;
-  }
+  manager.activeId = flat[flat.length - 1].id;
 
-  decodeOpenedRefs(refSources.values(), onRefDecoded);
+  decodeOpenedRefs(refSources.values(), onRefDecoded, onRefFailed);
   return { width: w, height: h };
 }
 
 /** Decode the originals of the references an opened PSD brought back, filling in each shared
  *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
-function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) {
+function decodeOpenedRefs(
+  sources: Iterable<RefSource>,
+  onDecoded?: () => void,
+  onFailed?: (name: string) => void,
+) {
   for (const src of sources) {
     // A text reference's PNG carries its settings: rebuild it as text, once its font has loaded
     // (the saved bytes stay). Same fonts, same layout, so the raster copy comes out the size it was
@@ -232,7 +261,11 @@ function decodeOpenedRefs(sources: Iterable<RefSource>, onDecoded?: () => void) 
         if (!src.height) src.height = decoded.height;
         onDecoded?.();
       },
-      (e) => console.error(`reference "${src.name}" could not be decoded`, e),
+      (e) => {
+        console.error(`reference "${src.name}" could not be decoded`, e);
+        src.decodeFailed = true; // said, instead of "still loading" for good
+        onFailed?.(src.name);
+      },
     );
   }
 }

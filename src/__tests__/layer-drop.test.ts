@@ -100,6 +100,20 @@ describe("dropTarget", () => {
     expect(dropAt(make({ visible: false }), 1, 33)).toEqual([2, [10, 3, 1, 4], 5]);
   });
 
+  it("between rows, the row above decides (the border under a group's block is in no row)", () => {
+    // Bottom-first [1, G10[2], 3]: 3 (0–10), G10 (10–20), 2 (20–30), the group's border
+    // (30–31), 1 (31–41). On the border, layer 1 goes under 2 inside the group, as a pixel above.
+    const tree = [layer(1), group(10, [layer(2)]), layer(3)];
+    const rows: RowBox[] = [
+      { kind: "layer", id: 3, top: 0, bottom: 10 },
+      { kind: "group", id: 10, top: 10, bottom: 20 },
+      { kind: "layer", id: 2, top: 20, bottom: 30 },
+      { kind: "layer", id: 1, top: 31, bottom: 41 },
+    ];
+    expect(dropTarget(tree, rows, 30.5, 1)).toEqual({ parentId: 10, index: 0 });
+    expect(dropTarget(tree, rows, 29.5, 1)).toEqual({ parentId: 10, index: 0 });
+  });
+
   it("refuses a drop that changes nothing", () => {
     const tree = make();
     const rows = rowsOf(tree);

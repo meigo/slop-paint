@@ -101,6 +101,9 @@ export function createCurveEditor(
   cvs.style.width = FULL + "px";
   cvs.style.height = FULL + "px";
   cvs.style.cursor = "default";
+  // A finger dragging a point must not scroll the popover: the browser would take the touch and
+  // cancel the drag.
+  cvs.style.touchAction = "none";
   const c = cvs.getContext("2d")!;
   c.scale(2, 2);
 
@@ -246,10 +249,15 @@ export function createCurveEditor(
     }
   });
 
-  cvs.addEventListener("pointerup", () => {
+  // A cancelled drag (the browser took the touch, capture lost) ends like a release; it used to
+  // stay armed, so the next hover moved the point with no button down.
+  const endDrag = () => {
     dragging = null;
     cvs.style.cursor = "default";
-  });
+  };
+  cvs.addEventListener("pointerup", endDrag);
+  cvs.addEventListener("pointercancel", endDrag);
+  cvs.addEventListener("lostpointercapture", endDrag);
 
   // Initial draw
   draw();

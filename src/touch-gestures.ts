@@ -10,7 +10,7 @@
  * Apple Pencil (pointerType "pen") bypasses this entirely — it goes to input.ts for drawing.
  */
 
-import { Viewport } from "./viewport";
+import { Viewport, clampZoom } from "./viewport";
 
 interface ActiveTouch {
   id: number;
@@ -137,6 +137,12 @@ export function setupTouchGestures(
     t.x = e.clientX;
     t.y = e.clientY;
     if (suppressed) return; // a hand resting during a stroke: no pan, pinch or tap until it lifts
+    // A pan or pinch already under way when the pen lands stops there: moving the view under an
+    // open stroke moved the line (a pen held still drew across the page).
+    if (callbacks.isDrawing?.()) {
+      suppressed = true;
+      return;
+    }
 
     // Check if this counts as movement
     const dx = t.x - t.startX;
@@ -144,6 +150,10 @@ export function setupTouchGestures(
     if (Math.abs(dx) > TAP_MAX_DISTANCE || Math.abs(dy) > TAP_MAX_DISTANCE) {
       gestureDidMove = true;
     }
+    // A gesture that ever had three fingers is a redo tap or nothing: it never moves the view.
+    // (When one of the first two lifted, the other two were measured against the first pair's
+    // start: a tap rotated the view ~40° and panned it ~80 px.)
+    if (maxSimultaneousTouches >= 3) return;
 
     if (touches.size === 1 && singlePanActive) {
       // Single finger pan
@@ -168,6 +178,9 @@ export function setupTouchGestures(
     // If all fingers lifted, check for tap gestures
     if (touches.size === 0 && suppressed) {
       suppressed = false;
+      // Not snapped: the stroke may still be open. Left set, the next one-finger pan's lift snapped
+      // on this pinch's stale midpoint.
+      pinchActive = false;
       return;
     }
     if (touches.size === 0 && !gestureDidMove) {
@@ -189,6 +202,7 @@ export function setupTouchGestures(
 
     singlePanActive = false;
     restartSinglePan();
+    restartPinch();
   }
 
   function onPointerCancel(e: PointerEvent) {
@@ -204,6 +218,12 @@ export function setupTouchGestures(
       suppressed = false;
     }
     restartSinglePan();
+    restartPinch();
+  }
+
+  /** Down to two fingers from more: measure the pinch from this pair, where it is now. */
+  function restartPinch() {
+    if (touches.size === 2) initPinch();
   }
 
   /** After one finger goes away, hand the survivor back to single-finger pan from where it is now
@@ -256,7 +276,7 @@ export function setupTouchGestures(
 
     // New zoom & rotation
     const scale = currentDist / pinchStartDist;
-    const newZoom = Math.max(0.1, Math.min(20, pinchStartZoom * scale));
+    const newZoom = clampZoom(pinchStartZoom, pinchStartZoom * scale);
     const newRotation = pinchStartRotation + (currentAngle - pinchStartAngle);
 
     // The canvas point under the original pinch midpoint (using start state)

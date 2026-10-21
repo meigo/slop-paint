@@ -45,6 +45,8 @@ export function floorScale(v: number): number {
 }
 /** Minimum hit half-width in screen pixels — hit areas grow at low zoom so handles stay grabbable. */
 const MIN_HIT_PX = 12;
+/** Below this many screen px a side, the handles' hit areas would cover a float whole. */
+const SMALL_FLOAT_PX = 4 * MIN_HIT_PX;
 
 /** Rotation cursor (CSS has no built-in 'rotate'). White halo + black stroke for legibility on any background. Hot-spot at center. */
 const ROTATE_CURSOR_SVG =
@@ -225,6 +227,9 @@ export class Selection {
     return this.pageSize ? clampToPage({ x, y }, this.pageSize.w, this.pageSize.h) : { x, y };
   }
 
+  /** Layer pixels per page unit (the document's pixel ratio): a moved float lands on whole ones. */
+  pixelRatio: () => number = () => 1;
+
   /** Current viewport zoom — used to keep handle hit areas at a constant screen-pixel size. */
   screenScale = 1;
 
@@ -321,7 +326,11 @@ export class Selection {
 
   endCreate() {
     this.isCreating = false;
-    if (!this.rect || this.rect.w < 3 || this.rect.h < 3) {
+    // A tap (or a drag under 3 SCREEN px a side) makes no marquee. It was 3 page px: zoomed out a
+    // tap's jitter kept a speck of a marquee that clipped the next stroke, and zoomed in a
+    // deliberate thin drag was dropped (2026-10-17 review).
+    const s = this.screenScale;
+    if (!this.rect || this.rect.w * s < 3 || this.rect.h * s < 3) {
       this.clear();
       return;
     }
@@ -356,10 +365,13 @@ export class Selection {
   copyPixels(srcCtx: CanvasRenderingContext2D, dpr: number): HTMLCanvasElement | null {
     if (!this.rect) return null;
     const r = this.rect;
-    const px = Math.round(r.x * dpr);
-    const py = Math.round(r.y * dpr);
-    const pw = Math.round(r.w * dpr);
-    const ph = Math.round(r.h * dpr);
+    const lasso = !!this.lassoPath;
+    // A lasso's box takes every pixel its outline touches: the hole is cut along the outline as
+    // drawn, and a rounded box left the outer part of a pixel at its edge cleared but never copied.
+    const px = lasso ? Math.floor(r.x * dpr) : Math.round(r.x * dpr);
+    const py = lasso ? Math.floor(r.y * dpr) : Math.round(r.y * dpr);
+    const pw = lasso ? Math.ceil((r.x + r.w) * dpr) - px : Math.round(r.w * dpr);
+    const ph = lasso ? Math.ceil((r.y + r.h) * dpr) - py : Math.round(r.h * dpr);
     if (pw <= 0 || ph <= 0) return null;
     // The selection takes the whole layer pixels it copied: a marquee dragged at zoom or with the
     // Pencil has fractional edges, and clearing / redrawing at those while copying whole pixels
@@ -372,12 +384,15 @@ export class Selection {
     cvs.height = ph;
     const ctx = cvs.getContext("2d")!;
 
-    if (this.lassoPath) {
+    if (lasso) {
       ctx.save();
+      // Relative to the copied pixels' corner, so the clip lands exactly where the hole is cut. It
+      // was relative to the unsnapped box: up to half a pixel off, so an untouched lift + Apply
+      // left a faded line along the outline.
       const clipPath = new Path2D();
       for (let i = 0; i < this.lassoPoints.length; i++) {
-        const lx = (this.lassoPoints[i].x - r.x) * dpr;
-        const ly = (this.lassoPoints[i].y - r.y) * dpr;
+        const lx = this.lassoPoints[i].x * dpr - px;
+        const ly = this.lassoPoints[i].y * dpr - py;
         if (i === 0) clipPath.moveTo(lx, ly);
         else clipPath.lineTo(lx, ly);
       }
@@ -468,6 +483,7 @@ export class Selection {
   beginWarp(rows = 2, cols = 2) {
     if (!this.rect || !this.floatingPixels) return;
     if (rows < 2 || cols < 2) return;
+    this.dropDrag();
     this.warpGrid = sampleGrid(this.rect, this.matrix, rows, cols);
     this.warpRows = rows;
     this.warpCols = cols;
@@ -484,11 +500,21 @@ export class Selection {
     if (this.state !== "warping") return;
     if (rows < 2 || cols < 2) return;
     if (rows === this.warpRows && cols === this.warpCols) return;
+    this.dropDrag();
     this.warpGrid = resampleGrid(this.warpGrid, this.warpRows, this.warpCols, rows, cols);
     this.warpRows = rows;
     this.warpCols = cols;
     this.drawOverlay();
     this.onStateChange?.();
+  }
+
+  /** A drag held across a grid change ends there: its next move rebuilt the grid from the copy
+   *  taken at its press — the old density (rows and grid disagreed, so drawing and hit-testing
+   *  threw and Apply lost the lifted pixels) or, from a free-transform drag, no grid at all. The
+   *  rest of the press does nothing. */
+  private dropDrag() {
+    this.dragging = null;
+    this.dragGridIdx = null;
   }
 
   /** One screen pixel in document units. The overlay lives inside the zoomed container, so
@@ -507,7 +533,10 @@ export class Selection {
 
     if (this.state === "selected") {
       // No handles in 'selected' state — only inside/outside the actual shape.
-      if (this.mode === "lasso" && this.lassoPath) {
+      // The marquee's own shape, not the tool's mode: switching Lasso → Select set the mode to rect,
+      // and a lasso marquee then hit-tested, clipped and showed as its box while Delete and a lift
+      // still took the lasso (2026-10-17 review). `mode` only shapes a marquee being drawn.
+      if (this.lassoPath) {
         // With no transform set, the path and (x, y) are both in page units.
         const ctx = this.overlayCtx;
         ctx.save();
@@ -549,6 +578,16 @@ export class Selection {
     // the view was zoomed out far enough to fit an HD canvas.
     const rotR = tol + 2 * this.px;
     if ((x - rotateHandle.x) ** 2 + (y - rotateHandle.y) ** 2 < rotR * rotR) return "rotate";
+
+    // A float under SMALL_FLOAT_PX on screen a side: inside it moves, and the handles are grabbed
+    // from just outside. Their hit areas (MIN_HIT_PX each way) otherwise covered all of it, so a
+    // small paste or lift could be scaled but never moved (2026-10-17 review).
+    const side = Math.min(
+      Math.hypot(corners.tr.x - corners.tl.x, corners.tr.y - corners.tl.y),
+      Math.hypot(corners.bl.x - corners.tl.x, corners.bl.y - corners.tl.y),
+    );
+    if (side * this.screenScale < SMALL_FLOAT_PX && this.pointInsideTransformedBox(x, y))
+      return "move";
 
     const cornerHandles: { handle: Handle; p: { x: number; y: number } }[] = [
       { handle: "tl", p: corners.tl },
@@ -612,10 +651,15 @@ export class Selection {
 
     switch (this.dragging) {
       case "move": {
+        // By whole layer pixels, as the Move tool: a float lifted on the pixel grid stays on it, so
+        // Apply draws it back without resampling. The raw pointer delta landed it between pixels
+        // and every lift + move + Apply blurred the art a little more (2026-10-17 review). A turned
+        // or scaled float is resampled anyway; this only steps its moves.
+        const k = this.pixelRatio();
         this.matrix = {
           ...this.matrixStart,
-          e: this.matrixStart.e + dx,
-          f: this.matrixStart.f + dy,
+          e: this.matrixStart.e + Math.round(dx * k) / k,
+          f: this.matrixStart.f + Math.round(dy * k) / k,
         };
         break;
       }
@@ -742,7 +786,7 @@ export class Selection {
    */
   applyClip(ctx: CanvasRenderingContext2D): boolean {
     if (this.state !== "selected" || !this.rect) return false;
-    if (this.mode === "lasso" && this.lassoPath) {
+    if (this.lassoPath) {
       ctx.clip(this.lassoPath);
     } else {
       ctx.beginPath();
@@ -793,6 +837,8 @@ export class Selection {
     cancelAnimationFrame(this.animFrame);
     this.overlayCtx.resetTransform();
     this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+    // The Move box isn't part of the selection: put it back (Esc or Deselect under Move wiped it).
+    if (this.moveBox) this.drawOverlay();
     if (wasActive) this.onStateChange?.();
   }
 
@@ -916,7 +962,10 @@ export class Selection {
 
     // 'selected' state OR mid-creation: draw the actual selection shape with marching ants.
     if (this.state === "selected" || this.isCreating) {
-      if (this.mode === "lasso" && (this.lassoPath || this.lassoPoints.length > 1)) {
+      if (
+        this.lassoPath ||
+        (this.isCreating && this.mode === "lasso" && this.lassoPoints.length > 1)
+      ) {
         ctx.beginPath();
         ctx.moveTo(this.lassoPoints[0].x, this.lassoPoints[0].y);
         for (let i = 1; i < this.lassoPoints.length; i++) {

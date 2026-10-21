@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { History, type Command } from "../history";
+import { History, offCanvasRects, type Command } from "../history";
 
 function counterCmd(state: { n: number }, delta: number): Command {
   return {
@@ -84,6 +84,20 @@ describe("History", () => {
     h.undo();
     expect(h.canUndo).toBe(false);
   });
+
+  it("a step with no pixels doesn't evict a step that alone is over the budget", () => {
+    const s = { n: 0 };
+    const h = new History(50, 10);
+    h.push({ ...counterCmd(s, 1), bytes: 5 });
+    h.push({ ...counterCmd(s, 1), bytes: 99 }); // a big Move: evicts the step before it
+    h.push(counterCmd(s, 1)); // an eye toggle: no bytes
+    let undone = 0;
+    while (h.canUndo) {
+      h.undo();
+      undone++;
+    }
+    expect(undone).toBe(2); // the toggle and the Move
+  });
 });
 
 describe("History.onChange", () => {
@@ -124,5 +138,46 @@ describe("History.onChange", () => {
     expect(h.canRedo).toBe(true);
     h.push(counterCmd(st, 2));
     expect(seen.at(-1)).toEqual({ undo: true, redo: false });
+  });
+});
+
+describe("History.layerChanges", () => {
+  it("counts each push, undo and redo by the layers its step can change", () => {
+    const s = { n: 0 };
+    const h = new History();
+    h.push(counterCmd(s, 1)); // one layer by default
+    expect(h.layerChanges).toBe(1);
+    h.push({ ...counterCmd(s, 1), layers: 3 }); // a Move of three layers: one step
+    expect(h.layerChanges).toBe(4);
+    h.undo();
+    h.redo();
+    expect(h.layerChanges).toBe(10);
+    h.clear();
+    expect(h.layerChanges).toBe(10); // only grows: the guard takes differences
+  });
+});
+
+describe("offCanvasRects", () => {
+  it("is the strips a shift carries off the canvas, without overlap", () => {
+    expect(offCanvasRects(100, 50, 0, 0)).toEqual([]);
+    expect(offCanvasRects(100, 50, 10, 0)).toEqual([{ x: 90, y: 0, w: 10, h: 50 }]);
+    expect(offCanvasRects(100, 50, -10, 0)).toEqual([{ x: 0, y: 0, w: 10, h: 50 }]);
+    expect(offCanvasRects(100, 50, 0, -5)).toEqual([{ x: 0, y: 0, w: 100, h: 5 }]);
+    expect(offCanvasRects(100, 50, 10, 5)).toEqual([
+      { x: 90, y: 0, w: 10, h: 50 },
+      { x: 0, y: 45, w: 90, h: 5 },
+    ]);
+    expect(offCanvasRects(100, 50, -10, -5)).toEqual([
+      { x: 0, y: 0, w: 10, h: 50 },
+      { x: 10, y: 0, w: 90, h: 5 },
+    ]);
+  });
+
+  it("is the whole canvas once the shift is a canvas or more", () => {
+    expect(offCanvasRects(100, 50, 300, 7)).toEqual([{ x: 0, y: 0, w: 100, h: 50 }]);
+    expect(offCanvasRects(100, 50, 3, -80)).toEqual([
+      { x: 97, y: 0, w: 3, h: 50 },
+      { x: 0, y: 0, w: 97, h: 50 },
+    ]);
   });
 });

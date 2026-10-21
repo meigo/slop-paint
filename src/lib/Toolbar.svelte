@@ -196,8 +196,19 @@
     editingSize = true;
   }
 
+  function commitName(v: string) {
+    app.projectName = v.trim() || "untitled";
+  }
+  /** The name field commits when it is removed, too: an outside tap closes the Document menu
+   *  before the field blurs, and WebKit sends no change for a removed field, so the typed name
+   *  was lost. */
+  const commitNameOnRemove = (el: HTMLInputElement) => () => commitName(el.value);
+
   function commitSize() {
-    const v = parseFloat(sizeInputValue);
+    // Escape already closed it: Chrome still fires blur as the field is removed.
+    if (!editingSize) return;
+    // A comma decimal ("2,5", as typed in comma regions) is a point: parseFloat stopped at it.
+    const v = parseFloat(sizeInputValue.replace(",", "."));
     if (!isNaN(v) && v >= 1 && v <= 80) {
       app.brushSettings.size = Math.round(v * 2) / 2; // snap to 0.5
       onSettingsChange();
@@ -211,7 +222,8 @@
   }
 
   const sizePresets = [1, 2, 3, 5, 8, 12, 20, 40, 80];
-  // Below 960px (iPad portrait) only these show, so the brush row fits on one line at 834px.
+  // Below 960px (iPad portrait) only these show, and the Size / Press / Opacity sliders are 48px,
+  // so the brush row fits on one line at 834px — with room for the Deselect chip's icon (~817px).
   const narrowPresets = new Set([1, 3, 8, 20, 80]);
 
   // Brush settings popover (holds the set-once options, incl. the pressure curve editor)
@@ -606,8 +618,9 @@
             type="text"
             value={app.projectName}
             use:selectOnFocus
-            onchange={(e) => (app.projectName = e.currentTarget.value.trim() || "untitled")}
-            class="h-7 min-w-0 flex-1 rounded border border-border bg-surface-raised px-2 text-sm text-text"
+            {@attach commitNameOnRemove}
+            onchange={(e) => commitName(e.currentTarget.value)}
+            class="h-7 min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-2 text-sm text-text"
           />
         </label>
         <div class="my-1 h-px bg-border"></div>
@@ -686,7 +699,7 @@
         min="1"
         max="80"
         step="0.5"
-        class="w-16"
+        class="w-16 max-[960px]:w-12"
         style={sliderFill(app.brushSettings.size, 1, 80)}
         bind:value={app.brushSettings.size}
         oninput={onSettingsChange}
@@ -744,7 +757,7 @@
         min={PRESS_MIN}
         max={PRESS_MAX}
         step="0.5"
-        class="w-16"
+        class="w-16 max-[960px]:w-12"
         style={sliderFill(app.sizeRange, PRESS_MIN, PRESS_MAX)}
         value={app.sizeRange}
         oninput={(e) => {
@@ -763,7 +776,7 @@
         type="range"
         min="1"
         max="100"
-        class="w-16"
+        class="w-16 max-[960px]:w-12"
         style={sliderFill(paintOpacity, 1, 100)}
         value={paintOpacity}
         oninput={(e) => setPaintOpacity(Number(e.currentTarget.value))}
@@ -1481,13 +1494,15 @@
   {/if}
 
   <!-- A marquee outlives the Select tool and silently limits where brush, eraser and fill paint:
-       say so, one tap from clearing it. Amber = "why this won't behave as you expect". -->
+       say so, one tap from clearing it. Amber = "why this won't behave as you expect". Below 960px
+       (iPad portrait) it is the icon alone: its word wrapped the brush row, moving the canvas. -->
   {#if hasSelection && activeTool !== "select" && activeTool !== "lasso"}
     <div class="flex items-center">
       <button
-        class="flex h-7 items-center gap-1 rounded-md border border-warn/50 bg-surface-raised px-2 text-xs whitespace-nowrap text-warn transition-colors hover:bg-surface-hover"
+        class="flex h-7 items-center gap-1 rounded-md border border-warn/50 bg-surface-raised px-2 text-xs whitespace-nowrap text-warn transition-colors hover:bg-surface-hover max-[960px]:px-1.5"
         title="A selection limits where this tool paints — tap to deselect"
-        onclick={deselect}><SquareX size={14} />Deselect</button
+        onclick={deselect}
+        ><SquareX size={14} /><span class="max-[960px]:hidden">Deselect</span></button
       >
     </div>
   {/if}

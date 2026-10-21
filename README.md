@@ -23,7 +23,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   colours in the gear), and textured **Pencil** (with a grade, 4H to 8B: hard and light to soft and dark),
   **Charcoal** (with a texture, Rough to Dense) and **Airbrush** tips
 - **Wobble** for Smooth, Calligraphy and Watercolour: an uneven, hand-made edge (off by default
-  for Smooth and Calligraphy). Resting the Pencil no longer makes a Smooth or Watercolour tip pulse
+  for Smooth and Calligraphy; a light Smooth or Watercolour stroke keeps at least half its width however strong). Resting the Pencil no longer makes a Smooth or Watercolour tip pulse
   with the pen's small pressure changes: it can grow while you press, never shrink back
 - Pressure curves — the brush and the eraser each have their own, edited as a bezier curve
 - **Press** on the brush bar: size is the medium width, light pressure thins the stroke and full
@@ -47,7 +47,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   out), expand (grows the fill under the outline so no seam shows) and **Soft** (the fill runs behind the
   line to its middle, fading as the line gets stronger, so no pixel steps show — even on a grainy
   pencil or charcoal line; Soft sets how soft it ends there, 0 for a hard pixel edge; with expand on,
-  whichever reaches further — Fill enclosed too)
+  whichever reaches further — Fill enclosed too). A tap that fills nothing says why in the status
+  bar: off the page, an empty area on an alpha-locked layer, outside the selection, already that colour
 - **Fill enclosed** — fills every area the layer's outlines enclose, behind the lines, in one step;
   it uses the same Bridge
 
@@ -60,7 +61,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Selection & transform**
 
 - **Move** (V) drags whole layers: the ones picked with **Select** in the layer panel, or the
-  selected layer or group (every layer in it); one undo step. A marquee is kept but hidden meanwhile
+  selected layer or group (every layer in it); one undo step. Marching ants box what a drag will
+  move (locked and hidden layers stay put). A marquee is kept but hidden meanwhile
 - Rectangle and lasso selection; brush, eraser, fill and Outline stay inside it
 - **Free transform** (move, scale, rotate, side stretch; Shift skews), **Distort** (4 corners) and
   **Mesh warp** (3×3 up to 8×8; finer keeps your bends), flip, keep proportions — with nothing
@@ -85,7 +87,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   scale, the top handle rotates — without losing detail. **Bake** turns it into a plain layer to paint on or
   warp it
 - Saved in the PSD as a **Smart Object** (the original embedded), so it stays a reference when
-  reopened here or in Photoshop
+  reopened here or in Photoshop. A Smart Object **distorted** in Photoshop (perspective) keeps the
+  look it was saved with: it can be moved with the Move tool, but to scale, rotate or flip it, Bake it
 
 **Text**
 
@@ -111,8 +114,10 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
   other modes are kept too)
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
-  locking a group locks everything in it
-- Duplicate a layer or a whole group, merge down; a resizable panel with thumbnails and a properties strip for the selected
+  locking a group locks everything in it (new, duplicated and imported layers go beside a locked group,
+  not into it)
+- Duplicate a layer or a whole group, merge down (keeps the look of the two, the lower layer's opacity included; not
+  from or onto a hidden layer); a resizable panel with thumbnails and a properties strip for the selected
   row
 - Spine tags on layer and group names: `[slot]`, `[skin]`, `[bone]`, `[mesh]`, `[merge]`, `[ignore]`;
   not using Spine? **Edit ▸ Settings…** hides the tag controls
@@ -126,7 +131,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 - **iPad:** the Pencil draws, fingers navigate — one finger pans; two fingers pan, zoom and rotate
   (snapping to 90° on lift); two-finger tap undoes, three-finger tap redoes; double-tap with one
-  finger to toggle the eraser
+  finger to toggle the eraser. While the Pencil draws, the view stays put
 - **Trackpad:** two-finger swipe pans, pinch zooms. **Mouse:** wheel pans, Ctrl/Cmd+wheel zooms
 - The status bar explains whatever control you touch — on iPad that is the only tooltip
 
@@ -137,6 +142,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   it at an anchor; **Keep ratio** fills in the other side as you type
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
   groups, reference Smart Objects and text layers, and open PSDs from Photoshop, GIMP and others
+- A file dragged onto the app does nothing (the browser used to open it in place of the app): use
+  **File ▸ Open** or **File ▸ Import image…**
 - **Chrome and Edge on desktop:** Save writes back to the project's file (asking where only the
   first time), **Save as…** picks a new one, and a file you open saves back to itself. Elsewhere
   Save downloads the PSD — in Safari, Settings ▸ General ▸ File download location ▸ "Ask for each
@@ -149,7 +156,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - If the layers ever come back **blank** (an iPad can reclaim the memory of an app left in the
   background), autosave stops before it overwrites the saved copy and offers to restore it. The
   Document menu shows how much memory the layers take, and warns on iPad when it's a lot
-- **Edit ▸ Settings ▸ Sharp layers** keeps layers at the screen's pixel density: crisper when
+- **Edit ▸ Settings ▸ Sharp layers** keeps layers at the screen's pixel density (rounded to a whole 2× or 3×): crisper when
   zoomed in, 4× the memory. Off by default on iPad; files are saved at document pixels either way
 - On iPad/iPhone, **File ▸ Save to Files…** and both exports go through the share sheet (pick
   Save to Files there); in the Home Screen app, Save does too
@@ -161,26 +168,31 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 ## Keyboard shortcuts
 
-| Key                        | Action                                              |
-| -------------------------- | --------------------------------------------------- |
-| B / E / S / L / G / I      | Brush / eraser / select / lasso / fill / eyedropper |
-| X (hold)                   | Temporary eraser                                    |
-| [ / ]                      | Smaller / larger brush                              |
-| Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                         |
-| Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                  |
-| Delete or Backspace        | Clear the selection                                 |
-| W / M                      | Distort / mesh warp the selection                   |
-| Enter / Escape             | Apply / cancel a transform or Outline preview       |
-| Space+drag or middle mouse | Pan                                                 |
-| Ctrl+= / Ctrl+-            | Zoom in / out                                       |
-| 0 / 1                      | Fit the view / 100% zoom                            |
-| R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise   |
-| Ctrl+S / Ctrl+O / Ctrl+N   | Save / open project (PSD) / new document            |
-| Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)               |
-| Ctrl+G                     | Put the selected layer or group into a new group    |
-| ↑ / ↓                      | Select the layer above / below                      |
+| Key                        | Action                                                     |
+| -------------------------- | ---------------------------------------------------------- |
+| B / E / S / L / V / G / I  | Brush / eraser / select / lasso / move / fill / eyedropper |
+| X (hold)                   | Temporary eraser                                           |
+| [ / ]                      | Smaller / larger brush                                     |
+| Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                                |
+| Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                         |
+| Delete or Backspace        | Clear the selection                                        |
+| W / M                      | Distort / mesh warp the selection or whole layer           |
+| Enter / Escape             | Apply / cancel a transform or Outline preview              |
+| Space+drag or middle mouse | Pan                                                        |
+| Ctrl+= / Ctrl+-            | Zoom in / out                                              |
+| 0 / 1                      | Fit the view / 100% zoom                                   |
+| R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise          |
+| Ctrl+S / Ctrl+O            | Save / open project (PSD)                                  |
+| Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)                      |
+| Ctrl+G                     | Put the selected layer or group into a new group           |
+| ↑ / ↓                      | Select the layer above / below                             |
 
-Cmd works in place of Ctrl on a Mac.
+Cmd works in place of Ctrl on a Mac. New is in the File menu: browsers keep Ctrl+N for a new
+window. While the pen or mouse button is down, the view keys and the wheel do nothing, and a
+stroke keeps the brush it started with; a tool switch or a selection action (Delete, Cut,
+Enter/Escape, W/M) finishes the stroke or drag first. W/M are the Distort
+and Mesh buttons of the Select and Lasso tools: with nothing selected there they take the whole
+layer; from another tool they warp the selection and switch to Select.
 
 ## Getting started
 

@@ -54,6 +54,8 @@ export interface BrushSettings {
   pathSmoothRadius?: number;
   /** Smooth and Watercolour: how far a resting pen may jitter, document px (`holdRestPressure`). */
   restRadius?: number;
+  /** Smooth's Sharp corners: how far a pausing pen may tremble, document px (`pauseBreaks`). */
+  pauseRadius?: number;
   /** Smooth only, 0–100: how uneven the outline is (`wobble.ts`); 0 by default. */
   smoothWobble?: number;
   /** Calligraphy only, 0–100: how uneven the nib's edge is; 0 by default. */
@@ -101,23 +103,29 @@ export function drawStroke(
 ) {
   if (points.length === 0) return;
 
-  const strokePoints = strokeOutline(
-    points,
-    settings.size,
+  const centre = smoothPath(
+    holdRestPressure(points, settings.restRadius ?? 0),
     settings.pathSmoothRadius ?? 0,
+    settings.sharpCorners ?? false,
+    settings.pauseRadius,
+  );
+  const strokePoints = outlineOfPath(
+    centre,
+    settings.size,
     sizeRange,
     done,
     settings.taper ?? false,
-    settings.sharpCorners ?? false,
-    settings.restRadius ?? 0,
   );
   if (strokePoints.length < 2) return;
   const maxW = widthRange(settings.size, sizeRange).max;
+  const amp = wobbleAmp(maxW, settings.smoothWobble ?? 0);
   const outline = wobbleOutline(
     strokePoints,
     strokeSeed(points[0]),
-    wobbleAmp(maxW, settings.smoothWobble ?? 0),
+    amp,
     wobbleScale(maxW),
+    true,
+    amp > 0 ? pathSpine(centre, settings.size, sizeRange) : undefined,
   );
 
   ctx.save();
@@ -147,12 +155,16 @@ export function drawStroke(
   ctx.restore();
 }
 
+/** Taper stroke ends: how long each end's taper is, in widths of the stroke at its widest. */
+export const TAPER_WIDTHS = 4;
+
 /** perfect-freehand's outline point spacing (its `smoothing`), before the thin-stroke cap. It
  *  was the Smooth slider once, but it only rounds the outline's edge; Smooth now smooths the path. */
 const OUTLINE_SPACING = 0.5;
 
 /** The filled outline polygon for a smooth stroke (pure — no canvas). `smoothRadius` (document
- *  px) averages the path first — see `smoothPath`. */
+ *  px) averages the path first — see `smoothPath`. `drawStroke` does the same in two steps, as
+ *  Wobble needs the smoothed path too (`pathSpine`). */
 export function strokeOutline(
   points: InputPoint[],
   size: number,
@@ -162,9 +174,10 @@ export function strokeOutline(
   taper: boolean = false,
   sharpCorners: boolean = false,
   restRadius: number = 0,
+  pauseRadius?: number,
 ): number[][] {
   return outlineOfPath(
-    smoothPath(holdRestPressure(points, restRadius), smoothRadius, sharpCorners),
+    smoothPath(holdRestPressure(points, restRadius), smoothRadius, sharpCorners, pauseRadius),
     size,
     sizeRange,
     done,
@@ -207,14 +220,24 @@ export function outlineOfPath(
       pfSize,
     ),
     streamline: 0.3,
-    start: { taper, cap: !taper },
-    end: { taper, cap: !taper },
+    // A fixed length, not `true`: perfect-freehand reads `true` as the WHOLE stroke's length, so
+    // every stroke was a spindle that never reached its full width (~80% at the middle), and the
+    // start thinned again as the stroke grew.
+    start: { taper: taper ? TAPER_WIDTHS * maxSize : 0, cap: !taper },
+    end: { taper: taper ? TAPER_WIDTHS * maxSize : 0, cap: !taper },
     last: done,
     // Always use our supplied (mapped) pressure. perfect-freehand's simulatePressure
     // is velocity-based and would override our size mapping, leaving the cursor
     // (which reflects the envelope) out of sync with the rendered stroke.
     simulatePressure: false,
   });
+}
+
+/** The stroke's centre line as [x, y, half-width] — the widths `outlineOfPath` draws at — for
+ *  Wobble's inward cap (`wobbleOutline`'s `spine`). Pure. */
+export function pathSpine(path: InputPoint[], size: number, sizeRange: number): number[][] {
+  const { min, max } = widthRange(size, sizeRange);
+  return path.map((p) => [p.x, p.y, (min + p.pressure * (max - min)) / 2]);
 }
 
 /**

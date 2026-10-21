@@ -20,6 +20,12 @@ interface AppStateShape {
   fillSettings: FillOptions;
   zoomText: string;
   layerVersion: number;
+  /** Bumped by a pixel edit on ONE layer (`pixelLayerId`) — a stroke, a fill, a clear — which
+   *  changes no row: the panel redraws just that thumbnail, instead of rebuilding every row and
+   *  thumbnail as a `layerVersion` bump does. What reads pixels (autosave, the Move box) watches
+   *  both. */
+  pixelVersion: number;
+  pixelLayerId: number;
   /** Rows selected together (2026-10-02): empty = just the active row. Delete and Group act on
    *  them; painting stays on the active layer. Session only. */
   layerSelection: number[];
@@ -99,6 +105,8 @@ export const app: AppStateShape = $state({
   },
   zoomText: "100%",
   layerVersion: 0,
+  pixelVersion: 0,
+  pixelLayerId: -1,
   layerSelection: [],
   layerSelecting: false,
   selectionVersion: 0,
@@ -137,18 +145,32 @@ export function bumpLayerVersion() {
   app.layerVersion++;
 }
 
+/** A pixel edit on `layerId` alone: see `pixelVersion`. */
+export function bumpPixelVersion(layerId: number) {
+  app.pixelLayerId = layerId;
+  app.pixelVersion++;
+}
+
 export function bumpSelectionVersion() {
   app.selectionVersion++;
 }
 
 let statusTimer: ReturnType<typeof setTimeout> | undefined;
+/** The lasting conditions showing, oldest first. One slot let any later one — an uncaught error,
+ *  say — replace "Autosave is off" for good, and nothing brought it back. */
+const stickies: string[] = [];
+function showStickies() {
+  app.statusSticky = stickies.join(" · ");
+}
+
 /** Show a short message in the status bar, e.g. why an action did nothing. `ms = 0` is a lasting
  *  condition (autosave failing or off) rather than a one-off explanation: it stays, behind any
- *  later short message, until `clearSticky`. */
+ *  later short message and beside any other lasting one, until `clearSticky`. */
 export function flashStatus(message: string, ms = 4000) {
   clearTimeout(statusTimer);
   if (ms === 0) {
-    app.statusSticky = message;
+    if (!stickies.includes(message)) stickies.push(message);
+    showStickies();
     app.statusMessage = "";
     return;
   }
@@ -156,7 +178,10 @@ export function flashStatus(message: string, ms = 4000) {
   statusTimer = setTimeout(() => (app.statusMessage = ""), ms);
 }
 
-/** End a lasting condition (`flashStatus(msg, 0)`); with `message`, only if it's the one showing. */
+/** End lasting conditions (`flashStatus(msg, 0)`): those starting with `message`, or all. */
 export function clearSticky(message?: string) {
-  if (message === undefined || app.statusSticky.startsWith(message)) app.statusSticky = "";
+  for (let i = stickies.length - 1; i >= 0; i--) {
+    if (message === undefined || stickies[i].startsWith(message)) stickies.splice(i, 1);
+  }
+  showStickies();
 }

@@ -6,9 +6,10 @@
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
-  import { clampPress, drawStroke, widthRange } from "./brush";
-  import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX } from "./stroke-smoothing";
+  import { clampPress, drawStroke, widthRange, type BrushSettings } from "./brush";
+  import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX, STILL_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
+  import type { PressureCurve } from "./pressure-curve";
   import { dragBlock } from "./lib/layer-drop";
   import { drawInkStroke } from "./ink-brush";
   import { drawDryStroke } from "./dry-brush";
@@ -18,6 +19,7 @@
   import {
     LayerManager,
     adjacentRow,
+    isWithin,
     layersToMove,
     topSelection,
     type Layer,
@@ -28,6 +30,7 @@
   import {
     cornersFromMatrix,
     cornersFromRect,
+    isParallelogram,
     matrixFromCorners,
     type Corners,
   } from "./ref-placement";
@@ -57,7 +60,6 @@
     hexToRgba,
     MAX_SOFT_EDGE,
     rgbToHex,
-    sameImageData,
   } from "./fill";
   import { clampGap } from "./fill-holes";
   import {
@@ -82,12 +84,13 @@
     referenceLayerName,
     REFERENCE_OPACITY,
   } from "./paste";
-  import { Viewport } from "./viewport";
+  import { Viewport, rotationDegrees, wheelPx, wheelZoomFactor } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
   import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
   import {
     clearAutosave,
     keepLatestAutosave,
+    LATEST_KEY,
     listAutosaves,
     loadAutosave,
     saveAutosave,
@@ -99,6 +102,7 @@
     layerMemoryBytes,
     looksBlanked,
   } from "./persist/autosave-plan";
+  import { layerPixelRatio } from "./resize";
   import {
     history,
     pushLayersEdit,
@@ -130,6 +134,7 @@
     pressureCurves,
     activePressureCurve,
     bumpLayerVersion,
+    bumpPixelVersion,
     bumpSelectionVersion,
     flashStatus,
     clearSticky,
@@ -196,13 +201,35 @@
   // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
   // Null once the stroke ends, so a frame still pending at pen-up can't redraw the unfinished stroke.
   let smoothPendingPoints: InputPoint[] | null = null;
-  // Raw points of the brush/eraser stroke in progress, null between strokes.
-  let openStrokePoints: InputPoint[] | null = null;
-  /** The layer a brush/eraser stroke started on. The stroke stays on it to the end: the active
-   *  layer can change under an open stroke (↑/↓, a finger on the layer panel), and re-reading it
-   *  drew the first layer's pre-stroke copy over the new one, with the wrong undo `before`. */
-  let strokeLayer: Layer | null = null;
-  let dropStrokeUntilUp = false;
+  /** What a brush/eraser stroke draws with, fixed at its press. */
+  type StrokeSetup = {
+    /** The layer it started on. The stroke stays on it to the end: the active layer can change
+     *  under an open stroke (↑/↓, a finger on the layer panel), and re-reading it drew the first
+     *  layer's pre-stroke copy over the new one, with the wrong undo `before`. */
+    layer: Layer;
+    /** The brush type and settings, so a finger on the brush-type menu, a size preset, the swatch
+     *  or [ / ] can't change the stroke under way: a stamp tip turned Smooth restored another
+     *  stroke's pre-stroke copy, and Watercolour re-drew only near the pen (a seam). */
+    kind: BrushKind;
+    settings: BrushSettings;
+    sizeRange: number;
+  };
+  /**
+   * The canvas gesture of the press in progress (one pen or mouse contact), decided at the PRESS —
+   * which tool it belongs to and, for a stroke, its setup — and null between presses. Every later
+   * event of the press goes to it, whatever the tool, the active layer or a reference's handles are
+   * by then: re-reading them mid-press sent the rest of a refused press, a Select or Move drag or a
+   * reference drag to the brush without its pre-stroke copy, which wiped the layer with no undo step
+   * (2026-10-17 review). `endGesture` finishes it early (a tool switch); the rest of the press is
+   * then ignored. "none": a refused press, or Outline's (it only starts a preview).
+   */
+  type Gesture = {
+    kind: "brush" | "fill" | "select" | "move" | "ref" | "eyedropper" | "none";
+    points: InputPoint[];
+    curve: PressureCurve;
+    stroke: StrokeSetup | null;
+  };
+  let gesture: Gesture | null = null;
 
   function saveLayerToCanvas(layer: {
     canvas: HTMLCanvasElement;
@@ -322,7 +349,7 @@
 
   // --- Layer resolution ---
   /** Pixels per document unit the layers (and the display canvas) are kept at: the screen's
-   *  density with Sharp layers on, else 1. Saves and exports are document pixels either way, so
+   *  density (a whole ratio) with Sharp layers on, else 1. Saves and exports are document pixels either way, so
    *  the extra is only on screen — and 4× the memory at 2×. The selection overlay stays at the
    *  screen's density regardless (crisp handles). */
   function docDpr(): number {
@@ -332,23 +359,25 @@
     return layers ? layers.pixelRatio : wantedDpr();
   }
 
-  /** The ratio Sharp layers asks for on this screen. */
+  /** The ratio Sharp layers asks for on this screen: a whole one (`layerPixelRatio`). */
   function wantedDpr(): number {
-    return app.hiResLayers ? window.devicePixelRatio || 1 : 1;
+    return app.hiResLayers ? layerPixelRatio(window.devicePixelRatio || 1) : 1;
   }
 
   /** Edit ▸ Settings ▸ Sharp layers: resample the open document to the new resolution. */
   function setLayerResolution(hi: boolean) {
     if (!layers || hi === app.hiResLayers) return;
+    app.hiResLayers = hi;
+    if (wantedDpr() === layers.pixelRatio) return; // a 1× screen: same resolution, keep undo
+    endGesture(); // a press still down finishes at the old resolution (see newDocument)
     if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
     if (outlineActive()) cancelOutline();
-    app.hiResLayers = hi;
     layers.setPixelRatio(wantedDpr());
     history.clear(); // snapshots are the old resolution
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
-    markSaved(); // resampling can drop a faint layer's last pixels: a new baseline, not a blanking
+    markResampled(); // resampling can drop a faint layer's last pixels: a new baseline
     debouncedSave();
     flashStatus(
       hi
@@ -581,9 +610,10 @@
   // --- Undo / Redo ---
   function undo() {
     if (!layers) return;
-    // Not under an open stroke: its pre-stroke copy still holds the step, so the release would put
-    // the undone pixels back and lose the step for good (a two-finger tap while the Pencil draws).
-    if (openStrokePoints) return;
+    // Not under an open gesture: a stroke's pre-stroke copy still holds the step, so the release
+    // would put the undone pixels back and lose the step for good (a two-finger tap while the Pencil
+    // draws); a Move drag's release would write its press-time placement over the undo.
+    if (gesture) return;
     // A live Outline preview looks like an edit already made, and undo is the artist taking it
     // back. Cancel it and stop there, or the undo would also take back the edit before it.
     if (outlineActive()) {
@@ -599,7 +629,7 @@
 
   function redo() {
     if (!layers) return;
-    if (openStrokePoints) return;
+    if (gesture) return;
     if (outlineActive()) {
       cancelOutline();
       return;
@@ -644,15 +674,17 @@
 
   function enterFreeTransform() {
     if (!selection || !layers) return;
+    endGesture();
     // A reference shows its handles whenever it is active; say why when it can't.
-    if (layers.active.ref) {
-      const why = refHandlesBlock(layers.active);
+    if (layers.activeRef) {
+      const why = refHandlesBlock(layers.activeRef);
       if (why) flashStatus(why);
       return;
     }
     if (!selectLayerContent() || selection.state !== "selected") return;
     const layer = layers.active;
-    if (layers.isLocked(layer)) return;
+    const why = paintBlock(layer);
+    if (why) return flashStatus(why);
     const dpr = docDpr();
     preSelectionSnapshot = layers.getSnapshot();
     floatLayer = layers.active;
@@ -670,13 +702,17 @@
    */
   function enterWarp(rows: number, cols: number) {
     if (!selection || !layers) return;
-    if (refTransform || layers.active.ref) {
+    endGesture();
+    if (refTransform || layers.activeRef) {
       return flashStatus("A reference moves, scales and rotates only — Bake it to warp it");
     }
     if (!selectLayerContent()) return;
     if (selection.state === "selected") {
+      // A marquee kept from another layer: nothing to lift from a group row (the active layer then
+      // falls back to Background), a locked or a hidden layer — as a drag inside it refuses.
       const layer = layers.active;
-      if (layers.isLocked(layer)) return;
+      const why = paintBlock(layer);
+      if (why) return flashStatus(why);
       const dpr = docDpr();
       preSelectionSnapshot = layers.getSnapshot();
       floatLayer = layers.active;
@@ -699,18 +735,44 @@
     }
   }
 
+  /**
+   * W / M: the Distort / Mesh buttons of the Select/Lasso row, through the same checks — so with
+   * no marquee they take the whole layer, and a group row, a locked or hidden layer say why. A float
+   * lives on Select/Lasso only (its Apply/Cancel are in their row; a tool switch applies it), so
+   * from another tool they act only on a marquee, switching to Select first as Paste does. They
+   * used to lift a float under the Brush, Fill or Outline, whose strokes then drew into the hole
+   * (undo lost the art), and lifted from Background with a group row selected (2026-10-17 review).
+   */
+  function warpFromKey(n: number) {
+    if (!selection || !layers) return;
+    const tool = app.currentTool;
+    if (tool !== "select" && tool !== "lasso") {
+      if (refTransform) return enterWarp(n, n); // says a reference doesn't warp
+      if (selection.state !== "selected") return;
+      const why = paintBlock(layers.active) || (layers.active.ref ? REF_PAINT_REFUSED : "");
+      if (why) return flashStatus(why);
+      setTool("select");
+    }
+    enterWarp(n, n);
+  }
+
   function clearLayer() {
     if (!layers) return;
     const why = paintBlock(layers.active);
     if (why) return flashStatus(why);
     if (layers.active.ref) return flashStatus(REF_PAINT_REFUSED);
     if (outlineActive()) cancelOutline();
+    // A lifted float is applied first, as Duplicate and Merge down do: its Apply/Cancel snapshot is
+    // from before the clear, so Cancel brought the cleared art back with the Clear still on the
+    // stack, and undoing both left the lifted region a hole (2026-10-17 review).
+    endGesture();
+    if (selection?.hasFloating) resolveFloat(true);
     const layer = layers.active;
     const before = layers.snapshotOf(layer);
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    pushPixelEdit(layers, layer, before);
+    if (!pushPixelEdit(layers, layer, before)) return flashStatus("The layer is already empty");
     layers.composite();
-    bumpLayerVersion();
+    bumpPixelVersion(layer.id);
   }
 
   /** Run `fn` (a save, an export, the blank-layers probe) on the document as it stands without
@@ -827,10 +889,7 @@
   async function writeDocTo(handle: FileSystemFileHandle): Promise<boolean> {
     if (!layers) return false;
     try {
-      await writeFile(
-        handle,
-        withPendingResolved(() => psdBuffer(layers, false)),
-      );
+      await writeFile(handle, () => withPendingResolved(() => psdBuffer(layers, false)));
       flashStatus(`Saved ${handle.name}`);
       return true;
     } catch (e) {
@@ -886,12 +945,17 @@
     if (!layers) return;
     app.projectName = name.trim() || "untitled";
     docFile = null; // a new document has no file until it's saved
+    // A press still down (the dialog's OK by touch while the Pencil rests) finishes on the old
+    // document: its stroke kept drawing on a removed layer, or a drag landed on the new one.
+    endGesture();
     if (outlineActive()) cancelOutline();
     // Autosave paused over blank layers: the latest is the copy the pause protects — set it aside
-    // before New drops it; the new document then autosaves as usual.
-    void setAsideIfPaused()
-      .then(() => clearAutosave())
-      .catch((e) => console.error("clearing autosave failed", e));
+    // before New drops it; the new document then autosaves as usual. Off for the session (the
+    // startup restore failed), the latest is work that couldn't be loaded: leave it alone.
+    if (autosaveReady)
+      void setAsideIfPaused()
+        .then(() => clearAutosave())
+        .catch((e) => console.error("clearing autosave failed", e));
     app.docWidth = width;
     app.docHeight = height;
     layers.tree.length = 0;
@@ -918,6 +982,12 @@
     mode: "canvas" | "scale" = "canvas",
   ) {
     if (!layers) return;
+    // The same size changes nothing in either mode: keep the undo history it would clear.
+    if (width === app.docWidth && height === app.docHeight) {
+      showResizeDialog = false;
+      return flashStatus("Same size — nothing changed");
+    }
+    endGesture(); // a press still down finishes at the old size (see newDocument)
     if (outlineActive()) cancelOutline();
     // A float and its Cancel snapshot are in the old canvas's coordinates: Apply landed off by the
     // anchor shift, Cancel wrote the old snapshot back at 0,0. Apply it first, as Sharp layers does.
@@ -931,7 +1001,7 @@
     resizeCanvas();
     layers.composite();
     bumpLayerVersion();
-    markSaved(); // a crop that empties layers is deliberate, not a blanking (the guard's baseline)
+    markResampled(); // a crop that empties layers is deliberate, not a blanking
     fitDocumentInView();
     showResizeDialog = false;
   }
@@ -976,8 +1046,9 @@
       let size: { width: number; height: number };
       // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged or
       // non-PSD file fails here with the open document unchanged.
+      endGesture(); // a press still down finishes on the old document, not the new one
       try {
-        size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion);
+        size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion, refDecodeFailed);
       } catch (e) {
         failed(e);
         return;
@@ -1037,7 +1108,7 @@
   function updateZoomDisplay() {
     if (!viewport) return;
     const zt = Math.round(viewport.zoom * 100) + "%";
-    const deg = Math.round(viewport.rotation * (180 / Math.PI));
+    const deg = rotationDegrees(viewport.rotation);
     app.zoomText = deg !== 0 ? `${zt} ${deg}\u00B0` : zt;
   }
 
@@ -1070,23 +1141,29 @@
     layers: Layer[];
     /** References among them, with their pixels and placement from before the press: the preview
      *  re-draws them, so undo can't read "before" at the release. */
-    refs: { layer: Layer; before: ImageData; refBefore: RefPlacement }[];
+    refs: { layer: Layer; refBefore: RefPlacement }[];
     dx: number;
     dy: number;
   } | null = null;
   let moveFrame = 0;
 
-  /** What a Move drag would take now: the picked rows, else the active layer or group. */
+  /** What a Move drag would take now: the picked rows, else the active layer or group. In Select
+   *  mode the pick is exactly what the checks show, even none (as the panel's Group and Delete). */
   function moveTargets() {
     if (!layers) return { ids: [] as number[], locked: 0, hidden: 0 };
     const picks = app.layerSelection.filter((id) => layers!.findNode(id));
-    return layersToMove(layers.tree, picks.length > 0 ? picks : [layers.activeId]);
+    return layersToMove(
+      layers.tree,
+      app.layerSelecting || picks.length > 0 ? picks : [layers.activeId],
+    );
   }
 
   /** The Move box (2026-10-02): the painted bounds of what a drag would move, in page units — the
    *  only on-canvas sign of it on iPad, which has no hover cursor. Worked out when the layers, the
    *  tool or the pick change (an effect below), and only SHIFTED while dragging. */
   let moveBoxBase: { x: number; y: number; w: number; h: number } | null = null;
+  /** Set by a Move release, which shifts the box itself: the next layer change needn't measure. */
+  let moveBoxKept = false;
 
   function measureMoveBox() {
     moveBoxBase = null;
@@ -1117,11 +1194,13 @@
 
   $effect(() => {
     void app.layerVersion;
+    void app.pixelVersion;
     void app.currentTool;
     void app.layerSelection;
     untrack(() => {
       if (!layersReady) return;
-      measureMoveBox();
+      if (moveBoxKept) moveBoxKept = false;
+      else measureMoveBox();
       showMoveBox();
       selection?.setMarqueeHidden(app.currentTool === "move");
     });
@@ -1140,8 +1219,9 @@
     if (!g || !layers) return;
     for (const r of g.refs)
       layers.renderRef(r.layer, shiftedCorners(r.refBefore, g.dx, g.dy), true);
+    const drawn = new Set(g.refs.map((r) => r.layer));
     layers.moveOffset = {
-      ids: new Set(g.layers.filter((l) => !l.ref).map((l) => l.id)),
+      ids: new Set(g.layers.filter((l) => !drawn.has(l)).map((l) => l.id)),
       dx: g.dx,
       dy: g.dy,
     };
@@ -1158,7 +1238,13 @@
       const left = found.locked + found.hidden;
       if (found.ids.length === 0) {
         return flashStatus(
-          found.locked > 0 ? "Locked — nothing to move" : "Hidden — nothing to move",
+          found.locked > 0
+            ? "Locked — nothing to move"
+            : found.hidden > 0
+              ? "Hidden — nothing to move"
+              : app.layerSelecting && app.layerSelection.length === 0
+                ? "Pick the rows to move first"
+                : "Nothing to move — the group is empty",
         );
       }
       if (left > 0) {
@@ -1171,9 +1257,12 @@
       moveGesture = {
         start: p,
         layers: moving,
+        // Re-drawn from the original — once it is decoded. One still decoding (or that can't be,
+        // or distorted in Photoshop) has only its saved pixels: they shift as a plain layer's, its placement along with them.
+        // Shifting the placement alone left the pixels behind, and a save then stored the two apart.
         refs: moving
-          .filter((l) => l.ref)
-          .map((l) => ({ layer: l, before: layers!.snapshotOf(l), refBefore: l.ref! })),
+          .filter((l) => l.ref?.src.image && isParallelogram(l.ref.corners))
+          .map((l) => ({ layer: l, refBefore: l.ref! })),
         dx: 0,
         dy: 0,
       };
@@ -1200,53 +1289,126 @@
       return;
     }
     const refs = new Map(g.refs.map((r) => [r.layer, r]));
+    const sx = Math.round(dx * dpr);
+    const sy = Math.round(dy * dpr);
     const edits = g.layers.map((layer) => {
       const r = refs.get(layer);
       if (r) {
         layer.ref = { src: r.refBefore.src, corners: shiftedCorners(r.refBefore, dx, dy) };
         layers!.renderRef(layer);
-        return { layer, before: r.before, refBefore: r.refBefore };
+        return { layer, refBefore: r.refBefore, redrawn: true };
       }
       const before = layers!.snapshotOf(layer);
-      const tmp = document.createElement("canvas");
-      tmp.width = layer.canvas.width;
-      tmp.height = layer.canvas.height;
-      tmp.getContext("2d")!.drawImage(layer.canvas, 0, 0);
-      layer.ctx.save();
-      layer.ctx.resetTransform();
-      layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-      layer.ctx.drawImage(tmp, Math.round(dx * dpr), Math.round(dy * dpr));
-      layer.ctx.restore();
-      return { layer, before };
+      const refBefore = layer.ref; // a reference not decoded yet (or distorted)
+      if (refBefore) layer.ref = { src: refBefore.src, corners: shiftedCorners(refBefore, dx, dy) };
+      layers!.shiftPixels(layer, sx, sy);
+      return { layer, before, refBefore };
     });
-    pushLayersEdit(layers, edits);
+    pushLayersEdit(layers, edits, sx, sy);
     layers.composite();
+    // The box moves with the layers, cut at the page edge as their pixels are: the re-measure the
+    // version bump would run (every target layer read whole and scanned) is skipped. It can be a
+    // little larger than the art where the cut trimmed it on the other axis too.
+    const b = moveBoxBase;
+    if (b) {
+      const x0 = Math.max(b.x + dx, 0);
+      const y0 = Math.max(b.y + dy, 0);
+      const x1 = Math.min(b.x + dx + b.w, layers.docWidth);
+      const y1 = Math.min(b.y + dy + b.h, layers.docHeight);
+      moveBoxBase = x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+    }
+    moveBoxKept = true;
     bumpLayerVersion();
   }
 
   function handleStroke(rawPoints: InputPoint[], done: boolean) {
     if (rawPoints.length === 0 || !layers) return;
-    // The rest of a stroke that a tool switch already committed (see setTool).
-    if (dropStrokeUntilUp) {
-      if (done) dropStrokeUntilUp = false;
-      return;
-    }
+    // The pen is down until its release, even when a tool switch already ended its gesture: a palm
+    // landing then is still a resting hand (touch-gestures), not a two-finger undo.
     isDrawing = !done;
     if (!done) hideBrushCursor();
-    else if (done) {
-      // Restore cursor after stroke ends — use last point's screen position
-      // (will be updated on next mousemove anyway)
-    }
+    if (rawPoints.length === 1 && !done) gesture = startGesture(rawPoints);
+    const g = gesture;
+    if (!g) return; // the rest of a press whose gesture was ended early (see endGesture)
+    g.points = rawPoints;
+    // Cleared BEFORE it runs: a release that switches tool (the eyedropper's) ends no gesture twice.
+    if (done) gesture = null;
+    runGesture(g, rawPoints, done);
+  }
 
-    const curve = activePressureCurve();
+  /** Who owns a new press, and a stroke's setup. A refused press is "none" to its release. */
+  function startGesture(rawPoints: InputPoint[]): Gesture {
+    const g: Gesture = {
+      kind: "none",
+      points: rawPoints,
+      curve: activePressureCurve(),
+      stroke: null,
+    };
+    const tool = app.currentTool;
+    if (tool === "eyedropper") g.kind = "eyedropper";
+    else if (tool === "move") g.kind = "move";
+    // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
+    else if (refTransform) g.kind = "ref";
+    else if (tool === "select" || tool === "lasso") g.kind = "select";
+    else if (tool === "brush" || tool === "eraser" || tool === "fill") {
+      const layer = layers.active;
+      // A reference is drawn from its original, so paint on it would be wiped by its next move:
+      // brush, eraser and fill are refused until it is baked.
+      const why =
+        paintBlock(layer) || (layer.ref ? refHandlesBlock(layer) || REF_PAINT_REFUSED : "");
+      if (why) {
+        flashStatus(why);
+        return g;
+      }
+      if (tool === "fill") {
+        g.kind = "fill";
+        return g;
+      }
+      g.kind = "brush";
+      // Mouse input has no pressure: draw at the nominal width instead of the widest.
+      const sizeRange = (rawPoints[0].hasPressure ?? true) ? app.sizeRange : 1;
+      g.stroke = {
+        layer,
+        kind: app.brushType,
+        sizeRange,
+        settings: {
+          ...app.brushSettings,
+          alphaLock: layer.alphaLock,
+          // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
+          pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
+          // A resting pen's jitter is on screen too (`holdRestPressure`).
+          restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
+          // And a pausing one's, for Sharp corners: the same stillness Stream's pause uses.
+          pauseRadius: viewport.zoom > 0 ? STILL_PX / viewport.zoom : undefined,
+        },
+      };
+    }
+    return g;
+  }
+
+  /** Finish the open gesture now, as its release would (a stroke is committed, a drag lands where
+   *  it got to); the rest of the press is then ignored. The eyedropper picks nothing. Run by a tool
+   *  switch, and first thing by the selection actions (Delete, Cut, Enter/Esc, Select all, Deselect,
+   *  Free transform, Distort/Mesh, Flip): mid-stroke, Delete's step came before the stroke's while
+   *  the stroke's pre-stroke copy put the deleted pixels back, and W/M lifted the half-drawn stroke
+   *  into a float and drew it again under it (2026-10-17 review). */
+  function endGesture() {
+    const g = gesture;
+    if (!g) return;
+    gesture = null;
+    if (g.kind === "eyedropper") eyedropperSwatchEl.style.display = "none";
+    else runGesture(g, g.points, true);
+  }
+
+  function runGesture(g: Gesture, rawPoints: InputPoint[], done: boolean) {
     const points = rawPoints.map((p) => ({
       ...p,
-      pressure: curve.evaluate(p.pressure),
+      pressure: g.curve.evaluate(p.pressure),
     }));
 
     // Eyedropper: reads the composite, so it ignores the active layer's lock.
     // Picks on RELEASE — drag to slide the sample point out from under the pen tip.
-    if (app.currentTool === "eyedropper") {
+    if (g.kind === "eyedropper") {
       const p = points[points.length - 1];
       const color = sampleColor(p.x, p.y);
       if (!done) {
@@ -1257,18 +1419,17 @@
       if (color) {
         if (app.eyedropperTarget === "fill") app.fillColor = color;
         else app.brushSettings.color = color;
-        setTool(toolBeforeEyedropper);
+        setTool(toolBeforeEyedropper, true);
       }
       return;
     }
 
-    if (app.currentTool === "move") {
+    if (g.kind === "move") {
       moveStroke(points, done);
       return;
     }
 
-    // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
-    if (refTransform) {
+    if (g.kind === "ref") {
       refGesture(points, done);
       canvasClipEl.style.cursor = selection.getCursor(
         selection.hitTest(points[points.length - 1].x, points[points.length - 1].y) ?? "move",
@@ -1276,34 +1437,19 @@
       return;
     }
 
-    // Outline is driven from the toolbar; a canvas press only (re)starts a preview when none is live
-    // (entering refused on a locked or empty layer, then the artist switched layers).
-    if (app.currentTool === "outline") {
-      if (!outlineActive() && points.length === 1 && !done) enterOutline();
+    const press = points.length === 1 && !done;
+    if (g.kind === "none") {
+      // Outline is driven from the toolbar; a canvas press only (re)starts a preview when none is
+      // live (entering refused on a locked or empty layer, then the artist switched layers).
+      if (press && app.currentTool === "outline" && !outlineActive()) enterOutline();
       return;
     }
 
-    // A stroke under way keeps its layer (checked for lock/reference when it started).
-    const continuing = strokeLayer !== null && (points.length > 1 || done);
-    const layer = continuing ? strokeLayer! : layers.active;
+    const layer = g.stroke?.layer ?? layers.active;
     const dpr = docDpr();
 
-    if (!continuing && app.currentTool !== "select" && app.currentTool !== "lasso") {
-      const why = paintBlock(layer);
-      if (why) {
-        if (points.length === 1 && !done) flashStatus(why);
-        return;
-      }
-    }
-    // A reference is drawn from its original, so paint on it would be wiped by its next move:
-    // brush, eraser and fill are refused until it is baked.
-    if (!continuing && layer.ref && app.currentTool !== "select" && app.currentTool !== "lasso") {
-      if (points.length === 1 && !done) flashStatus(refHandlesBlock(layer) || REF_PAINT_REFUSED);
-      return;
-    }
-
     // Selection tool
-    if (app.currentTool === "select" || app.currentTool === "lasso") {
+    if (g.kind === "select") {
       const p = points[points.length - 1];
 
       if (points.length === 1 && !done) {
@@ -1359,11 +1505,23 @@
     }
 
     // Fill tool
-    if (app.currentTool === "fill") {
-      if (points.length === 1 && !done) {
+    if (g.kind === "fill") {
+      if (press) {
+        // Say why a tap fills nothing (it used to be silent).
+        const sx = Math.floor(points[0].x * dpr);
+        const sy = Math.floor(points[0].y * dpr);
+        if (sx < 0 || sy < 0 || sx >= layer.canvas.width || sy >= layer.canvas.height) {
+          return flashStatus("Tap on the page to fill");
+        }
+        // Alpha lock keeps an empty area empty, so all a tap there could change is the soft edges
+        // of the lines round it (Soft tinted them with the fill colour).
+        if (layer.alphaLock && layer.ctx.getImageData(sx, sy, 1, 1).data[3] === 0) {
+          return flashStatus("Alpha lock is on — the bucket only recolours painted pixels");
+        }
         const before = layers.getSnapshot();
         const color = hexToRgba(app.fillColor, app.fillOpacity);
         const clipSel = selection?.state === "selected" ? selection : null;
+        let filled: boolean;
         if (clipSel || layer.alphaLock) {
           // Run flood fill on a temp canvas (1:1 with layer's physical pixels), then composite
           // back through the selection clip and/or alpha lock.
@@ -1372,7 +1530,7 @@
           tmp.height = layer.canvas.height;
           const tmpCtx = tmp.getContext("2d", { willReadFrequently: true })!;
           tmpCtx.drawImage(layer.canvas, 0, 0);
-          floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, {
+          filled = floodFill(tmpCtx, points[0].x * dpr, points[0].y * dpr, color, {
             ...app.fillSettings,
             gap: app.fillEnclosedGap,
             // Expand paints BEHIND existing content, which alpha lock would refuse entirely;
@@ -1393,24 +1551,30 @@
             layer.ctx.restore();
           }
         } else {
-          floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, {
+          filled = floodFill(layer.ctx, points[0].x * dpr, points[0].y * dpr, color, {
             ...app.fillSettings,
             gap: app.fillEnclosedGap,
           });
         }
         // Nothing landed (already this colour, or clipped away): no empty undo step
-        if (sameImageData(before, layers.getSnapshot())) return;
-        pushPixelEdit(layers, layer, before);
+        if (!pushPixelEdit(layers, layer, before)) {
+          return flashStatus(
+            !filled
+              ? "Already this colour"
+              : clipSel
+                ? "Nothing filled — the area is outside the selection"
+                : "Nothing changed — the area is already this colour",
+          );
+        }
         layers.composite();
-        bumpLayerVersion();
+        bumpPixelVersion(layer.id);
       }
       return;
     }
 
     // Brush stroke
-    openStrokePoints = done ? null : rawPoints;
-    if (done) strokeLayer = null;
-    const kind = app.brushType;
+    if (!g.stroke) return;
+    const { kind, sizeRange, settings: strokeSettings } = g.stroke;
     // smooth / ink / calligraphy / dry / watercolor redraw the whole stroke each frame from a
     // pre-stroke copy;
     // the stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
@@ -1421,17 +1585,6 @@
       kind === "calligraphy" ||
       kind === "dry" ||
       kind === "watercolor";
-    // Mouse input has no pressure: draw at the nominal width instead of the widest.
-    const sizeRange = (points[0]?.hasPressure ?? true) ? app.sizeRange : 1;
-    const strokeSettings = {
-      ...app.brushSettings,
-      alphaLock: layer.alphaLock,
-      // Smooth is a distance on screen, so it averages the same hand wobble at any zoom.
-      pathSmoothRadius: pathSmoothRadius(app.brushSettings.smoothing, viewport.zoom),
-      // A resting pen's jitter is on screen too (`holdRestPressure`).
-      restRadius: viewport.zoom > 0 ? REST_PX / viewport.zoom : 0,
-    };
-
     function drawFullStroke(
       ctx: CanvasRenderingContext2D,
       pts: InputPoint[],
@@ -1439,10 +1592,10 @@
       from = 0,
       to = Infinity,
     ) {
-      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange, from, to);
+      if (kind === "ink") drawInkStroke(ctx, pts, strokeSettings, sizeRange, from, to, finished);
       else if (kind === "calligraphy") {
         drawCalligraphyStroke(ctx, pts, strokeSettings, sizeRange, from, to);
-      } else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange);
+      } else if (kind === "dry") drawDryStroke(ctx, pts, strokeSettings, sizeRange, finished);
       else if (kind === "watercolor") {
         drawWatercolorStroke(ctx, pts, strokeSettings, sizeRange, finished);
       } else drawStroke(ctx, pts, strokeSettings, finished, sizeRange);
@@ -1477,8 +1630,7 @@
       frozenTo = i;
     }
 
-    if (points.length <= 1 && !done) {
-      strokeLayer = layer;
+    if (press) {
       frozenTo = 0;
       preStrokeSnapshot = layers.getSnapshot();
       if (fullRedraw) {
@@ -1502,7 +1654,7 @@
           pushPixelEdit(layers, layer, preStrokeSnapshot);
           preStrokeSnapshot = null;
         }
-        bumpLayerVersion();
+        bumpPixelVersion(layer.id);
       } else {
         const alreadyScheduled = smoothPendingPoints !== null;
         smoothPendingPoints = points;
@@ -1539,25 +1691,27 @@
           pushPixelEdit(layers, layer, preStrokeSnapshot);
           preStrokeSnapshot = null;
         }
-        bumpLayerVersion();
+        bumpPixelVersion(layer.id);
       }
     }
   }
 
   // --- Set tool ---
-  function setTool(tool: Tool) {
-    // The tool can change under an open stroke (X, a finger on the toolbar). Commit it now with the
-    // settings that STARTED it — setTool swaps them below — and ignore the rest of that stroke.
-    if (openStrokePoints && tool !== app.currentTool) {
-      handleStroke(openStrokePoints, true);
-      dropStrokeUntilUp = true;
-    }
+  /** `returning`: going BACK to a tool (the eyedropper's pick, Outline's Apply/Cancel, letting go
+   *  of X, the second double-tap). It records no tool to return to: Outline → Eyedropper → pick made
+   *  Outline its own hand-back (Apply re-entered it), and X held on the Eyedropper made the Eraser
+   *  the pick's hand-back, with the colour going to the brush. */
+  function setTool(tool: Tool, returning = false) {
+    // The tool can change under an open press (X, a finger on the toolbar, a reference's tool
+    // follow). Finish its gesture now — a stroke with the settings that started it, a Select or Move
+    // drag where it got to — and ignore the rest of that press.
+    if (tool !== app.currentTool) endGesture();
     // A floating transform/warp must resolve before switching tools (it has uncommitted
     // pixels). A plain marquee survives — brush/fill/eraser will clip to it.
     if (selection?.hasFloating && tool !== app.currentTool) {
       selection.commit();
     }
-    if (tool === "eyedropper" && app.currentTool !== "eyedropper") {
+    if (tool === "eyedropper" && app.currentTool !== "eyedropper" && !returning) {
       toolBeforeEyedropper = app.currentTool;
       app.eyedropperTarget = app.currentTool === "fill" ? "fill" : "brush";
     }
@@ -1566,14 +1720,13 @@
     if (app.currentTool === "outline" && tool !== "outline" && outlineActive()) {
       cancelOutline(false);
     }
-    if (tool === "outline" && app.currentTool !== "outline") {
-      toolBeforeOutline = app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool;
+    if (tool === "outline" && app.currentTool !== "outline" && !returning) {
+      const from = app.currentTool === "eyedropper" ? toolBeforeEyedropper : app.currentTool;
+      if (from !== "outline") toolBeforeOutline = from; // Outline → Eyedropper → Outline
     }
     swapSlots(app, strokeSlots, app.currentTool, tool);
     app.currentTool = tool;
     app.brushSettings.isEraser = tool === "eraser";
-    if (tool === "select") selection.mode = "rect";
-    if (tool === "lasso") selection.mode = "lasso";
     updateCursor();
     debouncedSave();
     // After the switch (a floating selection has been committed above), so the snapshot holds it.
@@ -1592,18 +1745,22 @@
   }
 
   // --- Keyboard shortcuts ---
-  function handleKeyDown(e: KeyboardEvent) {
-    if (selection) selection.shiftHeld = e.shiftKey;
-    // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
-    if (
+  /** A modal dialog is open: it owns the keyboard and the clipboard. */
+  function dialogOpen(): boolean {
+    return !!(
       showNewDocDialog ||
       showResizeDialog ||
       showSettingsDialog ||
       shareFileReady ||
       textDialog ||
       restoreDialog
-    )
-      return;
+    );
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (selection) selection.shiftHeld = e.shiftKey;
+    // A dialog owns the keyboard while it is open (it handles Enter/Escape itself).
+    if (dialogOpen()) return;
     const target = e.target as HTMLElement;
     if (isTextEntry(target)) return;
     // Esc / Enter with a toolbar menu open belong to the menu (it closes on Esc): they also
@@ -1614,22 +1771,24 @@
     // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
     if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
 
+    // Letters compared lower-cased: with Shift (Windows, Linux) or Caps Lock the key reads "Z", and
+    // Ctrl+Shift+Z (redo), or Ctrl+Z/S/O under Caps Lock, did nothing.
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       void doSaveAs();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       doSavePsd();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "o") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
       e.preventDefault();
       void doOpenPsd();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
       e.preventDefault();
       showNewDocDialog = true;
       return;
@@ -1651,13 +1810,17 @@
         structuralEdit(layers, () => layers!.groupSelected(ids));
         app.layerSelection = [];
         app.layerSelecting = false;
+        // Grouping rows from different places can change the stacking, as the panel's button.
+        layers.composite();
       } else {
+        const why = dragBlock(layers.tree, layers.activeId);
+        if (why) return flashStatus(why);
         structuralEdit(layers, () => layers!.groupActive());
       }
       bumpLayerVersion();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       if (e.shiftKey) redo();
       else undo();
@@ -1694,24 +1857,26 @@
     }
     if (e.key === "Enter" && selection?.active) {
       e.preventDefault();
+      endGesture();
       resolveFloat(true);
       return;
     }
     if (e.key === "Escape" && selection?.active) {
       e.preventDefault();
+      endGesture();
       resolveFloat(false);
       return;
     }
 
     // Distort/Warp: W = 4-corner distort (2×2 grid). M = mesh warp (3×3 grid).
-    if ((e.key === "w" || e.key === "W") && selection?.active) {
+    if ((e.key === "w" || e.key === "W") && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      enterWarp(2, 2);
+      warpFromKey(2);
       return;
     }
-    if ((e.key === "m" || e.key === "M") && selection?.active) {
+    if ((e.key === "m" || e.key === "M") && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      enterWarp(3, 3);
+      warpFromKey(3);
       return;
     }
 
@@ -1737,15 +1902,21 @@
       return;
     }
 
-    if (e.key === "b") setTool("brush");
-    if (e.key === "e") setTool("eraser");
-    if (e.key === "s") setTool("select");
-    if (e.key === "l") setTool("lasso");
-    if (e.key === "v") setTool("move");
-    if (e.key === "g") setTool("fill");
-    if (e.key === "i") setTool("eyedropper");
+    // Lowercased: with Caps Lock on the key reads "B", and the tool keys and hold-X did nothing.
+    // Not with Ctrl/Cmd, so a Ctrl+Shift combination that fell through doesn't now pick a tool.
+    const letter = e.ctrlKey || e.metaKey ? "" : e.key.toLowerCase();
+    if (letter === "b") setTool("brush");
+    if (letter === "e") setTool("eraser");
+    if (letter === "s") setTool("select");
+    if (letter === "l") setTool("lasso");
+    if (letter === "v") setTool("move");
+    if (letter === "g") setTool("fill");
+    if (letter === "i") setTool("eyedropper");
 
-    if (e.key === "r" || e.key === "R") {
+    // The view stays put under an open press: its next point would map through the new view and
+    // the line jump there in a straight chord. (A stroke's settings are fixed at its press.)
+    const viewFree = !gesture;
+    if (viewFree && (e.key === "r" || e.key === "R")) {
       const step = (15 * Math.PI) / 180;
       viewport.rotateAroundCenter(e.shiftKey ? -step : step);
       updateZoomDisplay();
@@ -1762,12 +1933,12 @@
 
     if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
       e.preventDefault();
-      viewport.setZoom(viewport.zoom * 1.2);
+      if (viewFree) viewport.setZoom(viewport.zoom * 1.2);
       updateZoomDisplay();
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "-") {
       e.preventDefault();
-      viewport.setZoom(viewport.zoom / 1.2);
+      if (viewFree) viewport.setZoom(viewport.zoom / 1.2);
       updateZoomDisplay();
     }
     // Plain digits, matching slop-animator's `0` for fit. These were Cmd/Ctrl+0 and +1, which
@@ -1775,17 +1946,17 @@
     // so preventDefault could not claim them — the app command never ran and the browser did
     // something disruptive instead. No digit shortcuts existed to collide with, and this handler
     // already bails inside INPUT/SELECT.
-    if (!e.ctrlKey && !e.metaKey && e.key === "0") {
+    if (viewFree && !e.ctrlKey && !e.metaKey && e.key === "0") {
       e.preventDefault();
       resetView();
     }
-    if (!e.ctrlKey && !e.metaKey && e.key === "1") {
+    if (viewFree && !e.ctrlKey && !e.metaKey && e.key === "1") {
       e.preventDefault();
       resetTo100Percent();
     }
 
     // Hold X for temporary eraser
-    if (e.key === "x" && !e.repeat && !toolBeforeEraser && app.currentTool !== "eraser") {
+    if (letter === "x" && !e.repeat && !toolBeforeEraser && app.currentTool !== "eraser") {
       toolBeforeEraser = app.currentTool;
       setTool("eraser");
     }
@@ -1803,8 +1974,9 @@
 
   function handleKeyUp(e: KeyboardEvent) {
     if (selection) selection.shiftHeld = e.shiftKey;
-    if (e.key === "x" && toolBeforeEraser) {
-      setTool(toolBeforeEraser);
+    // Either case: with Shift down by the release the key reads "X", and the eraser stayed on.
+    if (e.key.toLowerCase() === "x" && toolBeforeEraser) {
+      setTool(toolBeforeEraser, true);
       toolBeforeEraser = null;
     }
     if (e.code === "Space") {
@@ -1815,10 +1987,11 @@
     }
   }
 
-  // Re-save 3s after the last document change. layerVersion covers strokes, fills, layer edits and
-  // undo; the doc size covers a resize.
+  // Re-save 3s after the last document change. layerVersion covers layer edits and undo,
+  // pixelVersion strokes, fills and clears; the doc size covers a resize.
   $effect(() => {
     void app.layerVersion;
+    void app.pixelVersion;
     void app.docWidth;
     void app.docHeight;
     if (!autosaveReady) return;
@@ -1916,12 +2089,11 @@
     } else {
       fillRegionBehind(layer.ctx, region, color, soft, soft > 0 ? expand : 0);
     }
-    if (sameImageData(before, layers.getSnapshot())) {
+    if (!pushPixelEdit(layers, layer, before)) {
       return flashStatus("Nothing filled — the enclosed areas are outside the selection");
     }
-    pushPixelEdit(layers, layer, before);
     layers.composite();
-    bumpLayerVersion();
+    bumpPixelVersion(layer.id);
   }
 
   // --- Outline tool (from slop-animator) ---
@@ -1946,6 +2118,8 @@
    *  so the clipped path has to arrive by `drawImage`. */
   let outlineScratch: HTMLCanvasElement | null = null;
   let outlineRaf = 0;
+  /** The alpha lock the preview was drawn under, so toggling it redraws the preview. */
+  let outlinePreviewLock = false;
 
   function outlineActive(): boolean {
     return outlineBefore !== null;
@@ -2023,6 +2197,7 @@
     const next = outlinePreviewImg;
     // Alpha lock: the outline may hollow the art but never put ink where there was none.
     const lock = layer.alphaLock;
+    outlinePreviewLock = lock;
     for (let i = 0, p = 3; i < cov.length; i++, p += 4)
       next.data[p] = lock ? Math.min(cov[i], alpha[i]) : cov[i];
     // A marquee clips the WRITE, not the maths: the field is built from the whole drawing, so where
@@ -2040,8 +2215,11 @@
       try {
         selection.applyClip(ctx); // layer.ctx carries the dpr transform applyClip expects
         // Inside the marquee the outline REPLACES the art: drawing over it would leave the solid
-        // fill showing through the hollowed middle.
-        ctx.clearRect(r.x / dpr, r.y / dpr, w / dpr, h / dpr);
+        // fill showing through the hollowed middle. One `copy`, as the fill does: a clearRect and
+        // then a draw both took the clip's antialiased edge, leaving a notch along the marquee
+        // (the art there came out at c·outline + (1 − c)²·art). `copy` also clears what lies in
+        // the marquee outside the region — transparent anyway, the region holding all the ink.
+        ctx.globalCompositeOperation = "copy";
         ctx.drawImage(outlineScratch, r.x / dpr, r.y / dpr, w / dpr, h / dpr);
       } finally {
         ctx.restore();
@@ -2063,13 +2241,12 @@
     }
     clearOutline();
     // A shape thinner than the line stays solid, so an outline can change nothing: no empty step.
-    if (!sameImageData(before, layers.snapshotOf(layer))) {
-      pushPixelEdit(layers, layer, before);
+    if (pushPixelEdit(layers, layer, before)) {
       bumpLayerVersion();
     } else {
       flashStatus("Nothing changed — the shapes are thinner than the line");
     }
-    if (app.currentTool === "outline") setTool(toolBeforeOutline); // one-shot: hand the tool back
+    if (app.currentTool === "outline") setTool(toolBeforeOutline, true); // one-shot: hand the tool back
   }
 
   /** Put the art back. `handBack` returns to the tool Outline was entered from; setTool passes
@@ -2078,7 +2255,7 @@
     if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
     clearOutline();
     layers?.composite();
-    if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline);
+    if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline, true);
   }
 
   function clearOutline() {
@@ -2118,7 +2295,7 @@
   let toolBeforeRef: Tool | null = null;
   $effect(() => {
     void app.layerVersion;
-    const onRef = layersReady && !!layers.active?.ref;
+    const onRef = layersReady && !!layers.activeRef;
     untrack(() => {
       if (onRef === lastOnRef) return;
       lastOnRef = onRef;
@@ -2151,18 +2328,28 @@
       if (!layers.findLayer(floatLayer.id)) return selection.cancel();
       // Said out loud, so the switch doesn't apply it silently (undo takes it back).
       const name = floatLayer.name;
+      if (gesture?.kind === "select") endGesture(); // a drag on the float ends with it
       selection.commit();
       flashStatus(`Applied the transform to ${name} — undo to take it back`);
     });
   });
 
   // The preview belongs to the layer it started on: selecting another layer (which add, duplicate
-  // and merge also do) or locking this one cancels it rather than leaving it baked in.
+  // and merge also do), locking or hiding this one cancels it rather than leaving it baked in, as
+  // Outline refuses a locked or hidden layer to begin with. Alpha lock redraws it under the new rule
+  // (Apply keeps the last preview, which could put ink where alpha lock forbids it).
   $effect(() => {
     void app.layerVersion;
     untrack(() => {
-      if (outlineLayer && (layers.activeId !== outlineLayer.id || layers.isLocked(outlineLayer))) {
+      if (!outlineLayer) return;
+      if (
+        layers.activeId !== outlineLayer.id ||
+        layers.isLocked(outlineLayer) ||
+        layers.isHidden(outlineLayer)
+      ) {
         cancelOutline();
+      } else if (outlineLayer.alphaLock !== outlinePreviewLock) {
+        scheduleOutlinePreview();
       }
     });
   });
@@ -2211,7 +2398,8 @@
    *  shows as a float with handles; lift + commit stay one undo step. */
   function flipSelection(axis: "h" | "v") {
     if (!selection) return;
-    if (layers.active.ref) {
+    endGesture();
+    if (layers.activeRef) {
       if (!refTransform) return enterFreeTransform(); // says why there are no handles
       selection.flip(axis);
       storeRefPlacement();
@@ -2289,6 +2477,10 @@
 
   function flushAutosave() {
     if (!autosaveReady || !autosaveDirty || !layers) return;
+    // The text dialog previews into its layer with no undo step until OK, and an empty text
+    // previews an empty layer: the guard took that for a blanking (its dialog opened under the
+    // text one). Saved once it closes — OK and Cancel both re-draw, which schedules the save.
+    if (textDialog) return;
     // Paused over blank layers (the dialog closed without a choice): say so again at each save it
     // skips — a later status message had wiped the first notice, and work went unsaved silently.
     if (autosaveHalted) return flashStatus(AUTOSAVE_PAUSED, 0);
@@ -2299,12 +2491,14 @@
     try {
       buffer = withPendingResolved(() => psdBuffer(layers, false));
     } catch (e) {
+      // Said, as a failed write is (below): it went only to the console, which an iPad hasn't got.
       autosaveDirty = true;
       console.error("autosave encode failed", e);
+      autosaveFailing(e);
       return;
     }
     inkedAtSave = inked;
-    historyAtSave = app.historyVersion;
+    historyAtSave = history.layerChanges;
     const meta = {
       savedAt: Date.now(),
       projectName: app.projectName,
@@ -2320,11 +2514,17 @@
         // failure (iPad quota, a stale tab after a deploy) lets hours of work look saved.
         autosaveDirty = true;
         console.error("autosave failed", e);
-        flashStatus(
-          `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save so this work isn't lost.`,
-          0,
-        );
+        autosaveFailing(e);
       },
+    );
+  }
+
+  /** A lasting "Autosave is failing" (cleared by the next save that works). */
+  function autosaveFailing(e: unknown) {
+    clearSticky("Autosave is failing"); // one at a time, with the latest reason
+    flashStatus(
+      `Autosave is failing (${e instanceof Error ? e.message : String(e)}) — use File ▸ Save so this work isn't lost.`,
+      0,
     );
   }
 
@@ -2350,7 +2550,8 @@
   function loadAutosaveBuffer(buffer: ArrayBuffer) {
     if (!layers) return;
     const dpr = docDpr();
-    const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion);
+    endGesture(); // a press still down finishes on the old document, not the new one
+    const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion, refDecodeFailed);
     if (outlineActive()) cancelOutline();
     history.clear(); // restored document: nothing from this session to undo
     app.docWidth = width;
@@ -2371,7 +2572,7 @@
   // whether layers lost all their pixels with no undo step to explain it (`looksBlanked`); if so,
   // autosave pauses and the restore dialog opens.
   let inkedAtSave = new Set<number>(); // layers with pixels at the last save (or restore)
-  let historyAtSave = 0; // app.historyVersion then: how many undo steps have happened since
+  let historyAtSave = 0; // history.layerChanges then: how many layers undo steps changed since
   let autosaveHalted = false;
   const AUTOSAVE_PAUSED =
     "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back, or keep the blank layers there.";
@@ -2413,13 +2614,27 @@
   /** The document now counts as saved in this state: the guard compares against it. */
   function markSaved() {
     inkedAtSave = inkedLayerIds();
-    historyAtSave = app.historyVersion;
+    historyAtSave = history.layerChanges;
+  }
+
+  /** After Resize or Sharp layers re-made every layer: a new baseline for the guard — unless the
+   *  device refused some of the new canvases (`unbackedLayerCount`: they came out empty, with no
+   *  error), when the baseline would let the next autosave replace the stored drawing with them.
+   *  Then autosave pauses and the restore dialog opens, as for layers blanked in the background. */
+  function markResampled() {
+    const lost = layers?.unbackedLayerCount() ?? 0;
+    if (!lost) return markSaved();
+    haltForBlankLayers();
+    flashStatus(
+      `The device ran out of memory for ${lost} layer${lost > 1 ? "s" : ""} at this size — ${lost > 1 ? "they are" : "it is"} empty now`,
+      15000,
+    );
   }
 
   function blankedSince(inked: Set<number>): boolean {
     if (!layers) return false;
     const existing = new Set(layers.flatLayers().map((l) => l.id));
-    return looksBlanked(inkedAtSave, inked, existing, app.historyVersion - historyAtSave);
+    return looksBlanked(inkedAtSave, inked, existing, history.layerChanges - historyAtSave);
   }
 
   function haltForBlankLayers() {
@@ -2454,7 +2669,7 @@
 
   /** Back from the background: were the layers blanked while away? */
   function checkBlankOnReturn() {
-    if (!autosaveReady || autosaveHalted || !layers) return;
+    if (!autosaveReady || autosaveHalted || !layers || textDialog) return; // (see flushAutosave)
     if (blankedSince(inkedLayerIds())) haltForBlankLayers();
   }
 
@@ -2473,6 +2688,10 @@
     try {
       const buffer = await loadAutosave(entry.key);
       if (!buffer) throw new Error("that copy is gone");
+      // Paused over blank layers, the latest is the newest good copy: restoring an older one and
+      // resuming let the next autosave overwrite it. Set it aside first (after reading the chosen
+      // copy, which may be the kept slot this replaces); if that fails, stay paused.
+      if (autosaveHalted && entry.key !== LATEST_KEY) await keepLatestAutosave();
       loadAutosaveBuffer(buffer);
       app.projectName = entry.projectName;
       docFile = null; // it may not match the file the document came from
@@ -2578,13 +2797,14 @@
     const why = meshStepBlock(selection.warpRows, dir, selection.warpUntouched);
     if (why) return flashStatus(`Mesh — ${why}`);
     const n = selection.warpRows + dir;
+    endGesture(); // a point held by the pen ends where it got to (as W/M do)
     selection.densifyWarp(n, n);
     scheduleComposite();
   }
   const refActive = $derived.by(() => {
     void app.layerVersion;
     void app.selectionVersion;
-    return layersReady && !!layers.active?.ref;
+    return layersReady && !!layers.activeRef;
   });
   // Why the lifting actions (transform, flip, cut, delete) can't act on the active layer, or "".
   const liftBlock = $derived.by(() => {
@@ -2629,6 +2849,9 @@
   function copySelection() {
     if (selection?.hasFloating) return copyFloat();
     if (!selection || selection.state !== "selected" || !selection.rect || !layers) return;
+    // A group row has no pixels of its own; the active layer then falls back to the bottom one,
+    // and Copy took Background's (2026-10-17 review).
+    if (layers.activeIsGroup) return flashStatus(GROUP_SELECTED);
     if (outlineActive()) cancelOutline(); // copy the art, not the preview
     const dpr = docDpr();
     const pixels = selection.copyPixels(layers.active.ctx, dpr);
@@ -2664,15 +2887,18 @@
 
   function selectAll() {
     if (!selection) return;
+    endGesture();
     if (selection.hasFloating) selection.commit(); // as starting a new marquee does
     selection.selectRect({ x: 0, y: 0, w: app.docWidth, h: app.docHeight });
   }
 
   function deselect() {
+    endGesture();
     if (selection?.state === "selected") selection.cancel();
   }
 
   function deleteSelection() {
+    endGesture();
     if (!selection || selection.state !== "selected" || !layers) return;
     if (outlineActive()) cancelOutline();
     const layer = layers.active;
@@ -2683,13 +2909,19 @@
     const before = layers.getSnapshot();
     selection.clearRegion(layer.ctx, dpr);
     selection.cancel(); // drop the marquee
-    if (sameImageData(before, layers.getSnapshot())) return;
-    pushPixelEdit(layers, layer, before);
+    if (!pushPixelEdit(layers, layer, before)) return;
     layers.composite();
-    bumpLayerVersion();
+    bumpPixelVersion(layer.id);
   }
 
   function cutSelection() {
+    endGesture();
+    // Refused before the copy, for the reasons Delete refuses: the copy used to replace the
+    // clipboard and then the delete said no.
+    if (selection?.state === "selected" && layers) {
+      const why = paintBlock(layers.active) || (layers.active.ref ? REF_PAINT_REFUSED : "");
+      if (why) return flashStatus(why);
+    }
     copySelection();
     deleteSelection();
   }
@@ -2742,6 +2974,20 @@
     bmp.close();
     // An image from another app is a reference (as in slop-animator), not pixels for this layer.
     await importReferenceFile(blob); // a clipboard file is always "image.png": the layer is "ref"
+  }
+
+  /** Paste a clipboard image; one this browser can't decode (an SVG or TIFF fetched from a copied
+   *  <img>) falls back to the last copy made here, and says why. Its rejection used to escape every
+   *  paste path: no fallback, only the global handler's lasting "Error —". */
+  async function pasteClipboardImage(blob: Blob) {
+    try {
+      await pasteImageBlob(blob);
+    } catch (e) {
+      console.error("pasting the clipboard image failed", e);
+      const what = pasteInternal() ? "pasted the last copy made here" : "nothing pasted";
+      const why = e instanceof Error ? e.message : String(e);
+      flashStatus(`Couldn't read the copied image (${why}) — ${what}`, 10000);
+    }
   }
 
   /** Read an image file (or a pasted one) whole — its bytes go into the PSD as the Smart Object's
@@ -2915,9 +3161,9 @@
   /** Open the dialog on the active text layer. */
   function editText() {
     if (!layers || textDialog) return;
-    const layer = layers.active;
-    const text = layer.ref?.src.text;
-    if (!text) return;
+    const layer = layers.activeRef;
+    const text = layer?.ref?.src.text;
+    if (!layer || !text) return;
     if (layers.isLocked(layer)) return flashStatus("Layer is locked");
     if (layers.isHidden(layer)) return flashStatus("Layer is hidden");
     textEdit = { layer, before: layer.ref, beforeTree: null };
@@ -2997,10 +3243,24 @@
   // The Selection only supplies the handles (`handlesOnly`: no float, nothing pending).
   let refTransform: { layer: Layer; at: RefPlacement } | null = null;
   const REF_PAINT_REFUSED = "It's a reference — Bake it (in the layer strip) to paint on it";
+  const REF_UNDECODABLE =
+    "This browser can't read the reference's original — it shows its saved pixels; Bake it to edit them";
+  /** A Smart Object distorted in Photoshop: one matrix can't draw it, so it keeps its saved pixels
+   *  (`renderRef` won't re-draw it) and only Bake or a whole-layer Move apply, as an undecodable one. */
+  const REF_DISTORTED =
+    "This reference is distorted (from Photoshop) — it shows its saved pixels; Bake it to edit it";
+
+  /** An opened reference whose original can't be decoded: said once, as its handles never come. */
+  function refDecodeFailed(name: string) {
+    flashStatus(`Couldn't read the original of "${name}" — it keeps its saved pixels`, 6000);
+    bumpLayerVersion();
+  }
 
   /** Why the active reference shows no handles, or "" — also the reason a drag on it does nothing. */
   function refHandlesBlock(layer: Layer): string {
     if (!layer.ref) return "";
+    if (layer.ref.src.decodeFailed) return REF_UNDECODABLE;
+    if (!isParallelogram(layer.ref.corners)) return REF_DISTORTED;
     if (!layer.ref.src.image) return "The reference is still loading — try again in a moment";
     if (layers.isLocked(layer)) return "Layer is locked";
     if (layers.isHidden(layer)) return "Layer is hidden";
@@ -3015,7 +3275,10 @@
     const layer = layers.active;
     // Not under the Move tool: there a drag moves the whole layer, reference or not.
     const want =
-      !!layer.ref && !refHandlesBlock(layer) && !outlineActive() && app.currentTool !== "move";
+      !!layers.activeRef &&
+      !refHandlesBlock(layer) &&
+      !outlineActive() &&
+      app.currentTool !== "move";
     // Still showing, for this layer, at the placement it has (undo/redo replaces `ref`)?
     const current =
       !!refTransform &&
@@ -3024,6 +3287,17 @@
       selection.handlesOnly;
     if (current && want) return;
     if (refTransform) {
+      // A drag on them ends with the handles (another layer picked mid-drag): stored where it got
+      // to while they are intact, else put back. Left to run on, the rest of the press went to the
+      // brush, and the reference stayed at its fast preview off its stored placement.
+      if (gesture?.kind === "ref") {
+        if (selection.handlesOnly) endGesture();
+        else {
+          gesture = null;
+          layers.renderRef(refTransform.layer);
+          layers.composite();
+        }
+      }
       refTransform = null;
       if (selection.handlesOnly) selection.cancel();
     }
@@ -3041,17 +3315,26 @@
 
   /** A canvas gesture while a reference's handles show: a handle scales/rotates, anywhere else
    *  moves it. The layer is re-drawn as it goes; the release stores the placement (one step). */
+  /** Whether the press on a reference has travelled `REF_TAP_PX` screen px yet: until then it is a
+   *  tap and moves nothing. A Pencil tap's sub-pixel travel pushed an undo step and nudged the
+   *  reference, and a still tap on a corner handle snapped that corner to the pen. */
+  let refDragMoved = false;
+  const REF_TAP_PX = 3;
+
   function refGesture(points: InputPoint[], done: boolean) {
     if (!refTransform || !selection) return;
     const p = points[points.length - 1];
     if (points.length === 1 && !done) {
       selection.startDrag(selection.hitTest(p.x, p.y) ?? "move", p.x, p.y);
+      refDragMoved = false;
       return;
     }
-    selection.updateDrag(p.x, p.y);
+    const p0 = points[0];
+    refDragMoved ||= Math.hypot(p.x - p0.x, p.y - p0.y) * selection.screenScale >= REF_TAP_PX;
+    if (refDragMoved) selection.updateDrag(p.x, p.y);
     if (done) {
       selection.endDrag();
-      storeRefPlacement();
+      if (refDragMoved) storeRefPlacement();
     }
   }
 
@@ -3114,11 +3397,14 @@
   function handlePaste(e: ClipboardEvent) {
     const t = e.target as HTMLElement | null;
     if (isTextEntry(t)) return;
+    // Not behind a dialog: it added a reference there, and under the text dialog its undo step
+    // held the uncommitted text layer, so Cancel and then Undo brought the cancelled text back.
+    if (dialogOpen()) return;
     const file = [...(e.clipboardData?.items ?? [])]
       .find((i) => i.kind === "file" && i.type.startsWith("image/"))
       ?.getAsFile();
     e.preventDefault();
-    if (file) return void pasteImageBlob(file).catch(() => pasteInternal());
+    if (file) return void pasteClipboardImage(file);
     // Only an image's address (as Midjourney's on iPad, see clipboardImage): fetch it.
     const d = e.clipboardData;
     const url = d
@@ -3130,13 +3416,34 @@
       : null;
     if (!url) return void pasteInternal();
     void fetchImage(url).then(async (blob) => {
-      if (blob) return pasteImageBlob(blob);
+      if (blob) return pasteClipboardImage(blob);
       if (!pasteInternal())
         flashStatus(
           `Couldn't fetch the copied image from ${new URL(url).host} — save it and use File ▸ Import image…`,
           10000,
         );
     });
+  }
+
+  // WebKit (Safari, iPad with a keyboard) fires `paste` for Cmd+V only while Edit ▸ Paste is
+  // enabled: with a text field focused, a text selection, or a `beforepaste` handler that
+  // prevents its default (slop-vector-editor 8257833). Over the canvas there is none of those, so
+  // Cmd+V did nothing there. Not in lib.dom.d.ts, so <svelte:window> can't take it.
+  $effect(() => {
+    const onBeforePaste = (e: Event) => {
+      if (!isTextEntry(e.target as HTMLElement | null) && !dialogOpen()) e.preventDefault();
+    };
+    window.addEventListener("beforepaste", onBeforePaste);
+    return () => window.removeEventListener("beforepaste", onBeforePaste);
+  });
+
+  /** A FILE dragged over or dropped anywhere is refused: the browser's own drop opened it in the
+   *  tab in the app's place, unsaved work and all (slop-vector-editor's report). Dragged text
+   *  still drops into a field. Use File ▸ Open / Import image… instead. */
+  function refuseFileDrop(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "none";
   }
 
   /** Edit menu Paste (no keyboard on iPad): read the system clipboard if allowed, else internal. */
@@ -3198,7 +3505,19 @@
       return flashStatus(`Can't read the clipboard (${why}) — try File ▸ Import image…`, 10000);
     }
     const blob = await clipboardImage(items);
-    if (blob) return importReferenceFile(blob);
+    if (blob) {
+      try {
+        await importReferenceFile(blob);
+      } catch (e) {
+        // (as pasteClipboardImage) an image this browser can't decode
+        console.error("importing the clipboard image failed", e);
+        flashStatus(
+          `Couldn't read the copied image (${e instanceof Error ? e.message : String(e)})`,
+          10000,
+        );
+      }
+      return;
+    }
     flashStatus(
       `No image the browser can read on the clipboard (it holds: ${clipboardTypes(items)}) — save the image and use File ▸ Import image…`,
       10000,
@@ -3215,7 +3534,7 @@
       const items = await navigator.clipboard.read();
       holds = clipboardTypes(items);
       const blob = await clipboardImage(items);
-      if (blob) return pasteImageBlob(blob);
+      if (blob) return void (await pasteClipboardImage(blob));
     } catch (e) {
       readError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
@@ -3262,9 +3581,7 @@
       selection.renderFloatingTo(layer.ctx);
       // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
       // landed made the next undo appear to do nothing).
-      if (before && !sameImageData(before, layers.snapshotOf(layer))) {
-        pushPixelEdit(layers, layer, before);
-      }
+      if (before) pushPixelEdit(layers, layer, before);
       layers.composite();
       bumpLayerVersion();
     };
@@ -3321,9 +3638,24 @@
     const overlayResize = new ResizeObserver(sizeOverlay);
     overlayResize.observe(canvasClipEl);
     sizeOverlay();
+    // Moving the window to a screen of another density changes the pixel ratio but not the area's
+    // size, so the observer stays quiet and the ants and handles were drawn at the wrong scale.
+    // A `resolution` query matches one ratio only: re-armed at the new one after each change.
+    let dprQuery: MediaQueryList | null = null;
+    const watchDpr = () => {
+      dprQuery?.removeEventListener("change", onDprChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      dprQuery.addEventListener("change", onDprChange);
+    };
+    const onDprChange = () => {
+      sizeOverlay();
+      watchDpr();
+    };
+    watchDpr();
 
     // Keep selection's hit areas at a constant screen size by feeding it the viewport zoom.
     selection.screenScale = viewport.zoom;
+    selection.pixelRatio = docDpr;
     viewport.onChange = () => {
       selection.screenScale = viewport.zoom;
     };
@@ -3356,19 +3688,16 @@
       handleStroke,
       (sx, sy) => viewport.screenToCanvas(sx, sy),
       {
-        // Streamline is a brush preference. On select and lasso it made handles trail the Pencil
-        // and stop short of the lift.
-        streamline: () =>
-          app.currentTool === "brush" || app.currentTool === "eraser" ? app.streamline / 100 : 0,
+        // Streamline is a brush preference, so it follows the press's gesture, not the tool: on
+        // select and lasso, or a reference's handles dragged under Brush, it made handles trail
+        // the Pencil and stop short of the lift.
+        streamline: () => (gesture?.kind === "brush" ? app.streamline / 100 : 0),
         // The stamp tips follow the points exactly, so they always get a short string
         // (STAMP_MIN_ROPE_PX): at Stream 0 a thin Pencil line came out stepped on iPad.
-        minRopePx: () =>
-          (app.currentTool === "brush" || app.currentTool === "eraser") &&
-          (app.brushType === "pencil" ||
-            app.brushType === "charcoal" ||
-            app.brushType === "airbrush")
-            ? STAMP_MIN_ROPE_PX
-            : 0,
+        minRopePx: () => {
+          const k = gesture?.stroke?.kind;
+          return k === "pencil" || k === "charcoal" || k === "airbrush" ? STAMP_MIN_ROPE_PX : 0;
+        },
       },
     );
 
@@ -3386,7 +3715,7 @@
       onRedo: redo,
       onToggleEraser: () => {
         if (app.currentTool === "eraser") {
-          setTool(toolBeforeEraserToggle ?? "brush");
+          setTool(toolBeforeEraserToggle ?? "brush", true);
           toolBeforeEraserToggle = null;
         } else {
           toolBeforeEraserToggle = app.currentTool;
@@ -3402,8 +3731,10 @@
     // zooms; a plain wheel — a two-finger trackpad swipe, or a mouse wheel — pans.
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
-      if (e.ctrlKey || e.metaKey) viewport.zoomAt(e.clientX, e.clientY, e.deltaY);
-      else viewport.panBy(-e.deltaX, -e.deltaY); // content follows the scroll
+      if (gesture) return; // as the view keys: not under an open press
+      if (e.ctrlKey || e.metaKey)
+        viewport.zoomAt(e.clientX, e.clientY, wheelZoomFactor(e.deltaY, e.deltaMode));
+      else viewport.panBy(-wheelPx(e.deltaX, e.deltaMode), -wheelPx(e.deltaY, e.deltaMode)); // content follows the scroll
       updateZoomDisplay();
       updateBrushCursor(e.clientX, e.clientY);
     }
@@ -3492,6 +3823,7 @@
       canvasClipEl.removeEventListener("wheel", handleWheel);
       canvasClipEl.removeEventListener("pointerdown", handlePanDown, { capture: true });
       overlayResize.disconnect();
+      dprQuery?.removeEventListener("change", onDprChange);
       canvasClipEl.removeEventListener("pointermove", handlePanMove, { capture: true });
       canvasClipEl.removeEventListener("pointerup", handlePanUp, { capture: true });
       canvasClipEl.removeEventListener("pointermove", handleCursorMove);
@@ -3513,10 +3845,20 @@
   onpointerdowncapture={onPointerHint}
   onblur={() => {
     if (selection) selection.shiftHeld = false;
+    // A key held when the window loses focus sends no keyup: Space stayed latched (every click
+    // panned) and a held X kept the eraser.
+    spaceHeld = false;
+    if (toolBeforeEraser) {
+      setTool(toolBeforeEraser, true);
+      toolBeforeEraser = null;
+    }
+    updateCursor();
   }}
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
   onpaste={handlePaste}
+  ondragover={refuseFileDrop}
+  ondrop={refuseFileDrop}
   bind:innerWidth={viewportW}
   onresize={() => {
     // Keep the panel inside half the viewport when the window shrinks.
@@ -3566,8 +3908,8 @@
           mesh={() => enterWarp(3, 3)}
           flip={flipSelection}
           {toggleKeepProportions}
-          applyFloat={() => resolveFloat(true)}
-          cancelFloat={() => resolveFloat(false)}
+          applyFloat={() => (endGesture(), resolveFloat(true))}
+          cancelFloat={() => (endGesture(), resolveFloat(false))}
           copy={copySelection}
           cut={cutSelection}
           paste={() => void pasteFromMenu()}
@@ -3576,7 +3918,7 @@
           exportPsd={doExportPsd}
           savePsd={doSavePsd}
           saveToFiles={saveToFilesAvailable() ? () => void doSaveToFiles() : null}
-          restoreAutosave={() => void openRestoreDialog(false)}
+          restoreAutosave={() => void openRestoreDialog(autosaveHalted)}
           {memoryUse}
           saveAs={fileAccessAvailable() ? () => void doSaveAs() : null}
           openPsd={() => void doOpenPsd()}
@@ -3644,6 +3986,16 @@
           settlePending={() => {
             if (selection?.hasFloating) resolveFloat(true);
             if (outlineActive()) cancelOutline();
+          }}
+          beforeShut={(id) => {
+            // A float lifted from a layer being locked or hidden is applied first, with a word: it
+            // was applied into the locked or hidden layer later (an edit the lock should refuse).
+            if (!selection?.hasFloating || !floatLayer) return;
+            if (!isWithin(layers.tree, floatLayer.id, id)) return;
+            const name = floatLayer.name;
+            endGesture();
+            resolveFloat(true);
+            flashStatus(`Applied the transform to ${name} first — undo to take it back`);
           }}
         />
       </div>

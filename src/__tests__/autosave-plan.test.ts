@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { History } from "../history";
 import {
   formatBytes,
   layerMemoryBytes,
@@ -63,5 +64,18 @@ describe("layer memory", () => {
     expect(layerMemoryBytes(40, 1920, 1080, 2)).toBe(40 * 3840 * 2160 * 4);
     expect(formatBytes(layerMemoryBytes(40, 1920, 1080, 2))).toBe("1.2 GB");
     expect(formatBytes(300 * 1024 * 1024)).toBe("300 MB");
+  });
+});
+
+describe("looksBlanked with a step that changes several layers", () => {
+  it("a Move that pushes two layers off the page is no blanking once counted by its layers", () => {
+    const h = new History();
+    const before = h.layerChanges;
+    h.push({ undo: () => {}, redo: () => {}, layers: 2 });
+    const emptied = { before: new Set([1, 11, 12]), now: new Set([1]), all: new Set([1, 11, 12]) };
+    expect(looksBlanked(emptied.before, emptied.now, emptied.all, 1)).toBe(true); // by steps
+    expect(looksBlanked(emptied.before, emptied.now, emptied.all, h.layerChanges - before)).toBe(
+      false,
+    );
   });
 });

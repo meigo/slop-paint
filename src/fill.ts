@@ -167,6 +167,9 @@ function atLeast(a: Uint8ClampedArray, b: Uint8ClampedArray): Uint8ClampedArray 
 /** How far under a line the fill may reach, px from its region (half of the widest line it fills
  *  to the middle of). */
 export const UNDER_LINE_MAX_PX = 32;
+/** Where the middle is out of reach, the fill fades out over at least this many px before the
+ *  reach ends, instead of stopping dead. */
+const REACH_FADE_PX = 8;
 
 /**
  * The fill's coverage, 0–255, run under the surrounding lines to their MIDDLE (2026-10-04, the
@@ -175,7 +178,9 @@ export const UNDER_LINE_MAX_PX = 32;
  * line's strength, which a grainy Pencil or Charcoal line stopped 1–3 px in, leaving its inner half
  * blotchy with paper. On the inner half the fill fades from full to 1 − the line's strongest value
  * nearby (so a light line isn't darkened much, and a solid one hides it), and ends at the middle
- * over max(1, 2 × Soft) px, antialiased. Nothing beyond the middle. Drawn BEHIND the line. Soft 0:
+ * over max(1, 2 × Soft) px, antialiased. Nothing beyond the middle. Where the middle is out of
+ * reach (`UNDER_LINE_MAX_PX`) it fades out over the reach's last max(8, 2 × Soft) px instead.
+ * Drawn BEHIND the line. Soft 0:
  * the region alone, the hard edge. `dist` is each pixel's distance from the tapped colour
  * (`colourDistance`); a pixel is empty below `tol`. Worked out only around the region, so a small
  * fill on a big layer stays fast. Pure.
@@ -227,13 +232,44 @@ export function ridgeCoverage(
     }
   }
   const smooth = smoothDistance(d, ww, wh, 2);
-  // The empty space beyond the lines: not filled, and empty even with the grain smoothed over.
+  // The empty space beyond the lines: not filled, and empty even with the grain smoothed over —
+  // and every empty pixel joined to that. The smoothing alone also raised the paper just beyond a
+  // thin or light line, which moved its "middle" outward and put fill on the paper outside it (up
+  // to 80/255 with Fill enclosed). A grain hole inside a line isn't joined to the paper, so it
+  // still isn't "beyond" it.
   const outside = new Uint8Array(n);
   for (let i = 0; i < n; i++) outside[i] = !reg[i] && smooth[i] < tol ? 1 : 0;
+  const joins = (j: number) => !outside[j] && !reg[j] && d[j] < tol;
+  const stack: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (!outside[i]) continue;
+    const x = i % ww;
+    if (
+      (x > 0 && joins(i - 1)) ||
+      (x < ww - 1 && joins(i + 1)) ||
+      (i >= ww && joins(i - ww)) ||
+      (i + ww < n && joins(i + ww))
+    )
+      stack.push(i);
+  }
+  const visit = (j: number) => {
+    if (!joins(j)) return;
+    outside[j] = 1;
+    stack.push(j);
+  };
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % ww;
+    if (x > 0) visit(i - 1);
+    if (x < ww - 1) visit(i + 1);
+    if (i >= ww) visit(i - ww);
+    if (i + ww < n) visit(i + ww);
+  }
   const dIn = distanceToMask(reg, ww, wh);
   const dOut = distanceToMask(outside, ww, wh);
   const peak = maxFilter(smooth, ww, wh, 3);
   const feather = Math.max(1, 2 * soft);
+  const reachFade = Math.max(REACH_FADE_PX, feather);
   for (let y = 0; y < wh; y++) {
     for (let x = 0; x < ww; x++) {
       const i = y * ww + x;
@@ -246,9 +282,16 @@ export function ridgeCoverage(
         ? Math.max(0, Math.min(1, ((0.5 - t) * span) / feather + 0.5))
         : 1;
       if (edge <= 0) continue;
+      // The middle out of reach (no empty space beyond, or a line over twice the reach wide): fade
+      // out over the reach's last px. It stopped dead at the reach, a hard edge that showed through
+      // translucent flat paint. Not where the middle is in reach: that end is the Soft cut above.
+      const reach =
+        !Number.isFinite(span) || span / 2 > UNDER_LINE_MAX_PX
+          ? Math.min(1, (UNDER_LINE_MAX_PX - dIn[i]) / reachFade)
+          : 1;
       const end = 1 - peak[i] / 255;
       const along = Math.min(1, t / 0.5);
-      out[(y + wy) * w + x + wx] = Math.round(255 * edge * (1 + (end - 1) * along));
+      out[(y + wy) * w + x + wx] = Math.round(255 * edge * reach * (1 + (end - 1) * along));
     }
   }
   return out;
@@ -256,9 +299,9 @@ export function ridgeCoverage(
 
 /**
  * The fill grown `expand` px under the lines (Expand), as coverage 0–255 (2026-10-02). Soft 0: the
- * old whole-pixel round dilation (`dilateMask`). Above 0 the grown edge is a smooth round offset
- * measured by true distance (`distanceToMask`), solid up to `expand` px and fading to nothing over
- * the next max(1, 2 × Soft) px — antialiased at least. The whole-pixel dilation left a staircase
+ * old whole-pixel round dilation (what `dilateMask` gives, by distance). Above 0 the grown edge is
+ * a smooth round offset measured by true distance (`distanceToMask`), solid up to `expand` px and
+ * fading to nothing over the next max(1, 2 × Soft) px — antialiased at least. The whole-pixel dilation left a staircase
  * under the line, showing through a see-through one, and Soft's fade (`softCoverage`) starts from
  * that edge, already in the line's dark middle where it has nothing left to fade: with Expand on,
  * Soft seemed to do nothing. Pure.
@@ -271,13 +314,14 @@ export function expandedCoverage(
   soft: number,
 ): Uint8ClampedArray {
   const out = new Uint8ClampedArray(w * h);
+  const dist = distanceToMask(mask, w, h);
   if (soft <= 0) {
-    const grown = dilateMask(mask, w, h, expand);
-    for (let i = 0; i < w * h; i++) if (grown[i]) out[i] = 255;
+    // The same pixels as `dilateMask(mask, expand)` (within `expand` px), in linear time: the
+    // dilation is O(pixels × expand²), 3 s for a big fill at Expand 20.
+    for (let i = 0; i < w * h; i++) if (dist[i] <= expand) out[i] = 255;
     return out;
   }
   const width = Math.max(1, 2 * soft);
-  const dist = distanceToMask(mask, w, h);
   for (let i = 0; i < w * h; i++) {
     const c = (expand + width - dist[i]) / width;
     out[i] = c >= 1 ? 255 : c <= 0 ? 0 : Math.round(c * 255);
@@ -292,8 +336,10 @@ export function expandedCoverage(
  * `gap` (clamped to MAX_GAP, as Fill enclosed's Bridge) closes breaks in the walls of up to about
  * 2×gap px: the walls are thickened by `gap`, the flood runs in what's left, and the region is
  * grown back `gap` steps over fillable pixels only (`growWithin`) — so it still reaches the lines,
- * into sharp inside corners too, and pokes only about `gap` px out through a bridged break. A region too narrow to survive the thickening (the tap lands
- * inside it) is filled without bridging instead, so a small pocket still fills.
+ * into sharp inside corners too, and pokes only about `gap` px out through a bridged break. A tap
+ * near a line starts from the nearest pixel the thickening left open (`nearestOpen`). A region too
+ * narrow to survive the thickening (nothing open within reach) is filled without bridging
+ * instead, so a small pocket still fills.
  */
 export function fillMask(
   data: Uint8ClampedArray,
@@ -323,13 +369,47 @@ export function fillMask(
     for (let i = 0; i < w * h; i++) walls[i] = fillable[i] ? 0 : 1;
     const thick = dilateMask(walls, w, h, r);
     const start = sy * w + sx;
-    if (!thick[start]) {
-      const open = new Uint8Array(w * h);
-      for (let i = 0; i < w * h; i++) open[i] = thick[i] ? 0 : 1;
-      return growWithin(flood(open, w, h, start), fillable, w, h, r);
+    const open = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) open[i] = thick[i] ? 0 : 1;
+    // A tap inside the thickened walls — within `gap` px of a line, or of a stray speck — starts
+    // from the nearest open pixel it can reach: it fell back to the unbridged flood, which leaked
+    // through the very break Bridge was set for (26–80% of the taps inside a wide box).
+    const from = open[start] ? start : nearestOpen(open, fillable, w, h, start, 2 * r + 1);
+    if (from >= 0) {
+      const region = growWithin(flood(open, w, h, from), fillable, w, h, r);
+      if (region[start]) return region;
     }
   }
   return flood(fillable, w, h, sy * w + sx);
+}
+
+/** The open pixel nearest `start` through fillable pixels (4-connected), at most `limit` steps
+ *  away; -1 if none. */
+function nearestOpen(
+  open: Uint8Array,
+  fillable: Uint8Array,
+  w: number,
+  h: number,
+  start: number,
+  limit: number,
+): number {
+  const seen = new Uint8Array(w * h);
+  seen[start] = 1;
+  let ring = [start];
+  for (let s = 0; s < limit && ring.length; s++) {
+    const next: number[] = [];
+    for (const i of ring) {
+      const x = i % w;
+      for (const n of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+        if (n < 0 || n >= w * h || seen[n] || !fillable[n]) continue;
+        if (open[n]) return n;
+        seen[n] = 1;
+        next.push(n);
+      }
+    }
+    ring = next;
+  }
+  return -1;
 }
 
 /** Grow `region` by `steps` 8-connected steps, only into `allowed` pixels. Square steps reach a
@@ -392,13 +472,15 @@ function flood(open: Uint8Array, w: number, h: number, start: number): Uint8Arra
   return out;
 }
 
+/** Bucket-fill from the tap at (startX, startY), device px. False when it wrote nothing: a tap off
+ *  the canvas, or on an area already this colour (the caller says why). */
 export function floodFill(
   ctx: CanvasRenderingContext2D,
   startX: number,
   startY: number,
   fillColor: { r: number; g: number; b: number; a: number },
   options: FillOptions = {},
-) {
+): boolean {
   const tolerance = options.tolerance ?? 32;
   const expand = options.expand ?? 0;
 
@@ -407,26 +489,33 @@ export function floodFill(
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
 
-  const sx = Math.round(startX);
-  const sy = Math.round(startY);
-  if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
+  // Pixel k spans [k, k + 1): rounding seeded the right or lower half of a pixel from the next
+  // one (a tap just left of a line recoloured the line) and made the far half of the last column
+  // or row a tap off the canvas.
+  const sx = Math.floor(startX);
+  const sy = Math.floor(startY);
+  if (sx < 0 || sx >= w || sy < 0 || sy >= h) return false;
 
-  // Don't fill if clicking on the same color
+  // Don't fill if clicking on the same color. An empty pixel's colour means nothing: it is the
+  // same only as a fill that paints nothing (comparing its RGB, black at 1–12% opacity on an
+  // empty area did nothing).
   const startIdx = (sy * w + sx) * 4;
-  if (
+  if (data[startIdx + 3] === 0) {
+    if (fillColor.a === 0) return false;
+  } else if (
     Math.abs(data[startIdx] - fillColor.r) <= tolerance &&
     Math.abs(data[startIdx + 1] - fillColor.g) <= tolerance &&
     Math.abs(data[startIdx + 2] - fillColor.b) <= tolerance &&
     Math.abs(data[startIdx + 3] - fillColor.a) <= tolerance
   ) {
-    return;
+    return false;
   }
 
   // --- Pass 1: the region to fill ---
   const mask = fillMask(data, w, h, sx, sy, tolerance, options.gap ?? 0)!;
 
   // --- Pass 2: coverage per pixel, 0–255 ---
-  // Expand grows the fill under the lines (all of it drawn behind them), its edge feathered by
+  // Expand grows the fill under the lines (behind them), its edge feathered by
   // Soft. Without Expand, Soft fades the fill into the lines' soft edges, behind them; the tapped
   // region itself stays solid.
   const soft = options.softEdge ?? 0;
@@ -448,58 +537,36 @@ export function floodFill(
   const cover =
     expand > 0 ? atLeast(expandedCoverage(mask, w, h, expand, soft), toMiddle) : toMiddle;
 
-  // --- Pass 3: Apply fill behind existing content ---
-  if (expand > 0) {
-    // Draw fill to a temp canvas, then composite behind existing content
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = w;
-    tempCanvas.height = h;
-    const tempCtx = tempCanvas.getContext("2d")!;
-    const tempData = tempCtx.createImageData(w, h);
-    const td = tempData.data;
-
-    for (let i = 0; i < w * h; i++) {
-      if (cover[i]) {
-        const pi = i * 4;
-        td[pi] = fillColor.r;
-        td[pi + 1] = fillColor.g;
-        td[pi + 2] = fillColor.b;
-        td[pi + 3] = Math.round((fillColor.a * cover[i]) / 255);
-      }
+  // --- Pass 3: write the fill ---
+  // The tapped region takes the fill colour; what Expand and Soft add beyond it goes BEHIND what's
+  // there (the line stays on top: no halo over it). Expand used to draw the WHOLE fill
+  // destination-over, the region too, so a tap on a painted area recoloured nothing yet ringed it
+  // and pushed an undo step. From a painted tap nothing lands on an EMPTY pixel beyond the region:
+  // the transparent space round the art is no line to tuck under (Expand drew a ring there).
+  const painted = seed.a > 0;
+  for (let i = 0; i < w * h; i++) {
+    const c = cover[i];
+    if (!c) continue;
+    const pi = i * 4;
+    if (finalMask[i]) {
+      data[pi] = fillColor.r;
+      data[pi + 1] = fillColor.g;
+      data[pi + 2] = fillColor.b;
+      data[pi + 3] = fillColor.a;
+      continue;
     }
-    tempCtx.putImageData(tempData, 0, 0);
-
-    // Draw fill behind existing content using destination-over
-    ctx.save();
-    ctx.resetTransform();
-    ctx.globalCompositeOperation = "destination-over";
-    ctx.drawImage(tempCanvas, 0, 0);
-    ctx.restore();
-  } else {
-    // No expand — write directly to the image data: the tapped region takes the fill colour; what
-    // Soft edge adds under the lines goes BEHIND them (the line stays on top: no halo over it).
-    for (let i = 0; i < w * h; i++) {
-      const c = cover[i];
-      if (!c) continue;
-      const pi = i * 4;
-      if (finalMask[i]) {
-        data[pi] = fillColor.r;
-        data[pi + 1] = fillColor.g;
-        data[pi + 2] = fillColor.b;
-        data[pi + 3] = fillColor.a;
-        continue;
-      }
-      const sa = (fillColor.a / 255) * (c / 255);
-      const da = data[pi + 3] / 255;
-      const oa = da + sa * (1 - da);
-      if (oa <= 0) continue;
-      data[pi] = Math.round((data[pi] * da + fillColor.r * sa * (1 - da)) / oa);
-      data[pi + 1] = Math.round((data[pi + 1] * da + fillColor.g * sa * (1 - da)) / oa);
-      data[pi + 2] = Math.round((data[pi + 2] * da + fillColor.b * sa * (1 - da)) / oa);
-      data[pi + 3] = Math.round(oa * 255);
-    }
-    ctx.putImageData(imageData, 0, 0);
+    if (painted && data[pi + 3] === 0) continue;
+    const sa = (fillColor.a / 255) * (c / 255);
+    const da = data[pi + 3] / 255;
+    const oa = da + sa * (1 - da);
+    if (oa <= 0) continue;
+    data[pi] = Math.round((data[pi] * da + fillColor.r * sa * (1 - da)) / oa);
+    data[pi + 1] = Math.round((data[pi + 1] * da + fillColor.g * sa * (1 - da)) / oa);
+    data[pi + 2] = Math.round((data[pi + 2] * da + fillColor.b * sa * (1 - da)) / oa);
+    data[pi + 3] = Math.round(oa * 255);
   }
+  ctx.putImageData(imageData, 0, 0);
+  return true;
 }
 
 export function hexToRgba(
@@ -516,15 +583,6 @@ export function hexToRgba(
 /** "#rrggbb" from 0–255 channels (the inverse of hexToRgba's colour part). */
 export function rgbToHex(r: number, g: number, b: number): string {
   return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
-}
-
-/** Pixel-identical check, used to skip an undo step for a fill that changed nothing. */
-export function sameImageData(a: ImageData, b: ImageData): boolean {
-  const x = a.data;
-  const y = b.data;
-  if (x.length !== y.length) return false;
-  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
-  return true;
 }
 
 /**
@@ -548,8 +606,8 @@ export function enclosedFillRegion(
 /**
  * Paint `region` (device px, sized to the ctx's canvas) in one pass BEHIND existing content (e.g. white under a black outline).
  *
- * Always composites with destination-over, unlike `floodFill`, which only takes that path when
- * `expand > 0`. Painting behind is the point here, not an artefact of the expand pass.
+ * Always composites with destination-over, unlike `floodFill`, which replaces the tapped region
+ * and puts only what it adds beyond it behind. Painting behind is the point here.
  */
 export function fillRegionBehind(
   ctx: CanvasRenderingContext2D,

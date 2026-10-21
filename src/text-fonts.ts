@@ -159,11 +159,15 @@ function isInstalled(family: string, weight: number, italic: boolean): boolean {
 export async function fontSource(spec: TextSpec): Promise<FontSource> {
   if (bundledFont(spec.font)) return "bundled";
   await fontLibraryReady();
-  // The exact face, or the family at another weight/style — which the browser then synthesizes
-  // (a library family would pass the installed test below for the same reason).
-  if (library.some((f) => f.family === spec.font)) {
+  const key = fontKey(spec);
+  if (library.some((f) => faceKey(f) === key)) {
     await document.fonts.load(fontCss({ ...spec, size: 16 })).catch(() => {});
     return "library";
   }
+  // The family at another weight or style only: the browser would fake this face from that one (a
+  // faux bold), and the page's faces of that family hide an installed copy — the installed test
+  // below would pass on the fake. So the face is missing: removing Bold while Regular stayed left
+  // Bold text drawing as a faux bold instead of keeping its look.
+  if (library.some((f) => f.family === spec.font)) return "missing";
   return isInstalled(spec.font, spec.weight, spec.italic) ? "installed" : "missing";
 }

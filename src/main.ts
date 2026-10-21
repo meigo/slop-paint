@@ -1,6 +1,6 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
-import { flashStatus } from "./appState.svelte.js";
+import { clearSticky, flashStatus } from "./appState.svelte.js";
 import "./app.css";
 
 // An iPad has no console to look at, so an uncaught error says so in the status bar and stays there
@@ -10,6 +10,7 @@ function reportError(what: unknown, where = "") {
   const err = what instanceof Error ? what : null;
   const message = err ? `${err.name}: ${err.message}` : String(what);
   const frame = err?.stack?.split("\n").find((l) => l.includes("/")) ?? where;
+  clearSticky("Error —"); // the latest error only, beside any other lasting condition
   flashStatus(`Error — ${message}${frame ? ` (${frame.trim().replace(/^at /, "")})` : ""}`, 0);
 }
 window.addEventListener("error", (e) =>

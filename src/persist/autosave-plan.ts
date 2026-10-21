@@ -38,9 +38,10 @@ export function planCheckpoint(
  * The blank-layers guard. `before` holds the ids of layers that had pixels at the last save (or
  * the last check), `now` those that have pixels now, `existing` every layer id now. A layer that
  * still exists but lost ALL its pixels counts as emptied. Every way the user empties a layer (a
- * clear, an erase, an undo) is an undo step, so more layers emptied than undo steps taken since
- * (`historySteps`) means something else emptied them: iPad dropping the page's image memory in the
- * background, which kept the layers and blanked their pixels.
+ * clear, an erase, an undo) is an undo step, so more layers emptied than undo steps could have
+ * changed since (`historySteps`, `History.layerChanges`: a Move of several layers is one step that
+ * counts each of them) means something else emptied them: iPad dropping the page's image memory in
+ * the background, which kept the layers and blanked their pixels.
  */
 export function looksBlanked(
   before: ReadonlySet<number>,

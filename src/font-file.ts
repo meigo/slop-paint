@@ -129,9 +129,33 @@ export function parseNameTable(t: Uint8Array): { family: string; subfamily: stri
     }
     return "";
   };
+  // The typographic family (16) groups every face of a family, which the library tells apart by
+  // weight and italic only. A width or optical size ("Condensed", "Caption") would land on the same
+  // key and replace the Regular face, so such a face keeps its legacy family (1), "Myriad Pro Cond".
+  const style = pick([17, 2]);
+  if (style && !weightAndSlopeOnly(style)) {
+    const legacy = pick([1]);
+    if (legacy) return { family: legacy, subfamily: pick([2]) || "Regular" };
+  }
   const family = pick([16, 1]);
   if (!family) return null;
-  return { family, subfamily: pick([17, 2]) || "Regular" };
+  return { family, subfamily: style || "Regular" };
+}
+
+const WEIGHT_AND_SLOPE_WORDS = new Set(
+  (
+    "thin hairline extralight ultralight light regular normal plain book roman medium semibold " +
+    "demibold bold extrabold ultrabold black heavy extra ultra semi demi italic oblique"
+  ).split(" "),
+);
+
+/** Whether a style name says only a weight and/or a slope ("Semibold Italic", "Extra Light"). */
+export function weightAndSlopeOnly(style: string): boolean {
+  return style
+    .toLowerCase()
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .every((w) => WEIGHT_AND_SLOPE_WORDS.has(w));
 }
 
 /** Weight (`usWeightClass`) and italic (`fsSelection` bit 0) from an `OS/2` table. */

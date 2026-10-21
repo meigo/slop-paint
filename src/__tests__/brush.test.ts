@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampPress, strokeOutline, widthRange } from "../brush";
+import { clampPress, strokeOutline, TAPER_WIDTHS, widthRange } from "../brush";
 
 /** Height of the outline of a horizontal stroke = the rendered stroke width. */
 function horizontalWidth(size: number, sizeRange: number, pressure: number): number {
@@ -70,5 +70,34 @@ describe("taper", () => {
 
   it("leaves the ends at full width when off", () => {
     expect(startWidth(false)).toBeCloseTo(10, 0);
+  });
+
+  /** Width of a horizontal outline at x. */
+  const widthAt = (outline: number[][], x: number) => {
+    const ys: number[] = [];
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i];
+      const b = outline[(i + 1) % outline.length];
+      if ((a[0] - x) * (b[0] - x) <= 0 && a[0] !== b[0]) {
+        ys.push(a[1] + ((x - a[0]) / (b[0] - a[0])) * (b[1] - a[1]));
+      }
+    }
+    return Math.max(...ys) - Math.min(...ys);
+  };
+  const line = (len: number) =>
+    Array.from({ length: len / 2 + 1 }, (_, i) => ({ x: i * 2, y: 0, pressure: 1, timestamp: i }));
+
+  // perfect-freehand's `taper: true` is the whole stroke's length: a spindle never at full width.
+  it("tapers over a fixed length, so a long stroke reaches its full width between", () => {
+    const o = strokeOutline(line(600), 8, 0, 1, true, true);
+    expect(TAPER_WIDTHS * 8).toBeLessThan(100);
+    expect(widthAt(o, 300)).toBeCloseTo(8, 0);
+    expect(widthAt(o, 150)).toBeCloseTo(8, 0);
+  });
+
+  it("keeps the drawn start as the live stroke grows", () => {
+    const short = widthAt(strokeOutline(line(200), 8, 0, 1, false, true), 10);
+    const long = widthAt(strokeOutline(line(1600), 8, 0, 1, false, true), 10);
+    expect(long).toBeCloseTo(short, 1);
   });
 });

@@ -44,7 +44,11 @@ export function dropTarget(
   if (y >= last.bottom) {
     drop = { parentId: null, index: 0 };
   } else {
-    const row = rows.find((r) => y >= r.top && y < r.bottom) ?? rows[0];
+    // Between rows (the 1px border under a group's block belongs to no row) the row above
+    // decides, as its lower half: falling back to the first row dropped the node at the list's
+    // top, or into the top group.
+    const row =
+      rows.find((r) => y >= r.top && y < r.bottom) ?? rows.findLast((r) => r.top <= y) ?? rows[0];
     const at = locateNode(tree, row.id);
     if (!at) return null;
     const node = at.siblings[at.index];
@@ -62,12 +66,13 @@ export function dropTarget(
 }
 
 /** Why node `id` can't be dragged at all, or "": a member of a locked group can't leave it or be
- *  reordered in it, as the group's lock locks every member. Its own lock doesn't stop it moving
+ *  reordered in it, as the group's lock locks every member. Also what refuses grouping or deleting
+ *  it. Its own lock doesn't stop it moving
  *  (that lock is on its pixels). */
 export function dragBlock(tree: LayerNode[], id: number): string {
   const at = locateNode(tree, id);
   return at?.group && lockedInTree(tree, at.group.id)
-    ? "It's in a locked group — unlock the group to move it"
+    ? "It's in a locked group — unlock the group first"
     : "";
 }
 

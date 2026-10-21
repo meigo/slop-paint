@@ -3,9 +3,11 @@
  *
  * A reference keeps its ORIGINAL image and a placement: the page positions of the image's four
  * corners — top-left, top-right, bottom-right, bottom-left. Only move/scale/rotate/flip are
- * offered (no distort), so the corners always form a parallelogram and one affine matrix maps the
- * original's own pixel box onto them. That matrix is what draws the reference and what the
- * Free transform float starts from; Photoshop's placed layer stores the same corners flattened.
+ * offered (no distort), so the corners form a parallelogram and one affine matrix maps the
+ * original's own pixel box onto them — except a Smart Object distorted in Photoshop
+ * (`isParallelogram`), which keeps its saved pixels until it is baked. That matrix is what draws
+ * the reference and what the Free transform float starts from; Photoshop's placed layer stores the
+ * same corners flattened.
  */
 import type { Mat } from "./selection";
 
@@ -36,6 +38,18 @@ export function matrixFromCorners(w: number, h: number, corners: Corners): Mat {
     e: tl.x,
     f: tl.y,
   };
+}
+
+/** How far (page px) the fourth corner may sit off the parallelogram the other three make and
+ *  still count as one: a flattening that small can't be seen. */
+export const PARALLELOGRAM_TOLERANCE = 0.5;
+
+/** Whether `corners` form a parallelogram — what one affine matrix (`matrixFromCorners`) can draw.
+ *  Every placement made here is one; a PSD's Smart Object distorted or put in perspective in
+ *  Photoshop is not, and re-drawing it from three corners flattened it for good. */
+export function isParallelogram(corners: Corners, tol = PARALLELOGRAM_TOLERANCE): boolean {
+  const [tl, tr, br, bl] = corners;
+  return Math.hypot(tl.x + br.x - tr.x - bl.x, tl.y + br.y - tr.y - bl.y) <= tol;
 }
 
 /** `rect`'s corners under `m` — where a float's box landed when its transform was applied. */

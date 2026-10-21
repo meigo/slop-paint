@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { Viewport } from "../viewport";
+import { Viewport, clampZoom, rotationDegrees, wheelPx, wheelZoomFactor } from "../viewport";
 
 // Minimal DOM mock
 function createMockElements() {
@@ -91,7 +91,7 @@ describe("Viewport", () => {
   it("zoomAt keeps point under cursor fixed", () => {
     // Zoom in at point (200, 150)
     const before = vp.screenToCanvas(200, 150);
-    vp.zoomAt(200, 150, -1); // zoom in (delta < 0)
+    vp.zoomAt(200, 150, 1.1); // zoom in
     const after = vp.screenToCanvas(200, 150);
     expect(after.x).toBeCloseTo(before.x, 0);
     expect(after.y).toBeCloseTo(before.y, 0);
@@ -133,5 +133,65 @@ describe("Viewport", () => {
     expect(vp.panY).toBe(20);
     vp.endPan();
     expect(vp.panning).toBe(false);
+  });
+});
+
+describe("wheelZoomFactor", () => {
+  it("follows a trackpad pinch's small deltas instead of 10% each", () => {
+    // 30 Chrome pinch events of −2: e^0.6 ≈ 1.82 (a fixed 10% per event gave 17×)
+    let z = 1;
+    for (let i = 0; i < 30; i++) z *= wheelZoomFactor(-2);
+    expect(z).toBeCloseTo(Math.exp(0.6), 5);
+  });
+
+  it("zooms a mouse notch about 10%, either way", () => {
+    expect(wheelZoomFactor(-100)).toBeCloseTo(1.105, 3);
+    expect(wheelZoomFactor(100)).toBeCloseTo(0.905, 3);
+    expect(wheelZoomFactor(-3, 1)).toBeCloseTo(1.105, 3); // Firefox: 3 lines
+  });
+
+  it("zooms nothing for deltaY 0", () => {
+    expect(wheelZoomFactor(0)).toBe(1);
+  });
+});
+
+describe("clampZoom", () => {
+  it("keeps a zoom inside 10%–2000%", () => {
+    expect(clampZoom(1, 0.05)).toBe(0.1);
+    expect(clampZoom(1, 30)).toBe(20);
+    expect(clampZoom(1, 2)).toBe(2);
+  });
+
+  it("a fitted zoom below the floor: zooming out stays put, zooming in works", () => {
+    // Fit put an 8192 px document at ~8%: Ctrl+- and the wheel jumped it IN to 10%.
+    expect(clampZoom(0.08, 0.08 / 1.2)).toBe(0.08);
+    expect(clampZoom(0.08, 0.09)).toBe(0.09);
+    expect(clampZoom(0.08, 0.2)).toBe(0.2);
+  });
+});
+
+describe("rotationDegrees", () => {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  it("wraps a turn off into (−180, 180]", () => {
+    expect(rotationDegrees(rad(340))).toBe(-20);
+    expect(rotationDegrees(rad(-340))).toBe(20);
+    expect(rotationDegrees(rad(360))).toBe(0);
+    expect(rotationDegrees(rad(-180))).toBe(180);
+    expect(rotationDegrees(rad(180))).toBe(180);
+    expect(rotationDegrees(rad(735))).toBe(15);
+  });
+  it("leaves an in-range angle as whole degrees", () => {
+    expect(rotationDegrees(rad(-90))).toBe(-90);
+    expect(rotationDegrees(rad(12.4))).toBe(12);
+    expect(Object.is(rotationDegrees(rad(-0.2)), 0)).toBe(true);
+  });
+});
+
+describe("wheelPx", () => {
+  it("converts lines and pages to pixels, leaves pixels alone", () => {
+    expect(wheelPx(3, 1)).toBe(48); // one Firefox mouse-wheel notch
+    expect(wheelPx(-1, 2)).toBe(-800);
+    expect(wheelPx(100, 0)).toBe(100);
+    expect(wheelPx(100)).toBe(100);
   });
 });

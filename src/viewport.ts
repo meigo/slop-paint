@@ -32,6 +32,27 @@ export function panKeepingScreenPoint(
   };
 }
 
+/** The view's rotation for the zoom readout: whole degrees in (−180, 180]. The rotation itself
+ *  isn't wrapped (a twist across the pinch angle's ±180° seam, or R pressed round, left it a turn
+ *  off: the readout said 340° for a 20° turn). */
+export function rotationDegrees(radians: number): number {
+  let d = Math.round((radians * 180) / Math.PI) % 360;
+  if (d > 180) d -= 360;
+  if (d <= -180) d += 360;
+  return d === 0 ? 0 : d;
+}
+
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 20;
+
+/** `wanted` kept inside MIN_ZOOM–MAX_ZOOM, except that a zoom already outside them (Fit sets a big
+ *  document below 10%) may stay there: a zoom-out from it zoomed IN to the floor. */
+export function clampZoom(current: number, wanted: number): number {
+  const lo = Math.min(MIN_ZOOM, current);
+  const hi = Math.max(MAX_ZOOM, current);
+  return Math.max(lo, Math.min(hi, wanted));
+}
+
 export class Viewport {
   zoom = 1;
   // Pan in screen pixels (how far the canvas origin has moved on screen)
@@ -42,8 +63,6 @@ export class Viewport {
 
   private target: HTMLElement;
   private parent: HTMLElement;
-  private minZoom = 0.1;
-  private maxZoom = 20;
 
   private isPanning = false;
   private panStartX = 0;
@@ -91,8 +110,8 @@ export class Viewport {
     };
   }
 
-  /** Zoom toward a screen point, keeping that point fixed */
-  zoomAt(screenX: number, screenY: number, delta: number) {
+  /** Zoom by `factor` toward a screen point, keeping that point fixed */
+  zoomAt(screenX: number, screenY: number, factor: number) {
     const rect = this.parent.getBoundingClientRect();
     const rx = screenX - rect.left;
     const ry = screenY - rect.top;
@@ -101,8 +120,7 @@ export class Viewport {
     const canvas = this.screenToCanvas(screenX, screenY);
 
     const oldZoom = this.zoom;
-    const factor = delta > 0 ? 0.9 : 1.1;
-    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, oldZoom * factor));
+    this.zoom = clampZoom(oldZoom, oldZoom * factor);
 
     // Adjust pan so the same canvas point stays under cursor
     // Forward: screen = pan + rotate(scale(canvas))
@@ -124,7 +142,7 @@ export class Viewport {
     const centerY = rect.top + rect.height / 2;
     const canvas = this.screenToCanvas(centerX, centerY);
 
-    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, z));
+    this.zoom = clampZoom(this.zoom, z);
 
     const rx = rect.width / 2;
     const ry = rect.height / 2;
@@ -234,4 +252,24 @@ export class Viewport {
     this.target.style.transformOrigin = "0 0";
     this.target.style.transform = `translate(${this.panX}px, ${this.panY}px) rotate(${deg}deg) scale(${this.zoom})`;
   }
+}
+
+/** Pixels per unit of a WheelEvent's `deltaMode`: pixels, lines (Firefox's mouse wheel), pages. */
+const WHEEL_UNIT_PX = [1, 16, 800];
+
+/** A WheelEvent delta in pixels. Firefox's mouse wheel reports lines (3 a notch): taken as pixels,
+ *  a notch panned the view ~3 px. */
+export function wheelPx(delta: number, deltaMode = 0): number {
+  return delta * (WHEEL_UNIT_PX[deltaMode] ?? 1);
+}
+
+/**
+ * The zoom factor for a Ctrl/Cmd-wheel delta: exp(−deltaY / 100), the scale Chrome itself gives a
+ * trackpad pinch, so the page follows the fingers; each event capped at ±10 px, so one mouse
+ * notch (100 px) zooms ~10% as before; 0 zooms nothing. It was a fixed 10% per event whatever its
+ * size: a pinch, sent as many small deltas, zoomed ~10× too fast, and deltaY 0 zoomed in.
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
+  const px = wheelPx(deltaY, deltaMode);
+  return Math.exp(-Math.max(-10, Math.min(10, px)) / 100);
 }
