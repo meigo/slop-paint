@@ -22,6 +22,12 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   over blue makes green — and a stroke crossing itself stays even; Edge, Grain, Wobble and Mix
   colours in the gear), and textured **Pencil** (with a grade, 4H to 8B: hard and light to soft and dark),
   **Charcoal** (with a texture, Rough to Dense) and **Airbrush** tips
+- **Blend**: moves the paint already on the layer instead of adding colour. **Smear** in the gear
+  goes from a soft blur (0) through a smudge to a long, painterly smear (100); **Colour** mixes some
+  of the brush colour into what it carries, so it paints and blends at once; **Tip** gives it a
+  Soft, Hard, Grain or Rough edge. On the bar, Opacity reads **Strength**. It blends the active
+  layer only, so on a see-through layer a stroke started in empty space drags emptiness in and
+  thins the paint. Not offered for the eraser
 - **Wobble** for Smooth, Calligraphy and Watercolour: an uneven, hand-made edge (off by default
   for Smooth and Calligraphy; a light Smooth or Watercolour stroke keeps at least half its width however strong). Resting the Pencil no longer makes a Smooth or Watercolour tip pulse
   with the pen's small pressure changes: it can grow while you press, never shrink back

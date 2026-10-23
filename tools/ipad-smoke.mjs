@@ -397,6 +397,39 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Blend moves the paint already there: a stroke down across the Smooth band changes its
+    // pixels and is one undo step (undone after, so the band is as it was). The eraser doesn't
+    // offer it.
+    const select = page
+      .locator("select")
+      .filter({ has: page.locator('option[value="calligraphy"]') });
+    await select.selectOption("blend");
+    await tool("Brush size 40").tap();
+    const r = rect(0.22, 0.03, 0.12, 0.12);
+    const before = await pixels(r);
+    const title = await undoTitle();
+    await pen(line(at(0.28, 0.06), at(0.28, 0.14)));
+    await page.waitForTimeout(300);
+    const after = await pixels(r);
+    const stepped = (await undoTitle()) !== title || (await canUndo());
+    await undo();
+    await page.waitForTimeout(200);
+    // Back to the size the other steps draw with (4, the default: not a preset).
+    await tool("Click to type exact size").tap();
+    await page.keyboard.type("4");
+    await page.keyboard.press("Enter");
+    await select.selectOption("smooth");
+    await tapTool("Eraser");
+    const eraserHasBlend = (await select.locator('option[value="blend"]').count()) > 0;
+    await tapTool("Brush");
+    return [
+      before.avg !== after.avg && stepped && !eraserHasBlend,
+      `[sim] Blend smudges a stroke (avg ${before.avg} → ${after.avg}), one undo step; the eraser doesn't offer it`,
+      "blend",
+    ];
+  });
+
+  await step(async () => {
     // Watercolour: across a stroke the rim is darker than the middle; where one stroke crosses
     // itself it is no darker (one wet patch); a second stroke over it is (a glaze). Grain 0, so
     // the samples aren't grain.

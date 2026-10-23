@@ -84,6 +84,12 @@ export interface BrushSettings {
   washWobble?: number;
   /** Watercolour only: mix with the paint already on the layer, as glazes do (canvas multiply). */
   washMultiply?: boolean;
+  /** Blend only, 0–100: 0 blurs in place, higher carries the paint along the stroke (a smear). */
+  blendSmear?: number;
+  /** Blend only, 0–100: how much of the brush colour mixes into the paint it carries. */
+  blendColour?: number;
+  /** Blend only: its tip, "soft" … "rough" (`BLEND_TIPS`); Soft by default. */
+  blendTip?: string;
   /** Taper the stroke's ends to a point instead of capping them (Smooth brush). */
   taper?: boolean;
   /** Smooth brush: keep a corner sharp where the pen paused, instead of smoothing it round. */

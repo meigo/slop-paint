@@ -16,6 +16,7 @@
   import { drawWatercolorStroke } from "./watercolor-brush";
   import { drawCalligraphyStroke, nibSemiAxes } from "./calligraphy-brush";
   import { drawStampStrokeIncremental, resetStampState } from "./stamp-brush";
+  import { drawBlendStrokeIncremental, resetBlendState } from "./blend-brush";
   import {
     LayerManager,
     adjacentRow,
@@ -474,6 +475,9 @@
     nibWobble?: number;
     pencilGrade?: string;
     charcoalTexture?: string;
+    blendSmear?: number;
+    blendColour?: number;
+    blendTip?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
   }
@@ -526,6 +530,9 @@
       nibWobble: app.brushSettings.nibWobble,
       pencilGrade: app.brushSettings.pencilGrade,
       charcoalTexture: app.brushSettings.charcoalTexture,
+      blendSmear: app.brushSettings.blendSmear,
+      blendColour: app.brushSettings.blendColour,
+      blendTip: app.brushSettings.blendTip,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -582,6 +589,9 @@
       if (data.nibWobble != null) app.brushSettings.nibWobble = data.nibWobble;
       if (data.pencilGrade != null) app.brushSettings.pencilGrade = data.pencilGrade;
       if (data.charcoalTexture != null) app.brushSettings.charcoalTexture = data.charcoalTexture;
+      if (data.blendSmear != null) app.brushSettings.blendSmear = data.blendSmear;
+      if (data.blendColour != null) app.brushSettings.blendColour = data.blendColour;
+      if (data.blendTip != null) app.brushSettings.blendTip = data.blendTip;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurves.brush.cp1 = data.curveCp1;
         pressureCurves.brush.cp2 = data.curveCp2;
@@ -1577,7 +1587,7 @@
     const { kind, sizeRange, settings: strokeSettings } = g.stroke;
     // smooth / ink / calligraphy / dry / watercolor redraw the whole stroke each frame from a
     // pre-stroke copy;
-    // the stamp tips draw incrementally. A per-segment redraw would re-composite each overlap and
+    // the stamp tips and Blend draw incrementally. A per-segment redraw would re-composite each overlap and
     // harden the antialiased edges (see the engines' own notes).
     const fullRedraw =
       kind === "smooth" ||
@@ -1637,6 +1647,7 @@
         saveLayerToCanvas(layer);
       }
       resetStampState();
+      resetBlendState();
     }
 
     if (fullRedraw) {
@@ -1676,12 +1687,16 @@
       // Stamp engine: incremental, only draws new points
       layer.ctx.save();
       selection?.applyClip(layer.ctx);
-      drawStampStrokeIncremental(
-        layer.ctx,
-        points,
-        { ...strokeSettings, brushType: kind },
-        sizeRange,
-      );
+      if (kind === "blend") {
+        drawBlendStrokeIncremental(layer.ctx, points, strokeSettings, sizeRange, done);
+      } else {
+        drawStampStrokeIncremental(
+          layer.ctx,
+          points,
+          { ...strokeSettings, brushType: kind },
+          sizeRange,
+        );
+      }
       layer.ctx.restore();
       scheduleComposite();
 
@@ -3708,7 +3723,9 @@
         // (STAMP_MIN_ROPE_PX): at Stream 0 a thin Pencil line came out stepped on iPad.
         minRopePx: () => {
           const k = gesture?.stroke?.kind;
-          return k === "pencil" || k === "charcoal" || k === "airbrush" ? STAMP_MIN_ROPE_PX : 0;
+          return k === "pencil" || k === "charcoal" || k === "airbrush" || k === "blend"
+            ? STAMP_MIN_ROPE_PX
+            : 0;
         },
       },
     );
