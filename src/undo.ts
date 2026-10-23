@@ -143,23 +143,27 @@ export function structuralEdit<T>(
   const beforeTree = layers.captureStructure();
   const target = pixelLayer?.() ?? null;
   const beforePixels = target ? layers.snapshotOf(target) : null;
-  // Its opacity too: merge down bakes the lower layer's opacity into its pixels.
+  // Its opacity and tint too: merge down bakes the lower layer's into its pixels.
   const beforeOpacity = target?.opacity;
+  const beforeTint = target?.tint;
   const result = run();
   const afterTree = layers.captureStructure();
   const afterPixels = target ? layers.snapshotOf(target) : null;
   const afterOpacity = target?.opacity;
+  const afterTint = target?.tint;
   if (sameStructure(beforeTree, afterTree)) return result; // nothing happened: no empty step
   history.push({
     undo: () => {
       if (target && beforePixels) layers.restoreTo(target, beforePixels);
       if (target && beforeOpacity !== undefined) target.opacity = beforeOpacity;
+      if (target) target.tint = beforeTint;
       layers.restoreStructure(beforeTree);
       hooks.onHistoryApplied();
     },
     redo: () => {
       if (target && afterPixels) layers.restoreTo(target, afterPixels);
       if (target && afterOpacity !== undefined) target.opacity = afterOpacity;
+      if (target) target.tint = afterTint;
       layers.restoreStructure(afterTree);
       hooks.onHistoryApplied();
     },
@@ -189,8 +193,9 @@ export function pushNameEdit(layers: LayerManager, id: number, before: string, a
 }
 
 /** Fields of a layer/group that undo one value at a time (not pixels, not the tree's shape).
- *  `blend` is a layer's blend mode (a Photoshop name; undefined = normal). */
-export type NodeField = "visible" | "opacity" | "locked" | "alphaLock" | "blend";
+ *  `blend` is a layer's blend mode (a Photoshop name; undefined = normal), `tint` its tint
+ *  ("#rrggbb"; undefined = none). */
+export type NodeField = "visible" | "opacity" | "locked" | "alphaLock" | "blend" | "tint";
 
 /**
  * Record a single-field change (visibility, opacity, lock, alpha lock). Resolved by id at apply
@@ -209,7 +214,7 @@ export function pushNodeFieldEdit(
   if (before === after) return;
   const apply = (value: boolean | number | string | undefined) => {
     const node = layers.findNode(id);
-    // `alphaLock` and `blend` only exist on layers; `locked` on layers and groups.
+    // `alphaLock`, `blend` and `tint` only exist on layers; `locked` on layers and groups.
     if (node) (node as unknown as Record<NodeField, typeof value>)[field] = value;
     hooks.onHistoryApplied();
   };

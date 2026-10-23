@@ -3,13 +3,15 @@
   // row. One strip at the top of the panel for whatever is selected (the Photoshop/Krita
   // convention, and what slop-animator moved to): list rows stay one line, so a row never grows
   // when selected and the row under the Pencil never moves.
-  import { Blend, Pencil, Stamp, Tag, Type } from "@lucide/svelte";
+  import { Blend, Palette, Pencil, Stamp, Tag, Type } from "@lucide/svelte";
   import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
   import type { Layer, LayerManager, LayerNode } from "../layers";
   import { clickOutside } from "./click-outside";
   import { pushNameEdit, pushNodeFieldEdit, pushRefEdit } from "../undo";
   import { sliderFill } from "./slider-fill";
   import { BLEND_MODES, blendLabel, canDraw } from "../blend";
+  import { normalizeTint } from "../tint";
+  import { SWATCHES } from "./swatches";
   import {
     parseTags,
     toggleTag,
@@ -61,6 +63,44 @@
     target.blend = after;
     pushNodeFieldEdit(layers, target.id, "blend", before, after);
     layers.composite();
+    onSettingsChange();
+  }
+
+  // A layer's tint (groups have none), as `blend`: its own derived on `layerVersion`.
+  const tint = $derived.by(() => {
+    void app.layerVersion;
+    return target?.type === "layer" ? (target.tint ?? null) : undefined;
+  });
+  let tintOpen = $state(false);
+  /** The native picker's drag: the canvas follows each `input`, the undo step and the row's
+   *  rebuild come once at `change` (as the opacity slider), from the tint before the drag. */
+  let tintStart: { id: number; value: string | undefined } | null = null;
+
+  /** Set the tint (undefined = none) as one undo step. */
+  function setTint(value: string | undefined) {
+    if (target?.type !== "layer") return;
+    const before = target.tint;
+    const after = normalizeTint(value);
+    if (before === after) return;
+    target.tint = after;
+    pushNodeFieldEdit(layers, target.id, "tint", before, after);
+    layers.composite();
+    onSettingsChange();
+  }
+
+  function onTintInput(value: string) {
+    if (target?.type !== "layer") return;
+    tintStart ??= { id: target.id, value: target.tint };
+    target.tint = normalizeTint(value);
+    layers.composite();
+  }
+
+  function commitTint() {
+    if (tintStart === null) return;
+    const { id, value: before } = tintStart;
+    tintStart = null;
+    const node = layers.findLayer(id);
+    if (node) pushNodeFieldEdit(layers, id, "tint", before, node.tint);
     onSettingsChange();
   }
 
@@ -129,6 +169,7 @@
 <svelte:window
   onkeydown={(e) => {
     if (tagsOpen && e.key === "Escape") tagsOpen = false;
+    if (tintOpen && e.key === "Escape") tintOpen = false;
   }}
 />
 
@@ -136,7 +177,7 @@
      status bar reads the titles). Fixed height whatever is selected, so the list below never shifts.
      `pr-[6px]` puts the pencil's right edge on the rows' eye column. -->
 <div
-  class="@container flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface pr-[6px] pl-2.5 text-text-secondary"
+  class="@container relative flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface pr-[6px] pl-2.5 text-text-secondary"
 >
   {#if target}
     <!-- In the narrowest panel the slider gives way (down to 32px) and the number hides, so the blend
@@ -181,6 +222,68 @@
           <option value={blend}>{blendLabel(blend)}</option>
         {/if}
       </select>
+    {/if}
+
+    {#if tint !== undefined}
+      <!-- Layers only: draw the layer in one colour (line art), its pixels untouched. The popover
+           spans the strip (positioned on it, not on this button): hung from the button it opened
+           past the panel's left edge, under the canvas. -->
+      <div class="flex shrink-0" use:clickOutside={() => (tintOpen = false)}>
+        <button
+          class="flex size-5 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
+          title={tint
+            ? `Tint ${tint} — the layer is drawn in this colour, its pixels kept as painted`
+            : "Tint — draw the layer in one colour, keeping its shape (recolour line art)"}
+          aria-haspopup="dialog"
+          aria-expanded={tintOpen}
+          onclick={() => (tintOpen = !tintOpen)}
+        >
+          {#if tint}
+            <span class="size-3.5 rounded-full border border-border" style:background={tint}></span>
+          {:else}
+            <Palette size={13} />
+          {/if}
+        </button>
+        {#if tintOpen}
+          <div
+            class="absolute top-full right-1.5 left-1.5 z-50 mt-1 flex flex-col gap-2 rounded-lg border border-border bg-surface p-2 text-xs shadow-lg"
+          >
+            <div class="grid grid-cols-8 gap-1">
+              {#each SWATCHES as { color, name } (color)}
+                <button
+                  class="aspect-square w-full cursor-pointer rounded-md border-2 {color === tint
+                    ? 'border-accent'
+                    : 'border-border'}"
+                  style:background={color}
+                  title="Tint: {name}"
+                  onclick={() => setTint(color)}
+                ></button>
+              {/each}
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                class="h-6 cursor-pointer rounded-md border border-border px-2 text-text-secondary hover:bg-surface-hover {tint
+                  ? ''
+                  : 'ui-on'}"
+                aria-pressed={!tint}
+                title="No tint — the layer shows its own colours"
+                onclick={() => setTint(undefined)}>None</button
+              >
+              <label class="flex items-center gap-2 text-text-secondary">
+                Custom
+                <input
+                  type="color"
+                  value={tint ?? "#1a1a1a"}
+                  title="Pick any tint colour"
+                  oninput={(e) => onTintInput(e.currentTarget.value)}
+                  onchange={commitTint}
+                  onblur={commitTint}
+                />
+              </label>
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
 
     {#if refLayer?.ref?.src.text}

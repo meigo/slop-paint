@@ -13,6 +13,7 @@ import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
 import { openTextSource, textPayloadFromPng } from "./text-ref";
 import { layerBlendFromPsd } from "./blend";
+import { drawTinted, tintEffects, tintFromPsd } from "./tint";
 
 /**
  * Build a PSD blob from the layer tree and trigger a browser download.
@@ -54,6 +55,15 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
         cvs.height = h;
         cvs.getContext("2d")!.drawImage(node.canvas, 0, 0, w, h);
       }
+      // A tint: the Spine export bakes it into the pixels (Spine reads pixels; a copy, as `cvs` may
+      // be the layer's own canvas), the project keeps it as Photoshop's Color Overlay.
+      if (node.tint && trim) {
+        const tinted = document.createElement("canvas");
+        tinted.width = w;
+        tinted.height = h;
+        drawTinted(tinted.getContext("2d")!, cvs, w, h, node.tint);
+        cvs = tinted;
+      }
       const out: PsdLayer = {
         name: node.name,
         canvas: cvs,
@@ -63,6 +73,7 @@ export function psdBuffer(manager: LayerManager, trim: boolean): ArrayBuffer {
         left: 0,
         top: 0,
       };
+      if (node.tint && !trim) out.effects = tintEffects(node.tint);
       if (node.ref && !trim) {
         const so = smartObjectFor(node.ref);
         out.placedLayer = so.placedLayer;
@@ -186,6 +197,7 @@ export function loadPsd(
         locked: false,
         alphaLock: false,
         blend: layerBlendFromPsd(psdLayer.blendMode),
+        tint: tintFromPsd(psdLayer.effects),
       };
       const ref = refFromPlaced(psdLayer.placedLayer, psd.linkedFiles);
       if (ref) {

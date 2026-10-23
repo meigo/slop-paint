@@ -121,6 +121,11 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   as one block by any picked row's grip (the floating row shows how many, stacked like a pile)
 - **Blend modes** per layer — Normal, Multiply, Screen, Overlay and Add — kept in the PSD (a PSD's
   other modes are kept too)
+- **Tint** per layer (the palette button in the layer strip): the layer is drawn in one colour,
+  keeping its shape — recolour line art without repainting it, and change your mind any time; the
+  pixels stay as painted (None takes it off). Flat: grey shading in a line takes the one colour too.
+  Saved in the project PSD as Photoshop's Color Overlay; **Export PSD for Spine** paints it into the
+  pixels, and Merge down keeps the look
 - Visibility, lock, **alpha lock** (paint only over existing pixels), opacity per layer and per group;
   locking a group locks everything in it (new, duplicated and imported layers go beside a locked group,
   not into it)
@@ -151,7 +156,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Document ▸ Resize…**: scale the whole drawing to a new size, or crop / extend the canvas around
   it at an anchor; **Keep ratio** fills in the other side as you type
 - **PSD is the project format** — save and open round-trip the layer tree, names, opacity, visibility,
-  groups, reference Smart Objects and text layers, and open PSDs from Photoshop, GIMP and others
+  tints, groups, reference Smart Objects and text layers, and open PSDs from Photoshop, GIMP and others
 - A file dragged onto the app does nothing (the browser used to open it in place of the app): use
   **File ▸ Open** or **File ▸ Import image…**
 - **Chrome and Edge on desktop:** Save writes back to the project's file (asking where only the

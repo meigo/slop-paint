@@ -39,6 +39,7 @@
   import { isDoubleTap, type Tap } from "./double-tap";
   import { parseTags, buildName } from "../spine-tags";
   import { fontLabel } from "../text-layout";
+  import { drawTinted } from "../tint";
   import { selectOnFocus } from "./select-on-focus";
 
   let {
@@ -508,7 +509,12 @@
       const ctx = node.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, node.width, node.height);
-      ctx.drawImage(layer.canvas, 0, 0, node.width, node.height);
+      if (layer.tint) {
+        // The layer as it is drawn: in its tint (see `drawTree`).
+        drawTinted(ctx, layer.canvas, node.width, node.height, layer.tint);
+      } else {
+        ctx.drawImage(layer.canvas, 0, 0, node.width, node.height);
+      }
     };
     draw();
     const id = layer.id;
