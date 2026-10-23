@@ -99,7 +99,6 @@ export const app: AppStateShape = $state({
     pencilGrade: "HB",
     charcoalTexture: "medium",
     blendSmear: 30,
-    blendColour: 0,
     blendTip: "soft",
   },
   fillSettings: {

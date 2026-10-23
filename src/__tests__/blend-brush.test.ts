@@ -14,14 +14,13 @@ import {
 
 describe("blendMix", () => {
   it("picks up fresh paint every dab at Smear 0, and blurs most", () => {
-    const m = blendMix(0, 0, BLEND_SPACING);
+    const m = blendMix(0, BLEND_SPACING);
     expect(m.keep).toBe(0);
     expect(m.blur).toBeCloseTo(MAX_BLUR_SHARE);
-    expect(m.colour).toBe(0);
   });
 
   it("carries the load MAX_CARRY_WIDTHS widths at Smear 100, unblurred", () => {
-    const m = blendMix(100, 0, BLEND_SPACING);
+    const m = blendMix(100, BLEND_SPACING);
     expect(m.blur).toBe(0);
     // After one carry length of dabs the load has fallen to 1/e.
     const dabs = MAX_CARRY_WIDTHS / BLEND_SPACING;
@@ -29,9 +28,9 @@ describe("blendMix", () => {
   });
 
   it("carries further and blurs less as Smear rises", () => {
-    let last = blendMix(0, 0, BLEND_SPACING);
+    let last = blendMix(0, BLEND_SPACING);
     for (const s of [10, 30, 50, 80, 100]) {
-      const m = blendMix(s, 0, BLEND_SPACING);
+      const m = blendMix(s, BLEND_SPACING);
       expect(m.keep).toBeGreaterThan(last.keep);
       expect(m.blur).toBeLessThan(last.blur);
       last = m;
@@ -39,22 +38,14 @@ describe("blendMix", () => {
   });
 
   it("carries as far along the page whatever the dab spacing", () => {
-    const close = blendMix(60, 0, BLEND_SPACING);
-    const far = blendMix(60, 0, BLEND_SPACING * 3);
+    const close = blendMix(60, BLEND_SPACING);
+    const far = blendMix(60, BLEND_SPACING * 3);
     expect(far.keep).toBeCloseTo(close.keep ** 3);
   });
 
-  it("mixes in more brush colour per dab as Colour rises, never past all of it", () => {
-    expect(blendMix(50, 0, BLEND_SPACING).colour).toBe(0);
-    expect(blendMix(50, 50, BLEND_SPACING).colour).toBeLessThan(
-      blendMix(50, 100, BLEND_SPACING).colour,
-    );
-    expect(blendMix(50, 100, 10).colour).toBe(1);
-  });
-
   it("clamps out-of-range settings", () => {
-    expect(blendMix(-20, -5, BLEND_SPACING)).toEqual(blendMix(0, 0, BLEND_SPACING));
-    expect(blendMix(300, 300, BLEND_SPACING)).toEqual(blendMix(100, 100, BLEND_SPACING));
+    expect(blendMix(-20, BLEND_SPACING)).toEqual(blendMix(0, BLEND_SPACING));
+    expect(blendMix(300, BLEND_SPACING)).toEqual(blendMix(100, BLEND_SPACING));
   });
 });
 
