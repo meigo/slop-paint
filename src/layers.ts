@@ -1,6 +1,7 @@
 import { isParallelogram, matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
+import { drawTinted } from "./tint";
 import { halvingSteps } from "./resize";
 
 /** A reference's ORIGINAL image: the file as imported (kept whole for the PSD's embedded Smart
@@ -53,6 +54,10 @@ export interface Layer {
   alphaLock: boolean;
   /** Blend mode by its Photoshop name ("multiply", "linear dodge"…; see blend.ts); absent = normal. */
   blend?: string;
+  /** Drawn in this one colour, keeping its shape ("#rrggbb"; `tint.ts`); absent = as painted. The
+   *  pixels never change: the compositor and the thumbnails apply it, Merge down and the Spine
+   *  export bake it in. */
+  tint?: string;
   /** Set on a reference layer (a Smart Object in the PSD); absent on every ordinary layer. */
   ref?: RefPlacement;
 }
@@ -475,6 +480,14 @@ export class LayerManager {
   moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
   /** The float's layer, combined with the float each frame (reused, resized as needed). */
   private floatScratch: HTMLCanvasElement | null = null;
+  /** A tinted layer as drawn, each frame (reused, resized as needed). */
+  private tintScratch: HTMLCanvasElement | null = null;
+  /** The layer a brush stroke is drawing on, while it is open (App sets and clears it): the only
+   *  layer whose pixels change until it ends, so every OTHER tinted layer is tinted once and reused
+   *  (`tintCache`). Tinting each one afresh every frame cost ~1.4 ms a layer at 1× in WebKit and
+   *  ~7 ms at 2× on a Mac (more in Chromium): three tinted line layers slowed every stroke. */
+  private liveId: number | null = null;
+  private tintCache = new Map<number, { canvas: HTMLCanvasElement; tint: string }>();
 
   constructor(
     _displayCanvas: HTMLCanvasElement,
@@ -932,6 +945,7 @@ export class LayerManager {
     dup.locked = src.locked;
     dup.alphaLock = src.alphaLock;
     dup.blend = src.blend;
+    dup.tint = src.tint;
     // A copy of a reference is a reference too: same original, its own placement.
     if (src.ref) {
       dup.ref = { src: src.ref.src, corners: src.ref.corners.map((p) => ({ ...p })) as Corners };
@@ -964,11 +978,18 @@ export class LayerManager {
       below.ctx.fillRect(0, 0, below.canvas.width, below.canvas.height);
       below.opacity = 100;
     }
+    // Its tint goes into its pixels too, or it would recolour what lands on it.
+    if (below.tint) {
+      below.ctx.globalCompositeOperation = "source-atop";
+      below.ctx.fillStyle = below.tint;
+      below.ctx.fillRect(0, 0, below.canvas.width, below.canvas.height);
+      below.tint = undefined;
+    }
     // Draw src onto below
     below.ctx.globalAlpha = src.opacity / 100;
     // In its blend mode, so the merge looks as the two layers did (a multiply layer multiplies in).
     below.ctx.globalCompositeOperation = canvasOp(src.blend);
-    below.ctx.drawImage(src.canvas, 0, 0);
+    below.ctx.drawImage(src.tint ? this.tinted(src.canvas, src.tint) : src.canvas, 0, 0);
     below.ctx.restore();
 
     // Remove the source layer
@@ -1023,11 +1044,46 @@ export class LayerManager {
     return s;
   }
 
+  /** A brush stroke opens on layer `id` (or closes: null). The tint cache lasts one stroke. */
+  setLiveLayer(id: number | null) {
+    this.liveId = id;
+    for (const c of this.tintCache.values()) c.canvas.width = 0; // WebKit frees it sooner
+    this.tintCache.clear();
+  }
+
+  /** `layer` (as `source`: its pixels, or with the float) in its tint: from the stroke's cache
+   *  when another layer is the live one, else afresh on the scratch canvas. */
+  private tintedLayer(layer: Layer, source: HTMLCanvasElement, tint: string): HTMLCanvasElement {
+    if (this.liveId === null || this.liveId === layer.id || source !== layer.canvas) {
+      return this.tinted(source, tint);
+    }
+    const hit = this.tintCache.get(layer.id);
+    if (hit && hit.tint === tint && hit.canvas.width === source.width) return hit.canvas;
+    const c = hit?.canvas ?? document.createElement("canvas");
+    c.width = source.width;
+    c.height = source.height;
+    drawTinted(c.getContext("2d")!, source, c.width, c.height, tint);
+    this.tintCache.set(layer.id, { canvas: c, tint });
+    return c;
+  }
+
+  /** `source` (a layer's pixels, at its own size) in `tint`, on the reused scratch canvas. */
+  tinted(source: HTMLCanvasElement, tint: string): HTMLCanvasElement {
+    let s = this.tintScratch;
+    if (!s) s = this.tintScratch = document.createElement("canvas");
+    if (s.width !== source.width || s.height !== source.height) {
+      s.width = source.width;
+      s.height = source.height;
+    }
+    drawTinted(s.getContext("2d")!, source, s.width, s.height, tint);
+    return s;
+  }
+
   /**
    * Draw the whole document onto `ctx` at `w` × `h` pixels — the ONE way layers are combined: the
    * screen (at the canvas's own size), the PNG export and a PSD's flattened preview (at document
    * size) all use it. Hidden layers and groups are skipped, a group's opacity multiplies its
-   * members', and each layer draws in its blend mode; a group has none of its own ("pass through":
+   * members', and each layer draws in its tint and blend mode; a group has none ("pass through":
    * its members blend straight into what's below). The export paths used to loop the layers alone
    * and missed group visibility and opacity — a hidden group still showed in the PNG.
    */
@@ -1048,7 +1104,8 @@ export class LayerManager {
           if (node.canvas.width === 0 || node.canvas.height === 0) continue;
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
-          const source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
+          let source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
+          if (node.tint) source = this.tintedLayer(node, source, node.tint);
           const off = move?.ids.has(node.id) ? move : null;
           if (off) {
             const k = w / this.docWidth;

@@ -892,6 +892,38 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Tint: a stroke on the new layer, tinted Red from the layer strip with finger taps — the screen
+    // shows it red (its pixels stay black); Undo takes the tint off, a second Undo the stroke.
+    const redness = async () => {
+      const h = (await pixels(rect(0.7, 0.62, 0.2, 0.06))).avg;
+      return parseInt(h.slice(1, 3), 16) - parseInt(h.slice(3, 5), 16);
+    };
+    await pen(line(at(0.68, 0.65), at(0.92, 0.65)), { p: () => 1 });
+    await page.waitForTimeout(250);
+    const r0 = await redness();
+    await page.locator('button[title^="Tint"]').first().tap();
+    await page.locator('button[title="Tint: Red"]').tap();
+    await page.waitForTimeout(250);
+    const r1 = await redness();
+    const title = (await page.locator('button[title^="Tint #"]').getAttribute("title")) ?? "";
+    await page.locator('button[title^="No tint"]').tap(); // None takes it off (one more step)
+    await page.waitForTimeout(150);
+    const r2 = await redness();
+    await undo(); // None
+    await undo(); // Red
+    await page.waitForTimeout(150);
+    const r3 = await redness();
+    await undo(); // the stroke
+    await tap(offPage); // close the popover
+    await page.waitForTimeout(200);
+    return [
+      r1 - r0 > 20 && r2 - r0 < 5 && r3 - r0 < 5 && /#e53935/.test(title),
+      `the layer strip's Tint draws the layer red (avg R−G ${r0} → ${r1}), None and Undo take it off (${r2}, ${r3})`,
+      "tint",
+    ];
+  });
+
+  await step(async () => {
     const blend = page.locator('select[title^="Blend mode"]');
     await blend.selectOption({ label: "Multiply" });
     await page.waitForTimeout(200);

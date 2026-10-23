@@ -1639,6 +1639,7 @@
 
     if (press) {
       frozenTo = 0;
+      layers.setLiveLayer(layer.id);
       preStrokeSnapshot = layers.getSnapshot();
       if (fullRedraw) {
         saveLayerToCanvas(layer);
@@ -1657,6 +1658,7 @@
         selection?.applyClip(layer.ctx);
         drawFullStroke(layer.ctx, points, true, unfrozenFrom());
         layer.ctx.restore();
+        layers.setLiveLayer(null);
         layers.composite();
         if (preStrokeSnapshot) {
           pushPixelEdit(layers, layer, preStrokeSnapshot);
@@ -1698,6 +1700,7 @@
       scheduleComposite();
 
       if (done) {
+        layers.setLiveLayer(null);
         layers.composite();
         if (preStrokeSnapshot) {
           pushPixelEdit(layers, layer, preStrokeSnapshot);
