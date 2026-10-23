@@ -476,7 +476,6 @@
     pencilGrade?: string;
     charcoalTexture?: string;
     blendSmear?: number;
-    blendColour?: number;
     blendTip?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
@@ -531,7 +530,6 @@
       pencilGrade: app.brushSettings.pencilGrade,
       charcoalTexture: app.brushSettings.charcoalTexture,
       blendSmear: app.brushSettings.blendSmear,
-      blendColour: app.brushSettings.blendColour,
       blendTip: app.brushSettings.blendTip,
     };
     try {
@@ -590,7 +588,6 @@
       if (data.pencilGrade != null) app.brushSettings.pencilGrade = data.pencilGrade;
       if (data.charcoalTexture != null) app.brushSettings.charcoalTexture = data.charcoalTexture;
       if (data.blendSmear != null) app.brushSettings.blendSmear = data.blendSmear;
-      if (data.blendColour != null) app.brushSettings.blendColour = data.blendColour;
       if (data.blendTip != null) app.brushSettings.blendTip = data.blendTip;
       if (data.curveCp1 && data.curveCp2) {
         pressureCurves.brush.cp1 = data.curveCp1;

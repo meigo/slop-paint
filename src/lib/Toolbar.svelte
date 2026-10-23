@@ -1061,22 +1061,6 @@
               />
               <span class={valueCls}>{app.brushSettings.blendSmear}</span>
             </label>
-            <label
-              class={rowCls}
-              title="How much of the brush colour mixes into the paint it carries — 0 blends only what's on the layer"
-            >
-              <span class={labelCls}>Colour</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                style={sliderFill(app.brushSettings.blendColour ?? 0, 0, 100)}
-                bind:value={app.brushSettings.blendColour}
-                oninput={onSettingsChange}
-                class="min-w-0 flex-1"
-              />
-              <span class={valueCls}>{app.brushSettings.blendColour}</span>
-            </label>
             <div
               class={rowCls}
               title="The tip's edge: Soft and Hard are smooth, Grain and Rough textured"

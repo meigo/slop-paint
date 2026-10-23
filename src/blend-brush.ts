@@ -5,9 +5,10 @@
  * Each dab reads the layer under it, mixes that into the paint the brush carries (`load`), and
  * puts the load back through the tip's mask. Smear sets how far the load carries: at 0 the brush
  * picks up fresh paint at every dab and blurs it, so it blurs in place; higher it carries the
- * paint along the stroke — a smudge, then a long smear. Colour mixes some of the brush colour into
- * the load, so it paints and blends at once (Photoshop's Mixer brush). The tip's mask gives the
- * edge texture.
+ * paint along the stroke — a smudge, then a long smear. The tip's mask gives the edge texture.
+ * It never adds the brush colour: a Colour slider that mixed it in (as Photoshop's Mixer brush)
+ * was dropped the same day — it made Blend a paint brush too, and how much colour came through
+ * depended on Smear (about 20% at Smear 0, 90% at 100).
  *
  * Works in the layer's DEVICE pixels, with whole-pixel dab positions, so a dab reads and writes the
  * same pixels with no resampling. Every write to the layer is a canvas draw, so a marquee's clip on
@@ -28,31 +29,23 @@ export const BLEND_SPACING = 0.1;
 export const MAX_CARRY_WIDTHS = 4;
 /** How far the blur reaches at Smear 0, as a share of the dab's width. */
 export const MAX_BLUR_SHARE = 0.25;
-/** How much of the brush colour one dab (at BLEND_SPACING) mixes in at Colour 100. */
-export const MAX_COLOUR_PER_DAB = 0.25;
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 /**
- * One dab's mixing, for Smear and Colour (0–100) when the dab is `stepShare` of its width past the
+ * One dab's mixing, for Smear (0–100) when the dab is `stepShare` of its width past the
  * last one: `keep`, how much of the load stays (the rest is picked up from under the dab; 0 =
  * a fresh pick-up, which is the blur); `blur`, the blur radius as a share of the dab's width (none
- * at Smear 100, where the smear itself softens); `colour`, how much of the brush colour goes in.
- * `keep` and `colour` follow the step, so a dab spaced further apart (a tiny brush, whose step is
+ * at Smear 100, where the smear itself softens). `keep` follows the step, so a dab spaced further apart (a tiny brush, whose step is
  * at least a pixel) carries as far along the page.
  */
-export function blendMix(
-  smear: number,
-  colour: number,
-  stepShare: number,
-): { keep: number; blur: number; colour: number } {
+export function blendMix(smear: number, stepShare: number): { keep: number; blur: number } {
   const s = clamp01(smear / 100);
   const carry = MAX_CARRY_WIDTHS * s * s;
   const step = Math.max(0, stepShare);
   return {
     keep: carry > 0 ? Math.exp(-step / carry) : 0,
     blur: MAX_BLUR_SHARE * (1 - s) * (1 - s),
-    colour: clamp01((clamp01(colour / 100) * MAX_COLOUR_PER_DAB * step) / BLEND_SPACING),
   };
 }
 
@@ -314,7 +307,7 @@ export function drawBlendStrokeIncremental(
     const cy = m.b * x + m.d * y + m.f;
     const x0 = Math.round(cx - d / 2);
     const y0 = Math.round(cy - d / 2);
-    const mix = blendMix(settings.blendSmear ?? 30, settings.blendColour ?? 0, stepShare);
+    const mix = blendMix(settings.blendSmear ?? 30, stepShare);
     const blur = blurPlan(d, mix.blur);
     const { pad, size: u } = blur;
 
@@ -373,12 +366,6 @@ export function drawBlendStrokeIncremental(
       lc.globalCompositeOperation = "lighter";
       lc.drawImage(under, pad, pad, d, d, 0, 0, loadSize, loadSize);
     }
-    if (mix.colour > 0) {
-      lc.globalAlpha = mix.colour;
-      lc.globalCompositeOperation = "source-over";
-      lc.fillStyle = settings.color;
-      lc.fillRect(0, 0, loadSize, loadSize);
-    }
 
     // 4. The dab's mask: the tip at its size (from the mip level that shrinks it least).
     mask = scratch(mask, d, d);
@@ -428,7 +415,7 @@ export function drawBlendStrokeIncremental(
   const start = Math.max(0, lastCount - 1);
   const fresh = points.slice(start);
   if (lastCount === 0) {
-    // The first dab picks up the load; drawn back, it changes nothing (but the Colour it adds).
+    // The first dab picks up the load; drawn back, it changes nothing.
     blendDab(fresh[0].x, fresh[0].y, fresh[0].pressure, BLEND_SPACING);
     sinceLast = 0;
   }
