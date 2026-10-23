@@ -41,7 +41,7 @@
   import { MAX_THICKNESS } from "../outline";
   import { PRESS_MAX, PRESS_MIN } from "../brush";
   import { PENCIL_GRADES } from "../stamp-brush";
-  import { CHARCOAL_TEXTURES } from "../brush-textures";
+  import { BLEND_TIPS, CHARCOAL_TEXTURES } from "../brush-textures";
   import { meshStepBlock } from "../mesh-size";
   import { sliderFill } from "./slider-fill";
   import { selectOnFocus } from "./select-on-focus";
@@ -166,6 +166,8 @@
   let paintColor = $derived(fillActive ? app.fillColor : app.brushSettings.color);
   let paintOpacity = $derived(fillActive ? app.fillOpacity : app.brushSettings.opacity);
   let opacityDisplay = $derived(paintOpacity + "%");
+  /** The Blend brush moves paint instead of laying it down: its Opacity is how strongly. */
+  let blending = $derived(app.currentTool === "brush" && app.brushType === "blend");
   function setPaintColor(color: string) {
     if (fillActive) app.fillColor = color;
     else app.brushSettings.color = color;
@@ -689,6 +691,10 @@
         <option value="pencil">Pencil</option>
         <option value="charcoal">Charcoal</option>
         <option value="airbrush">Airbrush</option>
+        <!-- Not an eraser: it moves paint, it doesn't remove it. -->
+        {#if activeTool !== "eraser"}
+          <option value="blend">Blend</option>
+        {/if}
       </select>
     </div>
 
@@ -770,8 +776,11 @@
   {/if}
 
   {#if showBrush || showFill}
-    <label class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
-      Opacity
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title={blending ? "Strength — how strongly the brush blends" : undefined}
+    >
+      {blending ? "Strength" : "Opacity"}
       <input
         type="range"
         min="1"
@@ -790,12 +799,18 @@
   {#if activeTool === "brush"}
     <div class="flex items-center">
       <button
-        class="{actionBtnClass} {app.brushSettings.drawBehind ? 'ui-on' : ''}"
+        class="{actionBtnClass} {app.brushSettings.drawBehind ? 'ui-on' : ''} {blending
+          ? 'opacity-40'
+          : ''}"
         aria-pressed={app.brushSettings.drawBehind}
-        title={app.brushSettings.drawBehind
-          ? "Draw behind on — paint goes under existing pixels; tap to turn off"
-          : "Draw behind — paint under existing pixels"}
+        aria-disabled={blending}
+        title={blending
+          ? "Draw behind doesn't apply to Blend — it moves the paint that's already there"
+          : app.brushSettings.drawBehind
+            ? "Draw behind on — paint goes under existing pixels; tap to turn off"
+            : "Draw behind — paint under existing pixels"}
         onclick={() => {
+          if (blending) return;
           app.brushSettings.drawBehind = !app.brushSettings.drawBehind;
           onSettingsChange();
         }}><SendToBack size={18} /></button
@@ -1027,6 +1042,65 @@
               />
               Mix colours
             </label>
+          {/if}
+
+          {#if app.brushType === "blend"}
+            <label
+              class={rowCls}
+              title="0 blurs in place; higher carries the paint along the stroke — a smudge, then a long painterly smear"
+            >
+              <span class={labelCls}>Smear</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.blendSmear ?? 30, 0, 100)}
+                bind:value={app.brushSettings.blendSmear}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.blendSmear}</span>
+            </label>
+            <label
+              class={rowCls}
+              title="How much of the brush colour mixes into the paint it carries — 0 blends only what's on the layer"
+            >
+              <span class={labelCls}>Colour</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                style={sliderFill(app.brushSettings.blendColour ?? 0, 0, 100)}
+                bind:value={app.brushSettings.blendColour}
+                oninput={onSettingsChange}
+                class="min-w-0 flex-1"
+              />
+              <span class={valueCls}>{app.brushSettings.blendColour}</span>
+            </label>
+            <div
+              class={rowCls}
+              title="The tip's edge: Soft and Hard are smooth, Grain and Rough textured"
+            >
+              <span class={labelCls}>Tip</span>
+              <div class="flex min-w-0 flex-1 gap-px">
+                {#each BLEND_TIPS as t (t)}
+                  <button
+                    class="h-6 min-w-0 flex-1 rounded-md text-[10px] capitalize transition-colors {(app
+                      .brushSettings.blendTip ?? 'soft') === t
+                      ? 'ui-on'
+                      : 'text-text-muted hover:bg-surface-hover hover:text-text'}"
+                    aria-pressed={(app.brushSettings.blendTip ?? "soft") === t}
+                    title="{t[0].toUpperCase() + t.slice(1)} tip{t === 'soft'
+                      ? ' — the default'
+                      : ''}"
+                    onclick={() => {
+                      app.brushSettings.blendTip = t;
+                      onSettingsChange();
+                    }}>{t}</button
+                  >
+                {/each}
+              </div>
+            </div>
           {/if}
 
           {#if app.brushType === "dry"}

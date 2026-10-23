@@ -2,7 +2,8 @@ import { PRESS_DEFAULT, type BrushSettings } from "./brush";
 import type { BrushType } from "./brush-textures";
 
 /** Every brush the toolbar offers: the full-redraw engines plus the stamp tips. */
-export type BrushKind = "smooth" | "ink" | "calligraphy" | "dry" | "watercolor" | BrushType;
+export type BrushKind =
+  "smooth" | "ink" | "calligraphy" | "dry" | "watercolor" | "blend" | BrushType;
 import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
@@ -97,6 +98,9 @@ export const app: AppStateShape = $state({
     nibWobble: 0,
     pencilGrade: "HB",
     charcoalTexture: "medium",
+    blendSmear: 30,
+    blendColour: 0,
+    blendTip: "soft",
   },
   fillSettings: {
     tolerance: 32,

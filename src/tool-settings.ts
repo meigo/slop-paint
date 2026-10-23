@@ -78,6 +78,7 @@ export function parseSlot(raw: unknown, fallback: StrokeSlot): StrokeSlot {
   if (!raw || typeof raw !== "object") return fallback;
   const r = raw as Record<string, unknown>;
   const out = { ...fallback };
+  // No "blend": only the eraser's slot is parsed here, and Blend isn't an eraser.
   const types: BrushKind[] = [
     "smooth",
     "ink",
