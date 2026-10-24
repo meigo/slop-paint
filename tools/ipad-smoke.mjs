@@ -397,13 +397,14 @@ async function main(page) {
   });
 
   await step(async () => {
-    // Blend moves the paint already there: a stroke down across the Smooth band changes its
-    // pixels and is one undo step (undone after, so the band is as it was). The eraser doesn't
-    // offer it.
+    // The Blend tool moves the paint already there: a stroke down across the Smooth band changes
+    // its pixels and is one undo step (undone after, so the band is as it was). It keeps its own
+    // size (the brush's is untouched), shows no brush-type menu, and that menu has no Blend.
     const select = page
       .locator("select")
       .filter({ has: page.locator('option[value="calligraphy"]') });
-    await select.selectOption("blend");
+    await tapTool("Blend (J)");
+    const noTypeMenu = (await select.count()) === 0;
     await tool("Brush size 40").tap();
     const r = rect(0.22, 0.03, 0.12, 0.12);
     const before = await pixels(r);
@@ -414,17 +415,12 @@ async function main(page) {
     const stepped = (await undoTitle()) !== title || (await canUndo());
     await undo();
     await page.waitForTimeout(200);
-    // Back to the size the other steps draw with (4, the default: not a preset).
-    await tool("Click to type exact size").tap();
-    await page.keyboard.type("4");
-    await page.keyboard.press("Enter");
-    await select.selectOption("smooth");
-    await tapTool("Eraser");
-    const eraserHasBlend = (await select.locator('option[value="blend"]').count()) > 0;
     await tapTool("Brush");
+    const brushSize = await tool("Click to type exact size").innerText();
+    const menuHasBlend = (await select.locator('option[value="blend"]').count()) > 0;
     return [
-      before.avg !== after.avg && stepped && !eraserHasBlend,
-      `[sim] Blend smudges a stroke (avg ${before.avg} → ${after.avg}), one undo step; the eraser doesn't offer it`,
+      before.avg !== after.avg && stepped && noTypeMenu && brushSize === "4" && !menuHasBlend,
+      `[sim] the Blend tool smudges a stroke (avg ${before.avg} → ${after.avg}), one undo step; its size is its own (the brush's still ${brushSize}); no type menu under it, no Blend in the brush's`,
       "blend",
     ];
   });
@@ -1569,6 +1565,7 @@ try {
     for (const t of [
       "Brush (B)",
       "Eraser (E)",
+      "Blend (J)",
       "Rect Select",
       "Paint Bucket",
       "Eyedropper",
@@ -1597,7 +1594,7 @@ try {
     await pp.locator('button[title="Select all"]').tap();
     await pp.waitForTimeout(200);
     const chipped = [];
-    for (const t of ["Brush (B)", "Eraser (E)", "Paint Bucket", "Eyedropper"]) {
+    for (const t of ["Brush (B)", "Eraser (E)", "Blend (J)", "Paint Bucket", "Eyedropper"]) {
       await pp.locator(`button[title^="${t}"]`).first().tap();
       await pp.waitForTimeout(200);
       const r = await pp.evaluate(() => {

@@ -1,7 +1,7 @@
 import type { BrushKind } from "./appState.svelte";
 import { clampPress } from "./brush";
 
-/** Stroke settings that brush and eraser each keep their own copy of. */
+/** Stroke settings that brush, eraser and Blend each keep their own copy of. */
 export interface StrokeSlot {
   brushType: BrushKind;
   size: number;
@@ -11,7 +11,7 @@ export interface StrokeSlot {
   sizeRange: number;
 }
 
-export type SlotName = "brush" | "eraser";
+export type SlotName = "brush" | "eraser" | "blend";
 
 /** The live settings the toolbar binds to (a subset of AppStateShape). */
 export interface LiveStroke {
@@ -21,9 +21,9 @@ export interface LiveStroke {
   brushSettings: { size: number; opacity: number; smoothing: number };
 }
 
-/** The eraser has its own slot; every other tool draws with (or shows) the brush slot. */
+/** The eraser and Blend have their own slots; every other tool draws with (or shows) the brush's. */
 export function slotFor(tool: string): SlotName {
-  return tool === "eraser" ? "eraser" : "brush";
+  return tool === "eraser" || tool === "blend" ? tool : "brush";
 }
 
 export function readSlot(live: LiveStroke): StrokeSlot {
@@ -78,7 +78,8 @@ export function parseSlot(raw: unknown, fallback: StrokeSlot): StrokeSlot {
   if (!raw || typeof raw !== "object") return fallback;
   const r = raw as Record<string, unknown>;
   const out = { ...fallback };
-  // No "blend": only the eraser's slot is parsed here, and Blend isn't an eraser.
+  // No "blend": it is a tool, not a type (App draws the Blend tool's strokes as Blend whatever its
+  // slot holds), so a saved brush or eraser slot can't turn into it.
   const types: BrushKind[] = [
     "smooth",
     "ink",

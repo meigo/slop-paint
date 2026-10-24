@@ -10,7 +10,13 @@ import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
 import { isAppleTouch } from "./share";
 
 export type Tool =
-  "brush" | "eraser" | "fill" | "select" | "lasso" | "move" | "eyedropper" | "outline";
+  "brush" | "eraser" | "blend" | "fill" | "select" | "lasso" | "move" | "eyedropper" | "outline";
+
+/** The tools that draw a stroke (a brush outline under the pointer, a stroke gesture, a settings
+ *  slot of their own): Brush, Eraser and Blend (a tool since 2026-10-24, not a brush type). */
+export function isStrokeTool(tool: Tool): boolean {
+  return tool === "brush" || tool === "eraser" || tool === "blend";
+}
 
 interface AppStateShape {
   currentTool: Tool;
@@ -136,12 +142,19 @@ export const app: AppStateShape = $state({
 });
 
 // PressureCurve is not reactive — it's an imperative canvas widget
-/** One curve per stroke tool: the eraser got its own so a tuned brush feel isn't shared. */
-export const pressureCurves = { brush: new PressureCurve(), eraser: new PressureCurve() };
+/** One curve per stroke tool: the eraser got its own so a tuned brush feel isn't shared, and Blend
+ *  too. */
+export const pressureCurves = {
+  brush: new PressureCurve(),
+  eraser: new PressureCurve(),
+  blend: new PressureCurve(),
+};
 
-/** The curve for the active tool — the eraser's own, everything else the brush's. */
+/** The curve for the active tool — the eraser's and Blend's own, everything else the brush's. */
 export function activePressureCurve(): PressureCurve {
-  return app.currentTool === "eraser" ? pressureCurves.eraser : pressureCurves.brush;
+  if (app.currentTool === "eraser") return pressureCurves.eraser;
+  if (app.currentTool === "blend") return pressureCurves.blend;
+  return pressureCurves.brush;
 }
 
 export function bumpLayerVersion() {
