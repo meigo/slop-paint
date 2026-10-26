@@ -22,6 +22,7 @@
   const toolLabels: Record<string, string> = {
     brush: "Brush",
     eraser: "Eraser",
+    blend: "Blend",
     select: "Rect select",
     lasso: "Lasso",
     move: "Move",

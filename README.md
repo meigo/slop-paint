@@ -22,15 +22,16 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   over blue makes green — and a stroke crossing itself stays even; Edge, Grain, Wobble and Mix
   colours in the gear), and textured **Pencil** (with a grade, 4H to 8B: hard and light to soft and dark),
   **Charcoal** (with a texture, Rough to Dense) and **Airbrush** tips
-- **Blend**: moves the paint already on the layer instead of adding colour. **Smear** in the gear
-  goes from a soft blur (0) through a smudge to a long, painterly smear (100); **Tip** gives it a
-  Soft, Hard, Grain or Rough edge. On the bar, Opacity reads **Strength**. It blends the active
-  layer only, so on a see-through layer a stroke started in empty space drags emptiness in and
-  thins the paint. Not offered for the eraser
+- **Blend tool** (J, next to the eraser): moves the paint already on the layer instead of adding
+  colour. **Smear** on its bar goes from a soft blur (0) through a smudge to a long, painterly smear
+  (100); **Strength** sets how strongly; **Tip** (in the gear) gives it a Soft, Hard, Grain or Rough
+  edge. Like the eraser it keeps its own size, Press, Strength, Stream and pressure curve, so you can
+  paint small and blend big without resizing. It blends the active layer only, so on a see-through
+  layer a stroke started in empty space drags emptiness in and thins the paint
 - **Wobble** for Smooth, Calligraphy and Watercolour: an uneven, hand-made edge (off by default
   for Smooth and Calligraphy; a light Smooth or Watercolour stroke keeps at least half its width however strong). Resting the Pencil no longer makes a Smooth or Watercolour tip pulse
   with the pen's small pressure changes: it can grow while you press, never shrink back
-- Pressure curves — the brush and the eraser each have their own, edited as a bezier curve
+- Pressure curves — the brush, the eraser and Blend each have their own, edited as a bezier curve
 - **Press** on the brush bar: size is the medium width, light pressure thins the stroke and full
   pressure widens it, by up to that many times (as in slop-animator)
 - **Stream** steadies the line like a lazy brush: it trails the pen on a string, so small wobbles
@@ -183,24 +184,24 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 ## Keyboard shortcuts
 
-| Key                        | Action                                                     |
-| -------------------------- | ---------------------------------------------------------- |
-| B / E / S / L / V / G / I  | Brush / eraser / select / lasso / move / fill / eyedropper |
-| X (hold)                   | Temporary eraser                                           |
-| [ / ]                      | Smaller / larger brush                                     |
-| Ctrl+Z / Ctrl+Shift+Z      | Undo / redo                                                |
-| Ctrl+C / Ctrl+X / Ctrl+V   | Copy / cut / paste                                         |
-| Delete or Backspace        | Clear the selection                                        |
-| W / M                      | Distort / mesh warp the selection or whole layer           |
-| Enter / Escape             | Apply / cancel a transform or Outline preview              |
-| Space+drag or middle mouse | Pan                                                        |
-| Ctrl+= / Ctrl+-            | Zoom in / out                                              |
-| 0 / 1                      | Fit the view / 100% zoom                                   |
-| R / Shift+R                | Rotate the view 15° clockwise / counter-clockwise          |
-| Ctrl+S / Ctrl+O            | Save / open project (PSD)                                  |
-| Ctrl+Shift+S               | Save as… (Chrome and Edge on desktop)                      |
-| Ctrl+G                     | Put the selected layer or group into a new group           |
-| ↑ / ↓                      | Select the layer above / below                             |
+| Key                           | Action                                                             |
+| ----------------------------- | ------------------------------------------------------------------ |
+| B / E / J / S / L / V / G / I | Brush / eraser / blend / select / lasso / move / fill / eyedropper |
+| X (hold)                      | Temporary eraser                                                   |
+| [ / ]                         | Smaller / larger brush                                             |
+| Ctrl+Z / Ctrl+Shift+Z         | Undo / redo                                                        |
+| Ctrl+C / Ctrl+X / Ctrl+V      | Copy / cut / paste                                                 |
+| Delete or Backspace           | Clear the selection                                                |
+| W / M                         | Distort / mesh warp the selection or whole layer                   |
+| Enter / Escape                | Apply / cancel a transform or Outline preview                      |
+| Space+drag or middle mouse    | Pan                                                                |
+| Ctrl+= / Ctrl+-               | Zoom in / out                                                      |
+| 0 / 1                         | Fit the view / 100% zoom                                           |
+| R / Shift+R                   | Rotate the view 15° clockwise / counter-clockwise                  |
+| Ctrl+S / Ctrl+O               | Save / open project (PSD)                                          |
+| Ctrl+Shift+S                  | Save as… (Chrome and Edge on desktop)                              |
+| Ctrl+G                        | Put the selected layer or group into a new group                   |
+| ↑ / ↓                         | Select the layer above / below                                     |
 
 Cmd works in place of Ctrl on a Mac. New is in the File menu: browsers keep Ctrl+N for a new
 window. While the pen or mouse button is down, the view keys and the wheel do nothing, and a

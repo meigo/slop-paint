@@ -26,6 +26,15 @@ const eraser: StrokeSlot = {
   sizeRange: 2,
 };
 
+const blend: StrokeSlot = {
+  brushType: "blend",
+  size: 40,
+  opacity: 80,
+  smoothing: 0,
+  streamline: 30,
+  sizeRange: 3,
+};
+
 function liveFrom(s: StrokeSlot): LiveStroke {
   return {
     brushType: s.brushType,
@@ -36,8 +45,9 @@ function liveFrom(s: StrokeSlot): LiveStroke {
 }
 
 describe("slotFor", () => {
-  it("gives the eraser its own slot and everything else the brush slot", () => {
+  it("gives the eraser and Blend their own slots and everything else the brush slot", () => {
     expect(slotFor("eraser")).toBe("eraser");
+    expect(slotFor("blend")).toBe("blend");
     for (const t of ["brush", "fill", "select", "lasso", "eyedropper"]) {
       expect(slotFor(t)).toBe("brush");
     }
@@ -47,7 +57,7 @@ describe("slotFor", () => {
 describe("swapSlots", () => {
   it("loads the eraser values and parks the brush values", () => {
     const live = liveFrom(brush);
-    const slots = { brush: { ...brush }, eraser: { ...eraser } };
+    const slots = { brush: { ...brush }, eraser: { ...eraser }, blend: { ...blend } };
     live.brushSettings.size = 12; // edited while brush was active
     swapSlots(live, slots, "brush", "eraser");
     expect(readSlot(live)).toEqual(eraser);
@@ -56,7 +66,7 @@ describe("swapSlots", () => {
 
   it("round-trips brush → eraser → brush", () => {
     const live = liveFrom(brush);
-    const slots = { brush: { ...brush }, eraser: { ...eraser } };
+    const slots = { brush: { ...brush }, eraser: { ...eraser }, blend: { ...blend } };
     swapSlots(live, slots, "brush", "eraser");
     live.brushSettings.opacity = 30; // edited while eraser was active
     swapSlots(live, slots, "eraser", "brush");
@@ -66,7 +76,7 @@ describe("swapSlots", () => {
 
   it("does nothing between tools that share the brush slot", () => {
     const live = liveFrom(brush);
-    const slots = { brush: { ...brush, size: 99 }, eraser: { ...eraser } };
+    const slots = { brush: { ...brush, size: 99 }, eraser: { ...eraser }, blend: { ...blend } };
     swapSlots(live, slots, "brush", "fill");
     expect(readSlot(live)).toEqual(brush);
     expect(slots.brush.size).toBe(99);
@@ -74,18 +84,37 @@ describe("swapSlots", () => {
 
   it("switching from fill to eraser parks the values into the brush slot", () => {
     const live = liveFrom(brush);
-    const slots = { brush: { ...brush }, eraser: { ...eraser } };
+    const slots = { brush: { ...brush }, eraser: { ...eraser }, blend: { ...blend } };
     swapSlots(live, slots, "fill", "eraser");
     expect(slots.brush).toEqual(brush);
     expect(readSlot(live)).toEqual(eraser);
   });
 });
 
+describe("Blend's slot", () => {
+  it("round-trips brush → blend → eraser → brush, each keeping its own values", () => {
+    const live = liveFrom(brush);
+    const slots = { brush: { ...brush }, eraser: { ...eraser }, blend: { ...blend } };
+    swapSlots(live, slots, "brush", "blend");
+    expect(readSlot(live)).toEqual(blend);
+    live.brushSettings.size = 60; // edited while Blend was active
+    swapSlots(live, slots, "blend", "eraser");
+    expect(readSlot(live)).toEqual(eraser);
+    expect(slots.blend.size).toBe(60);
+    swapSlots(live, slots, "eraser", "brush");
+    expect(readSlot(live)).toEqual(brush);
+  });
+
+  it("a saved slot can't make the brush or eraser blend", () => {
+    expect(parseSlot({ ...eraser, brushType: "blend" }, eraser).brushType).toBe("pencil");
+  });
+});
+
 describe("allSlots", () => {
   it("folds the live values into the active tool's slot", () => {
     const live = liveFrom(eraser);
-    const slots = { brush: { ...brush }, eraser: { ...brush } }; // eraser slot is stale while active
-    expect(allSlots(live, slots, "eraser")).toEqual({ brush, eraser });
+    const slots = { brush: { ...brush }, eraser: { ...brush }, blend: { ...blend } }; // eraser stale
+    expect(allSlots(live, slots, "eraser")).toEqual({ brush, eraser, blend });
   });
 });
 

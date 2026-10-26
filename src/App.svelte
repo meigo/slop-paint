@@ -134,6 +134,7 @@
     app,
     pressureCurves,
     activePressureCurve,
+    isStrokeTool,
     bumpLayerVersion,
     bumpPixelVersion,
     bumpSelectionVersion,
@@ -292,7 +293,7 @@
    *  area (a stroke can start off the page); hidden where no stroke can land (locked/hidden layer). */
   function updateBrushCursor(screenX: number, screenY: number) {
     if (!brushCursorEl || !brushDotEl || !canvasClipEl || !viewport || !layers) return;
-    const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+    const isBrushTool = isStrokeTool(app.currentTool);
     if (!isBrushTool || spaceHeld || viewport.panning || isDrawing) return hideBrushCursor();
     const layer = layers.active;
     if (refTransform) {
@@ -426,10 +427,12 @@
   let toolBeforeOutline: Tool = "brush";
 
   // --- Per-tool stroke settings ---
-  // The active tool's values live in `app` (the toolbar binds there); this holds the other tool's.
+  // The active tool's values live in `app` (the toolbar binds there); this holds the other tools'.
   const strokeSlots: Record<SlotName, StrokeSlot> = {
     brush: readSlot(app),
     eraser: { ...readSlot(app), size: 8 },
+    // Its type is never read (a Blend tool stroke is always Blend); "blend" keeps the menus honest.
+    blend: { ...readSlot(app), brushType: "blend", size: 20, smoothing: 0 },
   };
 
   // --- Settings persistence ---
@@ -479,6 +482,10 @@
     blendTip?: string;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
+    /** Blend's own (a tool since 2026-10-24) and its curve; absent before, see `loadSettings`. */
+    blend?: StrokeSlot;
+    blendCurveCp1?: { x: number; y: number };
+    blendCurveCp2?: { x: number; y: number };
   }
 
   function saveSettings() {
@@ -502,6 +509,9 @@
       sizeRange: slots.brush.sizeRange,
       streamline: slots.brush.streamline,
       eraser: slots.eraser,
+      blend: slots.blend,
+      blendCurveCp1: { ...pressureCurves.blend.cp1 },
+      blendCurveCp2: { ...pressureCurves.blend.cp2 },
       curveCp1: { ...pressureCurves.brush.cp1 },
       curveCp2: { ...pressureCurves.brush.cp2 },
       eraserCurveCp1: { ...pressureCurves.eraser.cp1 },
@@ -605,9 +615,30 @@
       if (typeof data.taper === "boolean") app.brushSettings.taper = data.taper;
       if (typeof data.sharpCorners === "boolean")
         app.brushSettings.sharpCorners = data.sharpCorners;
+      // Blend was a brush type for a day (2026-10-23): a brush saved as Blend hands its values to
+      // the Blend tool, which it opens on, and the brush goes back to Smooth.
+      const wasBlendType = (app.brushType as string) === "blend";
+      if (wasBlendType) app.brushType = "smooth";
+      const bCp1 = data.blendCurveCp1 ?? data.curveCp1;
+      const bCp2 = data.blendCurveCp2 ?? data.curveCp2;
+      if (bCp1 && bCp2) {
+        pressureCurves.blend.cp1 = bCp1;
+        pressureCurves.blend.cp2 = bCp2;
+        pressureCurves.blend.buildLUT();
+      }
       strokeSlots.brush = readSlot(app);
       strokeSlots.eraser = parseSlot(data.eraser, strokeSlots.eraser);
+      strokeSlots.blend = {
+        ...(data.blend
+          ? parseSlot(data.blend, strokeSlots.blend)
+          : wasBlendType
+            ? strokeSlots.brush
+            : strokeSlots.blend),
+        brushType: "blend",
+      };
+      if (wasBlendType && app.currentTool === "brush") app.currentTool = "blend";
       if (app.currentTool === "eraser") writeSlot(app, strokeSlots.eraser);
+      if (app.currentTool === "blend") writeSlot(app, strokeSlots.blend);
       app.brushSettings.isEraser = app.currentTool === "eraser";
     } catch {
       /* corrupted */
@@ -1357,7 +1388,7 @@
     // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
     else if (refTransform) g.kind = "ref";
     else if (tool === "select" || tool === "lasso") g.kind = "select";
-    else if (tool === "brush" || tool === "eraser" || tool === "fill") {
+    else if (isStrokeTool(tool) || tool === "fill") {
       const layer = layers.active;
       // A reference is drawn from its original, so paint on it would be wiped by its next move:
       // brush, eraser and fill are refused until it is baked.
@@ -1376,7 +1407,8 @@
       const sizeRange = (rawPoints[0].hasPressure ?? true) ? app.sizeRange : 1;
       g.stroke = {
         layer,
-        kind: app.brushType,
+        // The Blend tool always blends, whatever its slot holds; the brush and eraser never do.
+        kind: tool === "blend" ? "blend" : app.brushType === "blend" ? "smooth" : app.brushType,
         sizeRange,
         settings: {
           ...app.brushSettings,
@@ -1750,7 +1782,7 @@
 
   function updateCursor() {
     if (!canvasClipEl) return;
-    const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+    const isBrushTool = isStrokeTool(app.currentTool);
     if (isBrushTool) {
       canvasClipEl.style.cursor = "none";
     } else {
@@ -1922,6 +1954,7 @@
     const letter = e.ctrlKey || e.metaKey ? "" : e.key.toLowerCase();
     if (letter === "b") setTool("brush");
     if (letter === "e") setTool("eraser");
+    if (letter === "j") setTool("blend");
     if (letter === "s") setTool("select");
     if (letter === "l") setTool("lasso");
     if (letter === "v") setTool("move");
@@ -3792,7 +3825,7 @@
         e.preventDefault();
         e.stopPropagation();
         viewport.endPan();
-        const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+        const isBrushTool = isStrokeTool(app.currentTool);
         canvasClipEl.style.cursor = spaceHeld ? "grab" : isBrushTool ? "none" : "crosshair";
         if (!spaceHeld) updateBrushCursor(e.clientX, e.clientY);
       }
@@ -3806,7 +3839,7 @@
       if (e.pointerType === "touch") return;
       if (viewport.panning || isDrawing || spaceHeld) return; // other handlers own the cursor
 
-      const isBrushTool = app.currentTool === "brush" || app.currentTool === "eraser";
+      const isBrushTool = isStrokeTool(app.currentTool);
 
       // Move: four arrows, or not-allowed when everything it would take is locked or hidden.
       if (app.currentTool === "move") {

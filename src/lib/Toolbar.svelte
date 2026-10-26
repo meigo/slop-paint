@@ -2,6 +2,7 @@
   import {
     Paintbrush,
     Eraser,
+    Droplet,
     BoxSelect,
     Lasso,
     PaintBucket,
@@ -30,7 +31,8 @@
     Scan,
     SendToBack,
   } from "@lucide/svelte";
-  import { app, pressureCurves, type Tool } from "../appState.svelte.js";
+  import { app, isStrokeTool, pressureCurves, type Tool } from "../appState.svelte.js";
+  import { slotFor, type SlotName } from "../tool-settings";
   import type { BrushType } from "../brush-textures";
   import { createCurveEditor } from "../pressure-curve";
   import { clickOutside } from "./click-outside";
@@ -167,8 +169,9 @@
   let paintColor = $derived(fillActive ? app.fillColor : app.brushSettings.color);
   let paintOpacity = $derived(fillActive ? app.fillOpacity : app.brushSettings.opacity);
   let opacityDisplay = $derived(paintOpacity + "%");
-  /** The Blend brush moves paint instead of laying it down: its Opacity is how strongly. */
-  let blending = $derived(app.currentTool === "brush" && app.brushType === "blend");
+  /** The Blend tool moves paint instead of laying it down: its Opacity is how strongly, and it has
+   *  no type, colour or Draw behind. */
+  let blending = $derived(app.currentTool === "blend");
   function setPaintColor(color: string) {
     if (fillActive) app.fillColor = color;
     else app.brushSettings.color = color;
@@ -184,7 +187,7 @@
   let fillExpandDisplay = $derived((app.fillSettings.expand ?? 0) + "px");
 
   let activeTool = $derived(app.currentTool);
-  let showBrush = $derived(activeTool === "brush" || activeTool === "eraser");
+  let showBrush = $derived(isStrokeTool(activeTool));
   let showFill = $derived(activeTool === "fill");
   let outlineWobble = $derived(Math.round(app.outline.wobble * 100));
   let outlineVariation = $derived(Math.round(app.outline.variation * 100));
@@ -233,7 +236,7 @@
   let curvePopupEl = $state<HTMLDivElement | null>(null);
   let settingsOpen = $state(false);
   let colorOpen = $state(false);
-  let curveEditors: Record<"brush" | "eraser", HTMLElement & { redraw: () => void }> | null = null;
+  let curveEditors: Record<SlotName, HTMLElement & { redraw: () => void }> | null = null;
 
   // Brush and eraser have their own curve, so there is an editor per tool. The host div only
   // exists while the popover is open (and is recreated when the brush options come back after
@@ -243,8 +246,9 @@
     curveEditors ??= {
       brush: createCurveEditor(pressureCurves.brush, onSettingsChange),
       eraser: createCurveEditor(pressureCurves.eraser, onSettingsChange),
+      blend: createCurveEditor(pressureCurves.blend, onSettingsChange),
     };
-    const editor = curveEditors[activeTool === "eraser" ? "eraser" : "brush"];
+    const editor = curveEditors[slotFor(activeTool)];
     curvePopupEl.replaceChildren(editor);
     editor.redraw();
   });
@@ -262,6 +266,11 @@
   const tools: { tool: Tool; icon: typeof Paintbrush; title: string }[] = [
     { tool: "brush", icon: Paintbrush, title: "Brush (B)" },
     { tool: "eraser", icon: Eraser, title: "Eraser (E)" },
+    {
+      tool: "blend",
+      icon: Droplet,
+      title: "Blend (J) — blur, smudge or smear the paint on the layer",
+    },
     { tool: "select", icon: BoxSelect, title: "Rect Select (S)" },
     { tool: "lasso", icon: Lasso, title: "Lasso Select (L)" },
     {
@@ -647,7 +656,7 @@
   style:grid-area="row2"
 >
   <!-- Brush options -->
-  {#if showBrush}
+  {#if showBrush && !blending}
     <div class="flex items-center gap-1">
       <select
         id="brush-type"
@@ -663,13 +672,11 @@
         <option value="pencil">Pencil</option>
         <option value="charcoal">Charcoal</option>
         <option value="airbrush">Airbrush</option>
-        <!-- Not an eraser: it moves paint, it doesn't remove it. -->
-        {#if activeTool !== "eraser"}
-          <option value="blend">Blend</option>
-        {/if}
       </select>
     </div>
+  {/if}
 
+  {#if showBrush}
     <div class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary">
       Size
       <input
@@ -750,7 +757,7 @@
   {#if showBrush || showFill}
     <label
       class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
-      title={blending ? "Strength — how strongly the brush blends" : undefined}
+      title={blending ? "Strength — how strongly it blends" : undefined}
     >
       {blending ? "Strength" : "Opacity"}
       <input
@@ -766,23 +773,37 @@
     </label>
   {/if}
 
+  <!-- Smear is what you change while blending (blur ↔ smear), so it is on the bar. -->
+  {#if blending}
+    <label
+      class="flex items-center gap-1.5 text-xs whitespace-nowrap text-text-secondary"
+      title="Smear — 0 blurs in place; higher carries the paint along the stroke: a smudge, then a long painterly smear"
+    >
+      Smear
+      <input
+        type="range"
+        min="0"
+        max="100"
+        class="w-16 max-[960px]:w-12"
+        style={sliderFill(app.brushSettings.blendSmear ?? 30, 0, 100)}
+        bind:value={app.brushSettings.blendSmear}
+        oninput={onSettingsChange}
+      />
+      <span class="min-w-7 text-[11px] text-text-muted">{app.brushSettings.blendSmear}</span>
+    </label>
+  {/if}
+
   <!-- Draw behind is toggled while drawing (flats under line art), so it sits on the bar, not behind
        the gear. Brush only: the eraser ignores it. -->
   {#if activeTool === "brush"}
     <div class="flex items-center">
       <button
-        class="{actionBtnClass} {app.brushSettings.drawBehind ? 'ui-on' : ''} {blending
-          ? 'opacity-40'
-          : ''}"
+        class="{actionBtnClass} {app.brushSettings.drawBehind ? 'ui-on' : ''}"
         aria-pressed={app.brushSettings.drawBehind}
-        aria-disabled={blending}
-        title={blending
-          ? "Draw behind doesn't apply to Blend — it moves the paint that's already there"
-          : app.brushSettings.drawBehind
-            ? "Draw behind on — paint goes under existing pixels; tap to turn off"
-            : "Draw behind — paint under existing pixels"}
+        title={app.brushSettings.drawBehind
+          ? "Draw behind on — paint goes under existing pixels; tap to turn off"
+          : "Draw behind — paint under existing pixels"}
         onclick={() => {
-          if (blending) return;
           app.brushSettings.drawBehind = !app.brushSettings.drawBehind;
           onSettingsChange();
         }}><SendToBack size={18} /></button
@@ -1016,23 +1037,7 @@
             </label>
           {/if}
 
-          {#if app.brushType === "blend"}
-            <label
-              class={rowCls}
-              title="0 blurs in place; higher carries the paint along the stroke — a smudge, then a long painterly smear"
-            >
-              <span class={labelCls}>Smear</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                style={sliderFill(app.brushSettings.blendSmear ?? 30, 0, 100)}
-                bind:value={app.brushSettings.blendSmear}
-                oninput={onSettingsChange}
-                class="min-w-0 flex-1"
-              />
-              <span class={valueCls}>{app.brushSettings.blendSmear}</span>
-            </label>
+          {#if blending}
             <div
               class={rowCls}
               title="The tip's edge: Soft and Hard are smooth, Grain and Rough textured"
@@ -1134,7 +1139,11 @@
 
           <div class="mt-1 flex flex-col gap-1 border-t border-border pt-2">
             <span class="text-xs text-text-secondary"
-              >Pressure curve{activeTool === "eraser" ? " (eraser)" : ""}</span
+              >Pressure curve{activeTool === "eraser"
+                ? " (eraser)"
+                : blending
+                  ? " (blend)"
+                  : ""}</span
             >
             <div bind:this={curvePopupEl} class="curve-editor flex flex-col items-center"></div>
           </div>
@@ -1205,7 +1214,7 @@
 
   <!-- Color: one swatch showing the current colour, palette behind it — the bar has to fit a
        portrait iPad, and the 8 swatches plus the native picker were its widest block. -->
-  {#if showBrush || showFill}
+  {#if (showBrush && !blending) || showFill}
     <div class="relative flex items-center" use:clickOutside={() => (colorOpen = false)}>
       <button
         class="size-7 shrink-0 rounded-md border-2 border-border transition-colors hover:border-text-muted"
