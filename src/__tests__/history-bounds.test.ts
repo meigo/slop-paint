@@ -37,6 +37,19 @@ describe("changedTiles", () => {
     ]);
   });
 
+  it("compares only the tiles an area touches, on the same tile grid", () => {
+    const b = blank();
+    paint(b, 1, 1);
+    paint(b, 17, 2);
+    paint(b, 10, 9);
+    // An area from (9, 0) to (18, 3): the tiles at x 8 and 16, row 0 — the pixel at (1, 1) is
+    // outside it and not seen.
+    expect(changedTiles(blank(), b, W, H, 8, { x: 9, y: 0, w: 9, h: 3 })).toEqual([
+      { x: 16, y: 0, w: 4, h: 8 },
+    ]);
+    expect(changedTiles(blank(), b, W, H, 8, { x: 0, y: 0, w: 0, h: 0 })).toEqual([]);
+  });
+
   it("sees a change in any channel", () => {
     const b = blank();
     b[(4 * W + 9) * 4 + 1] = 1; // green of (9, 4)

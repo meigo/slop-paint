@@ -1,3 +1,4 @@
+import { deviceRect, type Box, type PxRect } from "./dirty-rect";
 import { isParallelogram, matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
@@ -480,6 +481,8 @@ export class LayerManager {
   moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
   /** The float's layer, combined with the float each frame (reused, resized as needed). */
   private floatScratch: HTMLCanvasElement | null = null;
+  /** The live layer's part being redrawn (`drawTree` with a rect), at that part's size. */
+  private partScratch: HTMLCanvasElement | null = null;
   /** A tinted layer as drawn, each frame (reused, resized as needed). */
   private tintScratch: HTMLCanvasElement | null = null;
   /** The layer a brush stroke is drawing on, while it is open (App sets and clears it): the only
@@ -1016,14 +1019,28 @@ export class LayerManager {
     }
   }
 
-  composite() {
+  /** Redraw the screen — or only `box` (document units) of it: a stroke changes a small part, and
+   *  redrawing every layer whole each frame made drawing on a large document slow (4000×6000:
+   *  ~42 ms a frame in WebKit, 2026-11-04). */
+  composite(box?: Box | null) {
     const dpr = this.dpr;
     const ctx = this.displayCtx;
     const docPxW = Math.round(this.docWidth * dpr);
     const docPxH = Math.round(this.docHeight * dpr);
+    const rect = box ? deviceRect(box, dpr, docPxW, docPxH) : null;
+    if (box && !rect) return; // all of it off the page
+    ctx.save();
     ctx.resetTransform();
-    ctx.clearRect(0, 0, docPxW, docPxH);
-    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null, this.moveOffset);
+    if (rect) {
+      ctx.beginPath();
+      ctx.rect(rect.x, rect.y, rect.w, rect.h);
+      ctx.clip();
+      ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+    } else {
+      ctx.clearRect(0, 0, docPxW, docPxH);
+    }
+    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null, this.moveOffset, rect);
+    ctx.restore();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
@@ -1042,6 +1059,11 @@ export class LayerManager {
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); // the float draws in document units
     float.render(c);
     return s;
+  }
+
+  /** Other tinted layers are being drawn from the stroke's cache (see `liveId`). */
+  get tintsCached(): boolean {
+    return this.tintCache.size > 0;
   }
 
   /** A brush stroke opens on layer `id` (or closes: null). The tint cache lasts one stroke. */
@@ -1093,6 +1115,9 @@ export class LayerManager {
     h: number,
     float: FloatPreview | null = null,
     move: LayerManager["moveOffset"] = null,
+    /** Draw only this part (canvas px; the caller has clipped to it): a source at the canvas's
+     *  size gives just that part, so the copy is the part's size, not the layer's. */
+    rect: PxRect | null = null,
   ) {
     ctx.save();
     ctx.resetTransform();
@@ -1110,6 +1135,21 @@ export class LayerManager {
           if (off) {
             const k = w / this.docWidth;
             ctx.drawImage(source, off.dx * k, off.dy * k, w, h);
+          } else if (rect && source.width === w && source.height === h) {
+            const { x, y, w: rw, h: rh } = rect;
+            if (node.id === this.liveId && source === node.canvas) {
+              // The layer being drawn on changed since the last frame, and WebKit copies a changed
+              // canvas WHOLE when it is drawn from, whatever part is asked for: ~6 ms a frame for a
+              // 4000×6000 layer. Reading the part (the layers are CPU-backed) and drawing that
+              // copies only the part (as the Blend tool reads under its dabs).
+              const part = (this.partScratch ??= document.createElement("canvas"));
+              part.width = rw; // also clears it
+              part.height = rh;
+              part.getContext("2d")!.putImageData(node.ctx.getImageData(x, y, rw, rh), 0, 0);
+              ctx.drawImage(part, x, y);
+            } else {
+              ctx.drawImage(source, x, y, rw, rh, x, y, rw, rh);
+            }
           } else {
             ctx.drawImage(source, 0, 0, w, h);
           }

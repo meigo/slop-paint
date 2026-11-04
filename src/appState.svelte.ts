@@ -1,3 +1,4 @@
+import type { PxRect } from "./dirty-rect";
 import { PRESS_DEFAULT, type BrushSettings } from "./brush";
 import type { BrushType } from "./brush-textures";
 
@@ -161,8 +162,15 @@ export function bumpLayerVersion() {
   app.layerVersion++;
 }
 
-/** A pixel edit on `layerId` alone: see `pixelVersion`. */
-export function bumpPixelVersion(layerId: number) {
+/** Where the last `bumpPixelVersion` edit lies (canvas px), or null for anywhere on the layer. Not
+ *  reactive: read alongside `pixelVersion`. */
+let pixelArea: PxRect | null = null;
+export const lastPixelArea = () => pixelArea;
+
+/** A pixel edit on `layerId` alone: see `pixelVersion`. `area`: where it lies, when known (a
+ *  stroke), so the layer's thumbnail redraws only there. */
+export function bumpPixelVersion(layerId: number, area: PxRect | null = null) {
+  pixelArea = area;
   app.pixelLayerId = layerId;
   app.pixelVersion++;
 }

@@ -19,7 +19,8 @@
     CircleCheck,
   } from "@lucide/svelte";
   import { untrack } from "svelte";
-  import { app, bumpLayerVersion, flashStatus } from "../appState.svelte.js";
+  import { app, bumpLayerVersion, flashStatus, lastPixelArea } from "../appState.svelte.js";
+  import type { PxRect } from "../dirty-rect";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import {
     isWithin,
@@ -501,13 +502,14 @@
   const slideTransition = $derived(ghost ? "transform 150ms ease" : null);
 
   /** Each shown thumbnail's redraw, by layer id (the floating drag row can show a second one). */
-  const thumbDraws = new Map<number, Set<() => void>>();
+  const thumbDraws = new Map<number, Set<(area?: PxRect | null) => void>>();
 
   /** Svelte action: draw a layer's pixels into its thumbnail canvas. */
   function thumbnail(node: HTMLCanvasElement, layer: AppLayer) {
-    const draw = () => {
+    const draw = (area: PxRect | null = null) => {
       const ctx = node.getContext("2d");
       if (!ctx) return;
+      if (area && !layer.tint) return drawThumbPart(ctx, node, layer, area);
       ctx.clearRect(0, 0, node.width, node.height);
       if (layer.tint) {
         // The layer as it is drawn: in its tint (see `drawTree`).
@@ -521,7 +523,7 @@
     if (!thumbDraws.has(id)) thumbDraws.set(id, new Set());
     thumbDraws.get(id)!.add(draw);
     return {
-      update: draw,
+      update: () => draw(),
       destroy: () => thumbDraws.get(id)?.delete(draw),
     };
   }
@@ -530,8 +532,49 @@
   // per stroke rebuilt every row and thumbnail (2026-10-17 review).
   $effect(() => {
     void app.pixelVersion;
-    untrack(() => thumbDraws.get(app.pixelLayerId)?.forEach((draw) => draw()));
+    untrack(() => {
+      const area = lastPixelArea();
+      thumbDraws.get(app.pixelLayerId)?.forEach((draw) => draw(area));
+    });
   });
+
+  /** Redraw only the thumbnail pixels over `area` (the layer's canvas px): drawing from the whole
+   *  layer just after a stroke made WebKit copy all of it (~30 ms for a 4000×6000 layer). The area
+   *  is grown to whole thumbnail pixels, so each one is redrawn from all of the layer under it; the
+   *  part is read with getImageData (the layer is CPU-backed), as the screen's redraw does. */
+  function drawThumbPart(
+    ctx: CanvasRenderingContext2D,
+    node: HTMLCanvasElement,
+    layer: AppLayer,
+    area: PxRect,
+  ) {
+    const { width: lw, height: lh } = layer.canvas;
+    const sx = node.width / lw;
+    const sy = node.height / lh;
+    const tx0 = Math.floor(area.x * sx);
+    const ty0 = Math.floor(area.y * sy);
+    const tx1 = Math.min(node.width, Math.ceil((area.x + area.w) * sx));
+    const ty1 = Math.min(node.height, Math.ceil((area.y + area.h) * sy));
+    if (tx1 <= tx0 || ty1 <= ty0) return;
+    const x0 = Math.floor(tx0 / sx);
+    const y0 = Math.floor(ty0 / sy);
+    const x1 = Math.min(lw, Math.ceil(tx1 / sx));
+    const y1 = Math.min(lh, Math.ceil(ty1 / sy));
+    const part = document.createElement("canvas");
+    part.width = x1 - x0;
+    part.height = y1 - y0;
+    part
+      .getContext("2d")!
+      .putImageData(layer.ctx.getImageData(x0, y0, part.width, part.height), 0, 0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(tx0, ty0, tx1 - tx0, ty1 - ty0);
+    ctx.clip();
+    ctx.clearRect(tx0, ty0, tx1 - tx0, ty1 - ty0);
+    ctx.drawImage(part, x0 * sx, y0 * sy, part.width * sx, part.height * sy);
+    ctx.restore();
+    part.width = 0; // WebKit holds a canvas's pixels until it is collected
+  }
 
   // --- Rename: double-click (mouse) or double-tap (iPad doesn't fire dblclick reliably) ---
 
