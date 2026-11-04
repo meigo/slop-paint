@@ -248,6 +248,41 @@ export function loadPsd(
   return { width: w, height: h };
 }
 
+/** A PSD starts with the signature "8BPS"; anything else File ▸ Open is given is tried as an image. */
+export function isPsdBuffer(buffer: ArrayBuffer): boolean {
+  const b = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
+  return b.length === 4 && b[0] === 0x38 && b[1] === 0x42 && b[2] === 0x50 && b[3] === 0x53;
+}
+
+/** Open a decoded image as a new document at its size: the image as the Background layer (its
+ *  transparency kept, as Photoshop opens a PNG) and an empty Layer 1 above it to draw on, active.
+ *  Built aside and swapped in, as `loadPsd`: a canvas the device refuses leaves the open document. */
+export function loadImageDocument(
+  image: ImageBitmap,
+  manager: LayerManager,
+): { width: number; height: number } {
+  const w = image.width;
+  const h = image.height;
+  const [oldW, oldH] = [manager.docWidth, manager.docHeight];
+  manager.docWidth = w; // createLayer sizes from the manager's document size
+  manager.docHeight = h;
+  let bg: Layer, top: Layer;
+  try {
+    bg = manager.createLayer("Background");
+    // Nearest-neighbour at Sharp layers' 2×, as loadPsd: a save scales back to exactly the image.
+    bg.ctx.imageSmoothingEnabled = false;
+    bg.ctx.drawImage(image, 0, 0, w, h);
+    bg.ctx.imageSmoothingEnabled = true;
+    top = manager.createLayer("Layer 1");
+  } finally {
+    manager.docWidth = oldW; // the caller sets the size for good
+    manager.docHeight = oldH;
+  }
+  manager.tree = [bg, top];
+  manager.activeId = top.id;
+  return { width: w, height: h };
+}
+
 /** Decode the originals of the references an opened PSD brought back, filling in each shared
  *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
 function decodeOpenedRefs(

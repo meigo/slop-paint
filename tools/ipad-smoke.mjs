@@ -1461,8 +1461,57 @@ async function main(page) {
     ];
   });
 
+  // File ▸ Open… an image: a new document at the image's size, the image as Background, Layer 1 on top.
+  await step(async () => {
+    const png = await page.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = 300;
+      c.height = 200;
+      const x = c.getContext("2d");
+      x.fillStyle = "#e02020";
+      x.fillRect(0, 0, 300, 200);
+      return c.toDataURL("image/png").split(",")[1];
+    });
+    const chooser = page.waitForEvent("filechooser");
+    await menu("File", /^Open/);
+    await (
+      await chooser
+    ).setFiles({ name: "Photo.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+    const rows = await until(async () => (await rowCount()) === 2, 5000);
+    await page.waitForTimeout(300);
+    await page
+      .getByRole("button", { name: /^Document/ })
+      .first()
+      .tap();
+    const size = (await page.getByRole("menuitem", { name: /^Resize…/ }).innerText())
+      .replace(/\s+/g, " ")
+      .trim();
+    await tap(offPage);
+    await page.waitForTimeout(200);
+    const b = await page.locator(".canvas-checkerboard + canvas").boundingBox();
+    const cx = Math.round(b.x + b.width / 2);
+    const cy = Math.round(b.y + b.height / 2);
+    const red = await page.evaluate(
+      ([x, y]) => {
+        const c = document.querySelector(".canvas-checkerboard + canvas");
+        const r = c.getBoundingClientRect();
+        const s = c.width / r.width;
+        const d = c.getContext("2d").getImageData((x - r.left) * s, (y - r.top) * s, 1, 1).data;
+        return d[0] > 200 && d[1] < 60 && d[2] < 60;
+      },
+      [cx, cy],
+    );
+    const title = await page.title();
+    return [
+      rows && /300\s*×\s*200/.test(size) && red && /Photo/.test(title),
+      `File ▸ Open… a PNG: a 300×200 document (${size}), ${await rowCount()} rows, the image on screen (${red ? "red" : "not red"}), named "${title}"`,
+      "open-image",
+    ];
+  });
+
   await step(async () => {
     const r0 = await rowCount();
+    const name = (await page.title()).split(" — ")[0]; // the project's name, whichever step set it
     await pen(wave(0.5));
     await page.waitForTimeout(5500); // the 3 s debounce + 1.5 s after the last lift
     await page.reload();
@@ -1477,8 +1526,8 @@ async function main(page) {
     await shot(`${String(n).padStart(2, "0")}-restore-dialog`);
     await page.getByRole("button", { name: "Close", exact: true }).tap();
     return [
-      back && listed && (await page.title()).includes("Inks"),
-      `a reload restores the autosaved document (${await rowCount()} of ${r0} rows, still "Inks"); File ▸ Restore autosave… lists copies`,
+      back && listed && (await page.title()).includes(name),
+      `a reload restores the autosaved document (${await rowCount()} of ${r0} rows, still "${name}"); File ▸ Restore autosave… lists copies`,
       "autosave",
     ];
   });

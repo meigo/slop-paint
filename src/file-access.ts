@@ -32,6 +32,25 @@ const PSD: PickerOptions = {
   types: [{ description: "Photoshop document", accept: { "image/vnd.adobe.photoshop": [".psd"] } }],
 };
 
+/** Open takes a PSD or an image, which starts a new document at its size. */
+const OPEN: PickerOptions = {
+  id: PSD.id,
+  types: [
+    {
+      description: "Photoshop document or image",
+      accept: {
+        "image/vnd.adobe.photoshop": [".psd"],
+        "image/png": [".png"],
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/webp": [".webp"],
+        "image/gif": [".gif"],
+        "image/bmp": [".bmp"],
+        "image/avif": [".avif"],
+      },
+    },
+  ],
+};
+
 const win = () => window as PickerWindow;
 
 export function fileAccessAvailable(): boolean {
@@ -53,10 +72,10 @@ export async function pickSaveFile(suggestedName: string): Promise<FileSystemFil
   }
 }
 
-/** Ask which project to open; null if the dialog was dismissed. */
+/** Ask which project or image to open; null if the dialog was dismissed. */
 export async function pickOpenFile(): Promise<FileSystemFileHandle | null> {
   try {
-    const [handle] = await win().showOpenFilePicker!(PSD);
+    const [handle] = await win().showOpenFilePicker!(OPEN);
     return handle ?? null;
   } catch (e) {
     if (isAbort(e)) return null;
