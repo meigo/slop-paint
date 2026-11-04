@@ -481,7 +481,7 @@ export class LayerManager {
   moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
   /** The float's layer, combined with the float each frame (reused, resized as needed). */
   private floatScratch: HTMLCanvasElement | null = null;
-  /** The live layer's part being redrawn (`drawTree` with a rect), at that part's size. */
+  /** A layer's part being redrawn (`drawTree` with a rect), at that part's size. */
   private partScratch: HTMLCanvasElement | null = null;
   /** A tinted layer as drawn, each frame (reused, resized as needed). */
   private tintScratch: HTMLCanvasElement | null = null;
@@ -1137,11 +1137,15 @@ export class LayerManager {
             ctx.drawImage(source, off.dx * k, off.dy * k, w, h);
           } else if (rect && source.width === w && source.height === h) {
             const { x, y, w: rw, h: rh } = rect;
-            if (node.id === this.liveId && source === node.canvas) {
-              // The layer being drawn on changed since the last frame, and WebKit copies a changed
-              // canvas WHOLE when it is drawn from, whatever part is asked for: ~6 ms a frame for a
-              // 4000×6000 layer. Reading the part (the layers are CPU-backed) and drawing that
-              // copies only the part (as the Blend tool reads under its dabs).
+            if (source === node.canvas) {
+              // Safari copies a CPU-backed (`willReadFrequently`) canvas WHOLE when it is drawn
+              // from, whatever part is asked for and whether it changed or not: ~20 ms per
+              // 4000×6000 layer, every frame, on a Mac and an iPad (Safari 27.2, 2026-11-04;
+              // Playwright's WebKit showed it only for a changed canvas, so this first covered
+              // the live layer alone; reported as WebKit bug 330116). Reading the part and drawing
+              // that copies only the part (as the Blend tool reads under its dabs). The float and
+              // tint scratches are default canvases, which Safari draws parts of cheaply, so they
+              // take the sub-rect below.
               const part = (this.partScratch ??= document.createElement("canvas"));
               part.width = rw; // also clears it
               part.height = rh;
