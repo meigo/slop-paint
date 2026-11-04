@@ -114,3 +114,14 @@ describe("node ids", () => {
     }
   });
 });
+
+describe("isPsdBuffer", () => {
+  it("tells a PSD from an image by its signature", async () => {
+    const { isPsdBuffer } = await import("../export-psd");
+    const psd = writePsd({ width: 4, height: 4, children: [] });
+    expect(isPsdBuffer(psd)).toBe(true);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).buffer;
+    expect(isPsdBuffer(png)).toBe(false);
+    expect(isPsdBuffer(new ArrayBuffer(2))).toBe(false);
+  });
+});

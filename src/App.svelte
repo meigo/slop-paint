@@ -87,7 +87,14 @@
   } from "./paste";
   import { Viewport, rotationDegrees, wheelPx, wheelZoomFactor } from "./viewport";
   import { setupTouchGestures } from "./touch-gestures";
-  import { exportPsd, savePsd, loadPsd, psdBuffer } from "./export-psd";
+  import {
+    exportPsd,
+    savePsd,
+    loadPsd,
+    loadImageDocument,
+    isPsdBuffer,
+    psdBuffer,
+  } from "./export-psd";
   import {
     clearAutosave,
     keepLatestAutosave,
@@ -103,7 +110,7 @@
     layerMemoryBytes,
     looksBlanked,
   } from "./persist/autosave-plan";
-  import { layerPixelRatio } from "./resize";
+  import { layerPixelRatio, MAX_DOC_PX } from "./resize";
   import {
     history,
     pushLayersEdit,
@@ -1065,8 +1072,9 @@
     if (file) openProjectFile(file, null);
   }
 
-  /** Load a PSD as the document. `handle` is the file it came from (Chrome/Edge), which Save then
-   *  writes back to; null for the file input, whose files can't be written. */
+  /** Load a PSD as the document, or an image as a new document at its size. `handle` is the file it
+   *  came from (Chrome/Edge), which Save then writes back to — a PSD's only: Save would write a PSD
+   *  over the image; null for the file input, whose files can't be written. */
   function openProjectFile(file: File, handle: FileSystemFileHandle | null) {
     if (!layers) return;
     const reader = new FileReader();
@@ -1079,22 +1087,43 @@
       );
     };
     reader.onerror = () => failed(reader.error);
-    reader.onload = () => {
+    reader.onload = async () => {
       const buffer = reader.result as ArrayBuffer;
+      const psd = isPsdBuffer(buffer);
+      // An image is decoded before anything changes, so one the browser can't read (or too big
+      // for a document) leaves the open document as it was.
+      let image: ImageBitmap | null = null;
+      if (!psd) {
+        try {
+          image = await createImageBitmap(new Blob([buffer]));
+        } catch {
+          return failed(new Error("not a PSD or an image this browser can open"));
+        }
+        if (image.width > MAX_DOC_PX || image.height > MAX_DOC_PX) {
+          const [w, h] = [image.width, image.height];
+          image.close();
+          return failed(new Error(`${w}×${h} px — a document is at most ${MAX_DOC_PX} a side`));
+        }
+      }
+      if (!layers) return image?.close();
       let size: { width: number; height: number };
-      // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged or
-      // non-PSD file fails here with the open document unchanged.
+      // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged file
+      // fails here with the open document unchanged.
       endGesture(); // a press still down finishes on the old document, not the new one
       try {
-        size = loadPsd(buffer, layers, docDpr(), bumpLayerVersion, refDecodeFailed);
+        size = image
+          ? loadImageDocument(image, layers)
+          : loadPsd(buffer, layers, docDpr(), bumpLayerVersion, refDecodeFailed);
       } catch (e) {
         failed(e);
         return;
+      } finally {
+        image?.close();
       }
       if (outlineActive()) cancelOutline();
       void setAsideIfPaused().catch((e) => console.error("setting the autosave aside failed", e));
       app.projectName = nameFromFile(file.name);
-      docFile = handle;
+      docFile = psd ? handle : null;
       const { width, height } = size;
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
@@ -4079,10 +4108,10 @@
     onchange={handleImageFile}
   />
   <!-- The PSD MIME types as well as the extension: iPad Safari greys out files whose type the
-       `accept` list doesn't name. -->
+       `accept` list doesn't name. `image/*`: an image opens as a new document at its size. -->
   <input
     type="file"
-    accept=".psd,image/vnd.adobe.photoshop,image/x-photoshop,application/x-photoshop,application/photoshop,application/psd,image/psd"
+    accept=".psd,image/vnd.adobe.photoshop,image/x-photoshop,application/x-photoshop,application/photoshop,application/psd,image/psd,image/*"
     class="hidden"
     bind:this={fileInputEl}
     onchange={handleFileLoad}
