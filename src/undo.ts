@@ -3,7 +3,14 @@
  * delete, duplicate, merge, group, reorder) go on the same stack, so undo walks back through what
  * you actually did rather than through the active layer's own history.
  */
-import { History, changedTiles, cropPixels, offCanvasRects } from "./history";
+import {
+  History,
+  UNDO_TILE,
+  changedTiles,
+  cropPixels,
+  offCanvasRects,
+  type PixelRect,
+} from "./history";
 import {
   detachedLayerBytes,
   refSourceBytes,
@@ -28,8 +35,14 @@ export function setOnHistoryApplied(fn: () => void) {
  *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
  *  not the whole layer twice over. Pushes nothing when no pixel changed — an empty step would wipe
  *  redo — and says whether it pushed, so a caller can report the no-op. */
-export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData): boolean {
-  const d = pixelDiff(layers, layer, before);
+export function pushPixelEdit(
+  layers: LayerManager,
+  layer: Layer,
+  before: ImageData,
+  /** Where the change lies (canvas px), if known: only there is compared (`changedTiles`). */
+  area: PixelRect | null = null,
+): boolean {
+  const d = pixelDiff(layers, layer, before, area);
   if (d.empty) return false;
   const put = (side: "was" | "now") => {
     d.put(side);
@@ -40,8 +53,13 @@ export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageD
 }
 
 /** The tiles of `layer` that changed since `before`, both sides, and how to put either back. */
-function pixelDiff(layers: LayerManager, layer: Layer, before: ImageData) {
-  const tiles = diffTiles(before, layers.snapshotOf(layer));
+function pixelDiff(
+  layers: LayerManager,
+  layer: Layer,
+  before: ImageData,
+  area: PixelRect | null = null,
+) {
+  const tiles = diffTiles(before, layers.snapshotOf(layer), area);
   return {
     put: (side: "was" | "now") => {
       for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
@@ -55,11 +73,11 @@ function pixelDiff(layers: LayerManager, layer: Layer, before: ImageData) {
  *  `pixelDiff`: closures made in one scope share it, so `put` kept the `.map` callback's `before`
  *  and `full` reachable — every step held BOTH whole-layer snapshots while `bytes` counted only
  *  the tiles (2026-10-17 review: 50 strokes on a 2732×2048 iPad layer kept ~2.2 GB alive). */
-function diffTiles(before: ImageData, full: ImageData) {
+function diffTiles(before: ImageData, full: ImageData, area: PixelRect | null) {
   const w = full.width;
   if (before.width !== w || before.height !== full.height)
     return [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
-  return changedTiles(before.data, full.data, w, full.height).map((r) => ({
+  return changedTiles(before.data, full.data, w, full.height, UNDO_TILE, area).map((r) => ({
     r,
     was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
     now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),

@@ -7,6 +7,7 @@
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
   import { setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange, type BrushSettings } from "./brush";
+  import { deviceRect, pointsBox, strokePad, unionBox, type Box, type PxRect } from "./dirty-rect";
   import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX, STILL_PX } from "./stroke-smoothing";
   import { settledIndex } from "./stroke-freeze";
   import type { PressureCurve } from "./pressure-curve";
@@ -187,12 +188,21 @@
 
   // --- Batched composite: coalesce multiple composite calls per frame ---
   let compositeScheduled = false;
-  function scheduleComposite() {
+  /** What the next batched composite redraws: the union of the boxes asked for, or all of it once
+   *  any caller asked without one. */
+  let compositeBox: Box | null = null;
+  let compositeAll = false;
+  function scheduleComposite(box?: Box | null) {
+    if (box) compositeBox = unionBox(compositeBox, box);
+    else compositeAll = true;
     if (compositeScheduled) return;
     compositeScheduled = true;
     requestAnimationFrame(() => {
+      const part = compositeAll ? null : compositeBox;
       compositeScheduled = false;
-      layers?.composite();
+      compositeAll = false;
+      compositeBox = null;
+      layers?.composite(part);
     });
   }
 
@@ -275,16 +285,56 @@
   const FREEZE_STEP = 300;
   const FREEZE_OVERLAP = 8;
 
-  function restoreLayerFromCanvas(layer: {
-    canvas: HTMLCanvasElement;
-    ctx: CanvasRenderingContext2D;
-  }) {
+  /** Put the pre-stroke copy back — the whole layer, or only `rect` (canvas px): a frame's redraw
+   *  touches only the stroke's box, and copying the whole layer back every frame is what made a
+   *  large document slow to draw on (2026-11-04). */
+  function restoreLayerFromCanvas(
+    layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D },
+    rect: PxRect | null = null,
+  ) {
     if (!preStrokeCanvas) return;
     layer.ctx.save();
     layer.ctx.resetTransform();
-    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-    layer.ctx.drawImage(preStrokeCanvas, 0, 0);
+    if (rect) {
+      const { x, y, w, h } = rect;
+      layer.ctx.clearRect(x, y, w, h);
+      layer.ctx.drawImage(preStrokeCanvas, x, y, w, h, x, y, w, h);
+    } else {
+      layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+      layer.ctx.drawImage(preStrokeCanvas, 0, 0);
+    }
     layer.ctx.restore();
+  }
+
+  /** The points' part of the layer at the last frame of a full-redraw stroke (document units; see
+   *  `redrawFrame`); null between strokes. */
+  let strokeBox: Box | null = null;
+  /** How many points the stamp/Blend stroke had at its last draw: the next draw's screen box
+   *  starts one before (a stamp can land anywhere along the segment from there). */
+  let stampDrawnTo = 0;
+  /** Everything the open stroke has touched (document units): the undo step compares only there. */
+  let strokeArea: Box | null = null;
+
+  /** The screen at a stroke's end: only the stroke's area (a whole redraw copied the whole changed
+   *  layer, 40–70 ms on a 4000×6000 document in WebKit) — unless other tinted layers were drawn
+   *  from the stroke's cache, when the whole screen is redrawn with fresh tints (a change to one
+   *  of them mid-stroke shows now, as `setLiveLayer` promises). */
+  function endStrokeComposite() {
+    if (!layers) return;
+    if (layers.tintsCached || !strokeArea) {
+      layers.setLiveLayer(null);
+      layers.composite();
+    } else {
+      layers.composite(strokeArea); // while it is still the live layer: its part is read, not copied
+      layers.setLiveLayer(null);
+    }
+  }
+
+  /** `strokeArea` in the layer's canvas px, for `pushPixelEdit`. */
+  function strokeAreaPx(layer: Layer): PxRect | null {
+    if (!strokeArea || !layers) return null;
+    const { width: w, height: h } = layer.canvas;
+    return deviceRect(strokeArea, w / layers.docWidth, w, h) ?? { x: 0, y: 0, w: 0, h: 0 };
   }
 
   // --- Brush cursor ---
@@ -1672,6 +1722,37 @@
     /** Where this frame's draw starts: the whole stroke, or just past the frozen part. */
     const unfrozenFrom = () => (frozenTo === 0 ? 0 : frozenTo - FREEZE_OVERLAP);
 
+    const pad = strokePad(widthRange(strokeSettings.size, sizeRange).max);
+
+    /** Restore and redraw this frame's part of the layer, clipped to it (so paint can't land
+     *  outside what was restored and build up frame after frame); returns that part (document
+     *  units) for the screen to redraw, null when it is all off the page. The part is the points
+     *  this frame draws (all of them, or the unfrozen ones) grown by how far paint reaches, joined
+     *  with last frame's — so last frame's paint is put back too (a part just frozen). Outside it
+     *  the layer already holds what a whole redraw would draw: the pre-stroke copy and the
+     *  frozen paint. */
+    function redrawFrame(pts: InputPoint[], finished: boolean): Box | null {
+      const own = pointsBox(pts, pad, unfrozenFrom());
+      const frame = unionBox(strokeBox, own);
+      strokeBox = own;
+      const { width: w, height: h } = layer.canvas;
+      const rect = frame && deviceRect(frame, w / layers.docWidth, w, h);
+      strokeArea = unionBox(strokeArea, frame);
+      if (!rect) return null;
+      restoreLayerFromCanvas(layer, rect);
+      layer.ctx.save();
+      const m = layer.ctx.getTransform();
+      layer.ctx.resetTransform();
+      layer.ctx.beginPath();
+      layer.ctx.rect(rect.x, rect.y, rect.w, rect.h);
+      layer.ctx.clip();
+      layer.ctx.setTransform(m);
+      selection?.applyClip(layer.ctx);
+      drawFullStroke(layer.ctx, pts, finished, unfrozenFrom());
+      layer.ctx.restore();
+      return frame;
+    }
+
     /** Bake the stroke's settled part into the pre-stroke copy, once it has grown by FREEZE_STEP
      *  points (see `frozenTo`). Settled = at least 2 × the widest nib plus 30 px of path, and 40
      *  points, behind the pen: Calligraphy's normals reach half a width back, its smoothing 2
@@ -1700,6 +1781,9 @@
 
     if (press) {
       frozenTo = 0;
+      strokeBox = null;
+      stampDrawnTo = 0;
+      strokeArea = null;
       layers.setLiveLayer(layer.id);
       preStrokeSnapshot = layers.getSnapshot();
       if (fullRedraw) {
@@ -1714,18 +1798,14 @@
       // 240Hz but screen refreshes at 60-120Hz, so most events are wasted work.
       if (done) {
         smoothPendingPoints = null;
-        restoreLayerFromCanvas(layer);
-        layer.ctx.save();
-        selection?.applyClip(layer.ctx);
-        drawFullStroke(layer.ctx, points, true, unfrozenFrom());
-        layer.ctx.restore();
-        layers.setLiveLayer(null);
-        layers.composite();
+        redrawFrame(points, true);
+        strokeBox = null;
+        endStrokeComposite();
         if (preStrokeSnapshot) {
-          pushPixelEdit(layers, layer, preStrokeSnapshot);
+          pushPixelEdit(layers, layer, preStrokeSnapshot, strokeAreaPx(layer));
           preStrokeSnapshot = null;
         }
-        bumpPixelVersion(layer.id);
+        bumpPixelVersion(layer.id, strokeAreaPx(layer));
       } else {
         const alreadyScheduled = smoothPendingPoints !== null;
         smoothPendingPoints = points;
@@ -1735,12 +1815,8 @@
           smoothPendingPoints = null;
           if (!latest || !layers) return;
           freezeSettled(latest);
-          restoreLayerFromCanvas(layer);
-          layer.ctx.save();
-          selection?.applyClip(layer.ctx);
-          drawFullStroke(layer.ctx, latest, false, unfrozenFrom());
-          layer.ctx.restore();
-          layers.composite();
+          const box = redrawFrame(latest, false);
+          if (box) layers.composite(box);
         });
       }
     } else {
@@ -1758,16 +1834,18 @@
         );
       }
       layer.ctx.restore();
-      scheduleComposite();
+      const drawn = pointsBox(points, pad, stampDrawnTo - 1);
+      strokeArea = unionBox(strokeArea, drawn);
+      scheduleComposite(drawn);
+      stampDrawnTo = points.length;
 
       if (done) {
-        layers.setLiveLayer(null);
-        layers.composite();
+        endStrokeComposite();
         if (preStrokeSnapshot) {
-          pushPixelEdit(layers, layer, preStrokeSnapshot);
+          pushPixelEdit(layers, layer, preStrokeSnapshot, strokeAreaPx(layer));
           preStrokeSnapshot = null;
         }
-        bumpPixelVersion(layer.id);
+        bumpPixelVersion(layer.id, strokeAreaPx(layer));
       }
     }
   }

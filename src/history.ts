@@ -26,21 +26,28 @@ export const UNDO_TILE = 64;
 /** The `tile`-px tiles (clipped at the edges) where two same-size RGBA buffers (`width` ×
  *  `height`) differ, in row order; empty when they are identical. Compares whole pixels 32 bits at
  *  a time — this runs on every stroke's full-layer snapshots. Tiles, not one bounding box: a thin
- *  stroke across the page has a bounding box as big as the page. */
+ *  stroke across the page has a bounding box as big as the page. `area` (px): only the tiles it
+ *  touches are compared, for a change known to lie inside it (a stroke's box) — comparing all of a
+ *  4000×6000 layer took most of a stroke's ~100 ms lift in WebKit. */
 export function changedTiles(
   a: Uint8ClampedArray,
   b: Uint8ClampedArray,
   width: number,
   height: number,
   tile = UNDO_TILE,
+  area: PixelRect | null = null,
 ): PixelRect[] {
   const n = width * height;
   const A = new Uint32Array(a.buffer, a.byteOffset, n);
   const B = new Uint32Array(b.buffer, b.byteOffset, n);
   const out: PixelRect[] = [];
-  for (let ty = 0; ty < height; ty += tile) {
+  const x0 = area ? Math.max(0, Math.floor(area.x / tile) * tile) : 0;
+  const y0 = area ? Math.max(0, Math.floor(area.y / tile) * tile) : 0;
+  const x1 = area ? Math.min(width, area.x + area.w) : width;
+  const y1 = area ? Math.min(height, area.y + area.h) : height;
+  for (let ty = y0; ty < y1; ty += tile) {
     const th = Math.min(tile, height - ty);
-    for (let tx = 0; tx < width; tx += tile) {
+    for (let tx = x0; tx < x1; tx += tile) {
       const tw = Math.min(tile, width - tx);
       scan: for (let y = ty; y < ty + th; y++) {
         const row = y * width;
