@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { history, pushLayersEdit, pushPixelEdit } from "../undo";
+import { history, pushLayersEdit, pushPixelEdit, pushStrokeEdit, StrokeBackup } from "../undo";
+import { cropPixels } from "../history";
 import type { Layer, LayerManager, RefPlacement } from "../layers";
 
 // An edit that changed no pixel must push no step: an empty step wipes redo and makes the next
@@ -56,6 +57,87 @@ describe("pushPixelEdit", () => {
     const { layer, layers } = rig(after);
     expect(pushPixelEdit(layers, layer, image())).toBe(true);
     expect(history.canUndo).toBe(true);
+  });
+});
+
+/** A W × H layer over a plain pixel buffer: `getImageData` copies out of it, `paint` writes a pixel
+ *  as a stroke would, and the manager's `restoreTo` writes tiles back into it. */
+function bufferLayer() {
+  const px = new Uint8ClampedArray(W * H * 4);
+  const layer = {
+    canvas: { width: W, height: H },
+    ctx: {
+      getImageData: (x: number, y: number, w: number, h: number) =>
+        new ImageData(cropPixels(px, W, { x, y, w, h }), w, h),
+    },
+  } as unknown as Layer;
+  const layers = {
+    restoreTo: (_l: Layer, d: ImageData, x: number, y: number) => {
+      for (let r = 0; r < d.height; r++)
+        px.set(d.data.subarray(r * d.width * 4, (r + 1) * d.width * 4), ((y + r) * W + x) * 4);
+    },
+  } as unknown as LayerManager;
+  const paint = (x: number, y: number, a = 255) => (px[(y * W + x) * 4 + 3] = a);
+  const alpha = (x: number, y: number) => px[(y * W + x) * 4 + 3];
+  return { layer, layers, paint, alpha };
+}
+
+describe("StrokeBackup / pushStrokeEdit", () => {
+  it("keeps a tile's pixels from before the stroke reached it, and undo puts them back", () => {
+    const { layer, layers, paint, alpha } = bufferLayer();
+    paint(70, 10, 100); // already on the layer
+    const backup = new StrokeBackup(layer);
+    backup.keep({ x: 60, y: 5, w: 20, h: 10 }); // tiles x 0 and 64, row 0
+    paint(70, 10); // the stroke paints over it
+    paint(5, 5); // and in the other kept tile
+    let bytes = 0;
+    const push = history.push.bind(history);
+    history.push = (c) => ((bytes = c.bytes ?? 0), push(c));
+    try {
+      expect(pushStrokeEdit(layers, backup)).toBe(true);
+    } finally {
+      history.push = push;
+    }
+    expect(bytes).toBe(2 * 2 * 64 * 64 * 4); // two tiles, both sides
+    history.undo();
+    expect(alpha(70, 10)).toBe(100);
+    expect(alpha(5, 5)).toBe(0);
+    history.redo();
+    expect(alpha(70, 10)).toBe(255);
+    expect(alpha(5, 5)).toBe(255);
+  });
+
+  it("keeps a tile once: a second keep after paint landed doesn't replace the before", () => {
+    const { layer, layers, paint, alpha } = bufferLayer();
+    const backup = new StrokeBackup(layer);
+    backup.keep({ x: 0, y: 0, w: 10, h: 10 });
+    paint(3, 3);
+    backup.keep({ x: 0, y: 0, w: 30, h: 30 }); // the next frame, same tile
+    pushStrokeEdit(layers, backup);
+    history.undo();
+    expect(alpha(3, 3)).toBe(0);
+  });
+
+  it("leaves out kept tiles that didn't change, and pushes nothing when none did", () => {
+    const { layer, layers, paint } = bufferLayer();
+    withRedo();
+    const backup = new StrokeBackup(layer);
+    backup.keep({ x: 0, y: 0, w: W, h: H });
+    expect(pushStrokeEdit(layers, backup)).toBe(false);
+    expect(history.canRedo).toBe(true);
+
+    const again = new StrokeBackup(layer);
+    again.keep({ x: 0, y: 0, w: W, h: H });
+    paint(100, 50);
+    let bytes = 0;
+    const push = history.push.bind(history);
+    history.push = (c) => ((bytes = c.bytes ?? 0), push(c));
+    try {
+      pushStrokeEdit(layers, again);
+    } finally {
+      history.push = push;
+    }
+    expect(bytes).toBe(2 * 64 * 64 * 4); // the one tile with (100, 50)
   });
 });
 

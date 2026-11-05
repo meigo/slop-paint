@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_HISTORY_BYTES, UNDO_TILE, changedTiles, cropPixels } from "../history";
+import { DEFAULT_HISTORY_BYTES, UNDO_TILE, changedTiles, cropPixels, tilesIn } from "../history";
 
 const W = 20;
 const H = 10;
@@ -37,23 +37,45 @@ describe("changedTiles", () => {
     ]);
   });
 
-  it("compares only the tiles an area touches, on the same tile grid", () => {
-    const b = blank();
-    paint(b, 1, 1);
-    paint(b, 17, 2);
-    paint(b, 10, 9);
-    // An area from (9, 0) to (18, 3): the tiles at x 8 and 16, row 0 — the pixel at (1, 1) is
-    // outside it and not seen.
-    expect(changedTiles(blank(), b, W, H, 8, { x: 9, y: 0, w: 9, h: 3 })).toEqual([
-      { x: 16, y: 0, w: 4, h: 8 },
-    ]);
-    expect(changedTiles(blank(), b, W, H, 8, { x: 0, y: 0, w: 0, h: 0 })).toEqual([]);
-  });
-
   it("sees a change in any channel", () => {
     const b = blank();
     b[(4 * W + 9) * 4 + 1] = 1; // green of (9, 4)
     expect(changedTiles(blank(), b, W, H, 8)).toEqual([{ x: 8, y: 0, w: 8, h: 8 }]);
+  });
+});
+
+describe("tilesIn", () => {
+  it("lists the tiles a rect touches, clipped at the canvas edges, with their grid index", () => {
+    // From (9, 0) to (18, 3) on a 20×10 canvas: the tiles at x 8 and 16, row 0.
+    expect(tilesIn({ x: 9, y: 0, w: 9, h: 3 }, W, H, 8)).toEqual([
+      { x: 8, y: 0, w: 8, h: 8, key: 1 },
+      { x: 16, y: 0, w: 4, h: 8, key: 2 },
+    ]);
+    // The second row's tiles are 2 tall; keys run on across the rows (3 tiles a row).
+    expect(tilesIn({ x: 0, y: 7, w: 1, h: 2 }, W, H, 8)).toEqual([
+      { x: 0, y: 0, w: 8, h: 8, key: 0 },
+      { x: 0, y: 8, w: 8, h: 2, key: 3 },
+    ]);
+  });
+
+  it("lands on the same tiles as changedTiles", () => {
+    const b = blank();
+    paint(b, 17, 9);
+    expect(changedTiles(blank(), b, W, H, 8)).toEqual(
+      tilesIn({ x: 17, y: 9, w: 1, h: 1 }, W, H, 8).map(({ x, y, w, h }) => ({ x, y, w, h })),
+    );
+  });
+
+  it("is empty for an empty rect or one off the canvas", () => {
+    expect(tilesIn({ x: 9, y: 3, w: 0, h: 4 }, W, H, 8)).toEqual([]);
+    expect(tilesIn({ x: -30, y: 0, w: 10, h: 4 }, W, H, 8)).toEqual([]);
+    expect(tilesIn({ x: 25, y: 0, w: 10, h: 4 }, W, H, 8)).toEqual([]);
+  });
+
+  it("clamps a rect hanging off the edges", () => {
+    expect(tilesIn({ x: -5, y: -5, w: 10, h: 8 }, W, H, 8)).toEqual([
+      { x: 0, y: 0, w: 8, h: 8, key: 0 },
+    ]);
   });
 });
 
