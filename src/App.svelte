@@ -117,7 +117,9 @@
     pushLayersEdit,
     pushPixelEdit,
     pushRefEdit,
+    pushStrokeEdit,
     setOnHistoryApplied,
+    StrokeBackup,
     structuralEdit,
   } from "./undo";
   import {
@@ -214,7 +216,8 @@
   let selectionMode: "create" | "drag" | null = null;
 
   // --- Drawing state ---
-  let preStrokeSnapshot: ImageData | null = null;
+  /** The open stroke's "before" pixels, tile by tile as it reaches them (see `StrokeBackup`). */
+  let strokeBackup: StrokeBackup | null = null;
   // Fast canvas backup for smooth brush (GPU-accelerated drawImage vs slow putImageData)
   let preStrokeCanvas: HTMLCanvasElement | null = null;
   // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
@@ -330,7 +333,7 @@
     }
   }
 
-  /** `strokeArea` in the layer's canvas px, for `pushPixelEdit`. */
+  /** `strokeArea` in the layer's canvas px, for the thumbnail's redraw. */
   function strokeAreaPx(layer: Layer): PxRect | null {
     if (!strokeArea || !layers) return null;
     const { width: w, height: h } = layer.canvas;
@@ -1739,6 +1742,7 @@
       const rect = frame && deviceRect(frame, w / layers.docWidth, w, h);
       strokeArea = unionBox(strokeArea, frame);
       if (!rect) return null;
+      strokeBackup?.keep(rect);
       restoreLayerFromCanvas(layer, rect);
       layer.ctx.save();
       const m = layer.ctx.getTransform();
@@ -1785,7 +1789,7 @@
       stampDrawnTo = 0;
       strokeArea = null;
       layers.setLiveLayer(layer.id);
-      preStrokeSnapshot = layers.getSnapshot();
+      strokeBackup = new StrokeBackup(layer);
       if (fullRedraw) {
         saveLayerToCanvas(layer);
       }
@@ -1801,9 +1805,9 @@
         redrawFrame(points, true);
         strokeBox = null;
         endStrokeComposite();
-        if (preStrokeSnapshot) {
-          pushPixelEdit(layers, layer, preStrokeSnapshot, strokeAreaPx(layer));
-          preStrokeSnapshot = null;
+        if (strokeBackup) {
+          pushStrokeEdit(layers, strokeBackup);
+          strokeBackup = null;
         }
         bumpPixelVersion(layer.id, strokeAreaPx(layer));
       } else {
@@ -1821,6 +1825,10 @@
       }
     } else {
       // Stamp engine: incremental, only draws new points
+      const drawn = pointsBox(points, pad, stampDrawnTo - 1);
+      const { width: lw, height: lh } = layer.canvas;
+      const drawnPx = drawn && deviceRect(drawn, lw / layers.docWidth, lw, lh);
+      if (drawnPx) strokeBackup?.keep(drawnPx); // before the dabs land there
       layer.ctx.save();
       selection?.applyClip(layer.ctx);
       if (kind === "blend") {
@@ -1834,16 +1842,15 @@
         );
       }
       layer.ctx.restore();
-      const drawn = pointsBox(points, pad, stampDrawnTo - 1);
       strokeArea = unionBox(strokeArea, drawn);
       scheduleComposite(drawn);
       stampDrawnTo = points.length;
 
       if (done) {
         endStrokeComposite();
-        if (preStrokeSnapshot) {
-          pushPixelEdit(layers, layer, preStrokeSnapshot, strokeAreaPx(layer));
-          preStrokeSnapshot = null;
+        if (strokeBackup) {
+          pushStrokeEdit(layers, strokeBackup);
+          strokeBackup = null;
         }
         bumpPixelVersion(layer.id, strokeAreaPx(layer));
       }

@@ -9,6 +9,7 @@ import {
   changedTiles,
   cropPixels,
   offCanvasRects,
+  tilesIn,
   type PixelRect,
 } from "./history";
 import {
@@ -35,53 +36,91 @@ export function setOnHistoryApplied(fn: () => void) {
  *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
  *  not the whole layer twice over. Pushes nothing when no pixel changed — an empty step would wipe
  *  redo — and says whether it pushed, so a caller can report the no-op. */
-export function pushPixelEdit(
-  layers: LayerManager,
-  layer: Layer,
-  before: ImageData,
-  /** Where the change lies (canvas px), if known: only there is compared (`changedTiles`). */
-  area: PixelRect | null = null,
-): boolean {
-  const d = pixelDiff(layers, layer, before, area);
-  if (d.empty) return false;
+export function pushPixelEdit(layers: LayerManager, layer: Layer, before: ImageData): boolean {
+  return pushTiles(layers, layer, diffTiles(before, layers.snapshotOf(layer)));
+}
+
+type Tile = { r: PixelRect; was: ImageData; now: ImageData };
+
+/** One step putting `tiles` of `layer` back or forth; none (false) when there are none — an empty
+ *  step would wipe redo. Its own function, so the step's closures hold the tiles alone. */
+function pushTiles(layers: LayerManager, layer: Layer, tiles: Tile[]): boolean {
+  if (tiles.length === 0) return false;
   const put = (side: "was" | "now") => {
-    d.put(side);
+    for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
     hooks.onHistoryApplied();
   };
-  history.push({ undo: () => put("was"), redo: () => put("now"), bytes: d.bytes });
+  history.push({ undo: () => put("was"), redo: () => put("now"), bytes: tilesBytes(tiles) });
   return true;
 }
 
-/** The tiles of `layer` that changed since `before`, both sides, and how to put either back. */
-function pixelDiff(
-  layers: LayerManager,
-  layer: Layer,
-  before: ImageData,
-  area: PixelRect | null = null,
-) {
-  const tiles = diffTiles(before, layers.snapshotOf(layer), area);
-  return {
-    put: (side: "was" | "now") => {
-      for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
-    },
-    bytes: tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0),
-    empty: tiles.length === 0,
-  };
-}
+const tilesBytes = (tiles: Tile[]) =>
+  tiles.reduce((sum, t) => sum + t.was.data.byteLength + t.now.data.byteLength, 0);
 
-/** The changed tiles of two snapshots, each side cropped out. Its own function, not inline in
- *  `pixelDiff`: closures made in one scope share it, so `put` kept the `.map` callback's `before`
+/** The changed tiles of two snapshots, each side cropped out. Its own function, not inline where
+ *  a step is made: closures made in one scope share it, so `put` kept the `.map` callback's `before`
  *  and `full` reachable — every step held BOTH whole-layer snapshots while `bytes` counted only
  *  the tiles (2026-10-17 review: 50 strokes on a 2732×2048 iPad layer kept ~2.2 GB alive). */
-function diffTiles(before: ImageData, full: ImageData, area: PixelRect | null) {
+function diffTiles(before: ImageData, full: ImageData): Tile[] {
   const w = full.width;
   if (before.width !== w || before.height !== full.height)
     return [{ r: { x: 0, y: 0, w, h: full.height }, was: before, now: full }];
-  return changedTiles(before.data, full.data, w, full.height, UNDO_TILE, area).map((r) => ({
+  return changedTiles(before.data, full.data, w, full.height, UNDO_TILE).map((r) => ({
     r,
     was: new ImageData(cropPixels(before.data, w, r), r.w, r.h),
     now: new ImageData(cropPixels(full.data, w, r), r.w, r.h),
   }));
+}
+
+/**
+ * A stroke's pixels from before it, kept TILE BY TILE as the stroke first reaches each one
+ * (2026-11-05): `keep(rect)` is called before every write to the layer, so a tile is read while it
+ * still holds what was there. It replaced a whole-layer snapshot at every press — 96 MB and ~6–10
+ * ms read at 4000×6000, and a second whole read at the lift to compare — with reads of the tiles
+ * the stroke touches. Long Ink/Calligraphy strokes bake their settled part into the pre-stroke
+ * copy, which is then no longer the "before"; this never reads that copy, so freezing can't spoil
+ * it.
+ */
+export class StrokeBackup {
+  readonly layer: Layer;
+  private tiles = new Map<number, { r: PixelRect; was: ImageData }>();
+  constructor(layer: Layer) {
+    this.layer = layer;
+  }
+
+  /** Keep the tiles of `rect` (canvas px) not kept yet. Call it BEFORE writing there. */
+  keep(rect: PixelRect) {
+    const { width, height } = this.layer.canvas;
+    for (const t of tilesIn(rect, width, height)) {
+      if (this.tiles.has(t.key)) continue;
+      const r = { x: t.x, y: t.y, w: t.w, h: t.h };
+      this.tiles.set(t.key, { r, was: this.layer.ctx.getImageData(r.x, r.y, r.w, r.h) });
+    }
+  }
+
+  /** The kept tiles that changed, both sides; lets the rest go. */
+  changed(): Tile[] {
+    const out: Tile[] = [];
+    for (const { r, was } of this.tiles.values()) {
+      const now = this.layer.ctx.getImageData(r.x, r.y, r.w, r.h);
+      const a = new Uint32Array(was.data.buffer, was.data.byteOffset, r.w * r.h);
+      const b = new Uint32Array(now.data.buffer, now.data.byteOffset, r.w * r.h);
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) {
+          out.push({ r, was, now });
+          break;
+        }
+      }
+    }
+    this.tiles.clear();
+    return out;
+  }
+}
+
+/** Record a stroke from its `StrokeBackup`: one step with the tiles it changed (none, false, when
+ *  it changed nothing). */
+export function pushStrokeEdit(layers: LayerManager, backup: StrokeBackup): boolean {
+  return pushTiles(layers, backup.layer, backup.changed());
 }
 
 /** Record a Move already made (2026-10-02) as ONE step: several layers shifted by (`dx`, `dy`)
@@ -166,29 +205,32 @@ export function structuralEdit<T>(
   const beforeTint = target?.tint;
   const result = run();
   const afterTree = layers.captureStructure();
-  const afterPixels = target ? layers.snapshotOf(target) : null;
+  // Only the tiles that changed, both sides (2026-11-05): both whole layers were kept, 192 MB
+  // a Merge down at 4000×6000, so two or three merges emptied the rest of the history. The
+  // snapshots themselves are read by no closure below, so the step doesn't keep them.
+  const tiles = target && beforePixels ? diffTiles(beforePixels, layers.snapshotOf(target)) : [];
   const afterOpacity = target?.opacity;
   const afterTint = target?.tint;
   if (sameStructure(beforeTree, afterTree)) return result; // nothing happened: no empty step
+  const putPixels = (side: "was" | "now") => {
+    if (target) for (const t of tiles) layers.restoreTo(target, t[side], t.r.x, t.r.y);
+  };
   history.push({
     undo: () => {
-      if (target && beforePixels) layers.restoreTo(target, beforePixels);
+      putPixels("was");
       if (target && beforeOpacity !== undefined) target.opacity = beforeOpacity;
       if (target) target.tint = beforeTint;
       layers.restoreStructure(beforeTree);
       hooks.onHistoryApplied();
     },
     redo: () => {
-      if (target && afterPixels) layers.restoreTo(target, afterPixels);
+      putPixels("now");
       if (target && afterOpacity !== undefined) target.opacity = afterOpacity;
       if (target) target.tint = afterTint;
       layers.restoreStructure(afterTree);
       hooks.onHistoryApplied();
     },
-    bytes:
-      (beforePixels?.data.byteLength ?? 0) +
-      (afterPixels?.data.byteLength ?? 0) +
-      detachedLayerBytes(beforeTree, afterTree),
+    bytes: tilesBytes(tiles) + detachedLayerBytes(beforeTree, afterTree),
   });
   return result;
 }
