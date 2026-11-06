@@ -508,20 +508,24 @@ export class LayerManager {
    *  ~7 ms at 2× on a Mac (more in Chromium): three tinted line layers slowed every stroke. */
   private liveId: number | null = null;
   private tintCache = new Map<number, { canvas: HTMLCanvasElement; tint: string }>();
-  /** An opacity drag's pre-merged copies (2026-11-06, `setOpacity(…, live)`): everything below the
-   *  dragged node, the layer itself (tinted) and everything above, on default canvases, so each
-   *  step draws three images. Redrawing every layer each step copied every CPU-backed layer whole
-   *  in Safari (see `drawTree`): 199 ms a step on an iPad Pro for 8 layers at 6000×6000, 25 ms
-   *  from the copies. Any other redraw (`composite`) drops them, so they can't go stale. */
-  private opacityCache: {
-    id: number;
-    below: HTMLCanvasElement;
-    /** The layer's own copy; none for a group (its members are drawn as they are). */
-    target: HTMLCanvasElement | null;
-    /** None when a layer above blends other than Normal: those are drawn as they are. */
+  /** A drag's pre-merged copies (2026-11-06, `compositeLive`): while a drag changes only a few
+   *  layers — an opacity slider, a lifted selection's transform, a Move drag, a reference's
+   *  handles — everything below them and everything above is drawn once onto default canvases,
+   *  so each frame draws those two images and the changing layers. A whole redraw copies every
+   *  CPU-backed layer whole in Safari (see `drawTree`): 199 ms a frame on an iPad Pro for 8 layers
+   *  at 6000×6000, 25 ms from the copies. Any other redraw (`composite`) drops them, and they are
+   *  rebuilt when anything they hold changes (`key`), so they can't go stale. */
+  private liveCache: {
+    key: string;
+    below: HTMLCanvasElement | null;
+    /** None when nothing is above, or a layer above blends other than Normal (it needs what is
+     *  under it, which changes): then those are drawn as they are (`aboveIds`). */
     above: HTMLCanvasElement | null;
-    inTarget: Set<number>;
     aboveIds: Set<number>;
+    /** The changing layers and any between them, drawn each frame. */
+    midIds: Set<number>;
+    /** Copies of changing layers whose own pixels stay put (`still`), untinted. */
+    copies: Map<number, HTMLCanvasElement>;
   } | null = null;
 
   constructor(
@@ -1043,49 +1047,80 @@ export class LayerManager {
     }
   }
 
-  /** `live`: a step of a slider drag, drawn from pre-merged copies (`opacityCache`); call
-   *  `endOpacityDrag` when the drag ends. */
+  /** `live`: a step of a slider drag, drawn from pre-merged copies (`compositeLive`); the
+   *  caller's last `composite()` lets go of them. */
   setOpacity(id: number, opacity: number, live = false) {
     const node = this.findNode(id);
     if (!node) return;
     node.opacity = opacity;
-    if (live && this.compositeOpacityDrag(id)) return;
+    if (live) {
+      const ids =
+        node.type === "layer"
+          ? [node.id]
+          : this.flatLayers()
+              .filter((l) => isWithin(this.tree, l.id, id))
+              .map((l) => l.id);
+      if (ids.length && this.compositeLive(new Set(ids), new Set(ids))) return;
+    }
     this.composite();
   }
 
-  /** Lets go of an opacity drag's copies (as `composite` does). */
-  endOpacityDrag() {
-    const c = this.opacityCache;
+  /** Lets go of a drag's copies (as `composite` does). */
+  private dropLiveCache() {
+    const c = this.liveCache;
     if (!c) return;
-    this.opacityCache = null;
+    this.liveCache = null;
     // Size 0 first: WebKit holds a canvas's pixels until it is collected.
-    for (const cvs of [c.below, c.target, c.above]) if (cvs) cvs.width = 0;
+    for (const cvs of [c.below, c.above, ...c.copies.values()]) if (cvs) cvs.width = 0;
   }
 
-  /** Redraws the screen for an opacity drag of node `id` from its copies, building them on the
-   *  first step. False when it can't (a float or Move drag showing, a copy refused its memory):
-   *  the caller redraws as usual. */
-  private compositeOpacityDrag(id: number): boolean {
+  /** What the copies for a drag of `live` hold: the size, the layer order, and every other
+   *  layer's visibility, opacity (its groups' too), blend and tint. */
+  private liveKey(live: Set<number>, w: number, h: number): string {
+    const parts: string[] = [`${w}x${h}`];
+    const walk = (nodes: LayerNode[], alpha: number, shown: boolean) => {
+      for (const n of nodes) {
+        const v = shown && n.visible;
+        const a = alpha * (n.opacity / 100);
+        if (n.type === "group") walk(n.children, a, v);
+        else if (live.has(n.id)) parts.push(`${n.id}*`);
+        else parts.push(`${n.id}:${v ? a : 0}:${n.blend ?? ""}:${n.tint ?? ""}`);
+      }
+    };
+    walk(this.tree, 1, true);
+    return parts.join(",");
+  }
+
+  /**
+   * Redraw the whole screen for a drag that changes only the layers `live` (by id) — their
+   * pixels, placement, opacity or float: everything else comes from copies (`liveCache`), built on
+   * the first frame. `still`: those of them whose own pixels don't change in the drag; ONE of
+   * them gets a copy too (memory: a document-sized canvas each). False when it can't (a float or
+   * Move offset on another layer, a copy refused its memory): the caller redraws as usual.
+   */
+  compositeLive(live: Set<number>, still: Set<number> = new Set()): boolean {
     const dpr = this.dpr;
     const w = Math.round(this.docWidth * dpr);
     const h = Math.round(this.docHeight * dpr);
-    if (this.opacityCache?.id !== id || this.opacityCache.below.width !== w) {
-      this.endOpacityDrag();
-      if (this.floatPreview?.() || this.moveOffset) return false;
-      const node = this.findNode(id);
-      if (!node) return false;
+    const float = this.floatPreview?.() ?? null;
+    if (float && !live.has(float.layerId)) return false;
+    if (this.moveOffset && [...this.moveOffset.ids].some((id) => !live.has(id))) return false;
+    const key = this.liveKey(live, w, h) + "|" + [...still].join(",");
+    if (this.liveCache?.key !== key) {
+      this.dropLiveCache();
       const flat = this.flatLayers();
-      const inTarget = new Set(
-        node.type === "layer"
-          ? [node.id]
-          : flat.filter((l) => isWithin(this.tree, l.id, id)).map((l) => l.id),
-      );
-      const first = flat.findIndex((l) => inTarget.has(l.id));
+      const first = flat.findIndex((l) => live.has(l.id));
+      if (first < 0) return false;
       let last = first;
-      for (let i = first; i < flat.length; i++) if (inTarget.has(flat[i].id)) last = i;
-      const belowIds = new Set(first < 0 ? [] : flat.slice(0, first).map((l) => l.id));
-      const aboveLayers = first < 0 ? [] : flat.slice(last + 1);
+      for (let i = first; i < flat.length; i++) if (live.has(flat[i].id)) last = i;
+      const belowIds = new Set(flat.slice(0, first).map((l) => l.id));
+      const midIds = new Set(flat.slice(first, last + 1).map((l) => l.id));
+      const aboveLayers = flat.slice(last + 1);
       const aboveIds = new Set(aboveLayers.map((l) => l.id));
+      // Source-over is associative, so Normal layers above flatten into one image.
+      const flatAbove =
+        aboveLayers.length > 0 && aboveLayers.every((l) => canvasOp(l.blend) === "source-over");
+      const copyIds = [...still].filter((id) => midIds.has(id)).slice(0, 1);
       const made: HTMLCanvasElement[] = [];
       const fresh = (): HTMLCanvasElement | null => {
         const c = document.createElement("canvas");
@@ -1094,41 +1129,41 @@ export class LayerManager {
         made.push(c);
         return canvasBacked(c) ? c : null;
       };
-      const below = fresh();
-      // Source-over is associative, so Normal layers above flatten into one image; any other
-      // mode needs what is under it, which changes with the drag.
-      const flatAbove = aboveLayers.every((l) => canvasOp(l.blend) === "source-over");
-      const above = aboveLayers.length && flatAbove ? fresh() : null;
-      const target = node.type === "layer" ? fresh() : null;
-      if (
-        !below ||
-        (aboveLayers.length && flatAbove && !above) ||
-        (node.type === "layer" && !target)
-      ) {
+      const below = belowIds.size ? fresh() : null;
+      const above = flatAbove ? fresh() : null;
+      const copies = new Map<number, HTMLCanvasElement>();
+      for (const id of copyIds) {
+        const c = fresh();
+        if (c) copies.set(id, c);
+      }
+      if ((belowIds.size && !below) || (flatAbove && !above) || copies.size !== copyIds.length) {
         for (const c of made) c.width = 0;
         return false;
       }
-      this.drawTree(below.getContext("2d")!, w, h, null, null, null, { only: belowIds });
+      if (below) this.drawTree(below.getContext("2d")!, w, h, null, null, null, { only: belowIds });
       if (above) this.drawTree(above.getContext("2d")!, w, h, null, null, null, { only: aboveIds });
-      if (target && node.type === "layer") {
-        const src = node.tint ? this.tinted(node.canvas, node.tint) : node.canvas;
-        target.getContext("2d")!.drawImage(src, 0, 0, w, h);
-      }
-      this.opacityCache = { id, below, target, above, inTarget, aboveIds };
+      for (const [id, c] of copies) c.getContext("2d")!.drawImage(this.findLayer(id)!.canvas, 0, 0);
+      this.liveCache = {
+        key,
+        below,
+        above,
+        aboveIds: above ? new Set() : aboveIds,
+        midIds,
+        copies,
+      };
     }
-    const c = this.opacityCache!;
+    const c = this.liveCache!;
     const ctx = this.displayCtx;
     ctx.save();
     ctx.resetTransform();
     ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(c.below, 0, 0);
-    const sources = c.target ? new Map([[id, c.target]]) : undefined;
-    this.drawTree(ctx, w, h, null, null, null, { only: c.inTarget, sources });
+    if (c.below) ctx.drawImage(c.below, 0, 0);
+    this.drawTree(ctx, w, h, float, this.moveOffset, null, { only: c.midIds, sources: c.copies });
     ctx.resetTransform();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
     if (c.above) ctx.drawImage(c.above, 0, 0);
-    else this.drawTree(ctx, w, h, null, null, null, { only: c.aboveIds });
+    else if (c.aboveIds.size) this.drawTree(ctx, w, h, null, null, null, { only: c.aboveIds });
     ctx.restore();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return true;
@@ -1138,7 +1173,7 @@ export class LayerManager {
    *  redrawing every layer whole each frame made drawing on a large document slow (4000×6000:
    *  ~42 ms a frame in WebKit, 2026-11-04). */
   composite(box?: Box | null) {
-    this.endOpacityDrag(); // something else changed: an opacity drag's copies may be stale
+    this.dropLiveCache(); // something else changed: a drag's copies may be stale
     const dpr = this.dpr;
     const ctx = this.displayCtx;
     const docPxW = Math.round(this.docWidth * dpr);
@@ -1161,7 +1196,11 @@ export class LayerManager {
   }
 
   /** `layer` with the float drawn onto it, on the reused scratch canvas. */
-  private withFloat(layer: Layer, float: FloatPreview): HTMLCanvasElement {
+  private withFloat(
+    layer: Layer,
+    float: FloatPreview,
+    base: HTMLCanvasElement = layer.canvas,
+  ): HTMLCanvasElement {
     let s = this.floatScratch;
     if (!s) s = this.floatScratch = document.createElement("canvas");
     if (s.width !== layer.canvas.width || s.height !== layer.canvas.height) {
@@ -1171,7 +1210,7 @@ export class LayerManager {
     const c = s.getContext("2d")!;
     c.resetTransform();
     c.clearRect(0, 0, s.width, s.height);
-    c.drawImage(layer.canvas, 0, 0);
+    c.drawImage(base, 0, 0);
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); // the float draws in document units
     float.render(c);
     return s;
@@ -1235,8 +1274,8 @@ export class LayerManager {
      *  size gives just that part, so the copy is the part's size, not the layer's. */
     rect: PxRect | null = null,
     /** `only`: draw just these layers (by id), each as in the whole tree (its groups' visibility
-     *  and opacity apply). `sources`: draw these layers from these canvases instead, already
-     *  tinted (an opacity drag's copies). */
+     *  and opacity apply). `sources`: these layers' pixels from these canvases instead (a drag's
+     *  copies, untinted). */
     part: { only?: Set<number>; sources?: Map<number, HTMLCanvasElement> } = {},
   ) {
     ctx.save();
@@ -1250,10 +1289,10 @@ export class LayerManager {
           if (part.only && !part.only.has(node.id)) continue;
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
-          const copy = part.sources?.get(node.id);
-          let source =
-            copy ?? (float?.layerId === node.id ? this.withFloat(node, float) : node.canvas);
-          if (node.tint && !copy) source = this.tintedLayer(node, source, node.tint);
+          // A drag's copy of the layer's pixels (untinted) stands in for its canvas.
+          const base = part.sources?.get(node.id) ?? node.canvas;
+          let source = float?.layerId === node.id ? this.withFloat(node, float, base) : base;
+          if (node.tint) source = this.tintedLayer(node, source, node.tint);
           const off = move?.ids.has(node.id) ? move : null;
           if (off) {
             const k = w / this.docWidth;
