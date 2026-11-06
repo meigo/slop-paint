@@ -121,20 +121,13 @@ textarea,
 }
 
 /* Canvas checkerboard pattern: light, as slop-animator's transparent background (white, #ccc
-   squares, 16px tiles), so dark line art stays visible over transparent areas. */
+   squares, 16px tiles), so dark line art stays visible over transparent areas. A tiled SVG, not
+   four gradients: zoomed out on a big page (squares under a screen pixel) the gradients took
+   27 ms a frame to repaint on an iPad Pro (6000×6000 at fit; 75 ms worst), the tile 10 ms. */
 .canvas-checkerboard {
-  background-size: 16px 16px;
-  background-position:
-    0 0,
-    0 8px,
-    8px -8px,
-    -8px 0;
-  background-image:
-    linear-gradient(45deg, #ccc 25%, transparent 25%),
-    linear-gradient(-45deg, #ccc 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #ccc 75%),
-    linear-gradient(-45deg, transparent 75%, #ccc 75%);
-  background-color: #fff;
+  background: #fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath d='M0 0h8v8H0zM8 8h8v8H8z' fill='%23ccc'/%3E%3C/svg%3E")
+    0 0 / 16px 16px;
 }
 
 /* Thumbnail checkerboard (smaller), light like the canvas's so dark strokes show. */
