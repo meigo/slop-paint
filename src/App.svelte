@@ -194,17 +194,29 @@
    *  any caller asked without one. */
   let compositeBox: Box | null = null;
   let compositeAll = false;
-  function scheduleComposite(box?: Box | null) {
+  /** Every ask this frame came from a lifted selection's handles: only the float changed, so the
+   *  rest is drawn from a drag's copies (`compositeLive`). */
+  let compositeFloatOnly = true;
+  function scheduleComposite(box?: Box | null, fromFloat = false) {
     if (box) compositeBox = unionBox(compositeBox, box);
     else compositeAll = true;
+    if (!fromFloat) compositeFloatOnly = false;
     if (compositeScheduled) return;
     compositeScheduled = true;
     requestAnimationFrame(() => {
       const part = compositeAll ? null : compositeBox;
+      const floatOnly = compositeFloatOnly;
       compositeScheduled = false;
       compositeAll = false;
       compositeBox = null;
-      layers?.composite(part);
+      compositeFloatOnly = true;
+      if (!layers) return;
+      const float = floatOnly ? layers.floatPreview?.() : null;
+      if (float) {
+        const id = new Set([float.layerId]);
+        if (layers.compositeLive(id, id)) return; // its layer's pixels stay put under the float
+      }
+      layers.composite(part);
     });
   }
 
@@ -1345,7 +1357,11 @@
       dx: g.dx,
       dy: g.dy,
     };
-    layers.composite();
+    // Only the moving layers change: the rest from a drag's copies. A reference's pixels are
+    // re-drawn each frame; a plain layer's stay put (drawn offset).
+    const ids = new Set(g.layers.map((l) => l.id));
+    const still = new Set(g.layers.filter((l) => !drawn.has(l)).map((l) => l.id));
+    if (!layers.compositeLive(ids, still)) layers.composite();
     showMoveBox(g.dx, g.dy);
   }
 
@@ -2389,7 +2405,14 @@
     } else {
       ctx.putImageData(next, r.x, r.y);
     }
-    layers.composite();
+    // Only the region changed (device px; a marquee's write stays inside it too).
+    const dpr = docDpr();
+    layers.composite({
+      x0: r.x / dpr,
+      y0: r.y / dpr,
+      x1: (r.x + r.w) / dpr,
+      y1: (r.y + r.h) / dpr,
+    });
   }
 
   function applyOutline() {
@@ -3524,7 +3547,8 @@
         cornersFromMatrix(selection.rect, selection.matrix),
         true,
       );
-      layers.composite();
+      // Only the reference changes: the rest from a drag's copies.
+      if (!layers.compositeLive(new Set([refTransform.layer.id]))) layers.composite();
     });
   }
 
@@ -3773,7 +3797,7 @@
 
     selection.onChange = () => {
       if (refTransform) scheduleRefRender();
-      else scheduleComposite();
+      else scheduleComposite(null, true);
     };
     // A lifted selection is drawn by the compositor, inside its layer — in its place in the stack,
     // with its opacity and blend mode (the overlay only holds the handles). A reference's handles
