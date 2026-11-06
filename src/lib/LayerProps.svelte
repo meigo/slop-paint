@@ -132,7 +132,8 @@
   // The node is kept with it, so the step lands on the node the drag started on.
   let opacityStart: { id: number; value: number } | null = null;
   // While dragging, only the canvas and this readout follow the slider: `setOpacity` recomposites,
-  // and the value shows from here. Bumping `layerVersion` per step rebuilt the whole layer list
+  // from copies of the layers below and above made at the first step (`setOpacity(…, true)`), and
+  // the value shows from here. Bumping `layerVersion` per step rebuilt the whole layer list
   // (thumbnails included) and re-ran every layer effect — ~15 ms a step on a Mac, far more on iPad,
   // against 0.3 ms for the recomposite. The one bump comes at release, with the undo step.
   let dragOpacity = $state<number | null>(null);
@@ -142,7 +143,7 @@
     if (!target) return;
     if (opacityStart === null) opacityStart = { id: target.id, value: target.opacity };
     dragOpacity = value;
-    layers.setOpacity(target.id, value);
+    layers.setOpacity(target.id, value, true); // from pre-merged copies: see `opacityCache`
   }
 
   function commitOpacity() {
@@ -152,6 +153,7 @@
     opacityStart = null;
     const node = layers.findNode(id);
     if (node) pushNodeFieldEdit(layers, id, "opacity", before, node.opacity);
+    layers.composite(); // lets go of the drag's copies; the exact frame from the layers themselves
     onSettingsChange();
   }
 

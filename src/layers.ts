@@ -5,6 +5,23 @@ import { canvasOp } from "./blend";
 import { drawTinted } from "./tint";
 import { halvingSteps } from "./resize";
 
+/** Whether `c` got its memory: an iPad refuses a canvas over its limit WITHOUT an error, and it
+ *  then draws nothing (see `unbackedLayerCount`). A pixel at the far corner is written and read
+ *  back, then cleared. */
+function canvasBacked(c: HTMLCanvasElement): boolean {
+  const ctx = c.getContext("2d");
+  if (!ctx) return false;
+  try {
+    ctx.fillStyle = "#010203";
+    ctx.fillRect(c.width - 1, c.height - 1, 1, 1);
+    const d = ctx.getImageData(c.width - 1, c.height - 1, 1, 1).data;
+    ctx.clearRect(c.width - 1, c.height - 1, 1, 1);
+    return d[0] === 1 && d[1] === 2 && d[2] === 3 && d[3] === 255;
+  } catch {
+    return false;
+  }
+}
+
 /** A reference's ORIGINAL image: the file as imported (kept whole for the PSD's embedded Smart
  *  Object) and a decoded copy for drawing (capped to what an iPad canvas allows). */
 export interface RefSource {
@@ -491,6 +508,21 @@ export class LayerManager {
    *  ~7 ms at 2× on a Mac (more in Chromium): three tinted line layers slowed every stroke. */
   private liveId: number | null = null;
   private tintCache = new Map<number, { canvas: HTMLCanvasElement; tint: string }>();
+  /** An opacity drag's pre-merged copies (2026-11-06, `setOpacity(…, live)`): everything below the
+   *  dragged node, the layer itself (tinted) and everything above, on default canvases, so each
+   *  step draws three images. Redrawing every layer each step copied every CPU-backed layer whole
+   *  in Safari (see `drawTree`): 199 ms a step on an iPad Pro for 8 layers at 6000×6000, 25 ms
+   *  from the copies. Any other redraw (`composite`) drops them, so they can't go stale. */
+  private opacityCache: {
+    id: number;
+    below: HTMLCanvasElement;
+    /** The layer's own copy; none for a group (its members are drawn as they are). */
+    target: HTMLCanvasElement | null;
+    /** None when a layer above blends other than Normal: those are drawn as they are. */
+    above: HTMLCanvasElement | null;
+    inTarget: Set<number>;
+    aboveIds: Set<number>;
+  } | null = null;
 
   constructor(
     _displayCanvas: HTMLCanvasElement,
@@ -1011,18 +1043,102 @@ export class LayerManager {
     }
   }
 
-  setOpacity(id: number, opacity: number) {
+  /** `live`: a step of a slider drag, drawn from pre-merged copies (`opacityCache`); call
+   *  `endOpacityDrag` when the drag ends. */
+  setOpacity(id: number, opacity: number, live = false) {
     const node = this.findNode(id);
-    if (node) {
-      node.opacity = opacity;
-      this.composite();
+    if (!node) return;
+    node.opacity = opacity;
+    if (live && this.compositeOpacityDrag(id)) return;
+    this.composite();
+  }
+
+  /** Lets go of an opacity drag's copies (as `composite` does). */
+  endOpacityDrag() {
+    const c = this.opacityCache;
+    if (!c) return;
+    this.opacityCache = null;
+    // Size 0 first: WebKit holds a canvas's pixels until it is collected.
+    for (const cvs of [c.below, c.target, c.above]) if (cvs) cvs.width = 0;
+  }
+
+  /** Redraws the screen for an opacity drag of node `id` from its copies, building them on the
+   *  first step. False when it can't (a float or Move drag showing, a copy refused its memory):
+   *  the caller redraws as usual. */
+  private compositeOpacityDrag(id: number): boolean {
+    const dpr = this.dpr;
+    const w = Math.round(this.docWidth * dpr);
+    const h = Math.round(this.docHeight * dpr);
+    if (this.opacityCache?.id !== id || this.opacityCache.below.width !== w) {
+      this.endOpacityDrag();
+      if (this.floatPreview?.() || this.moveOffset) return false;
+      const node = this.findNode(id);
+      if (!node) return false;
+      const flat = this.flatLayers();
+      const inTarget = new Set(
+        node.type === "layer"
+          ? [node.id]
+          : flat.filter((l) => isWithin(this.tree, l.id, id)).map((l) => l.id),
+      );
+      const first = flat.findIndex((l) => inTarget.has(l.id));
+      let last = first;
+      for (let i = first; i < flat.length; i++) if (inTarget.has(flat[i].id)) last = i;
+      const belowIds = new Set(first < 0 ? [] : flat.slice(0, first).map((l) => l.id));
+      const aboveLayers = first < 0 ? [] : flat.slice(last + 1);
+      const aboveIds = new Set(aboveLayers.map((l) => l.id));
+      const made: HTMLCanvasElement[] = [];
+      const fresh = (): HTMLCanvasElement | null => {
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        made.push(c);
+        return canvasBacked(c) ? c : null;
+      };
+      const below = fresh();
+      // Source-over is associative, so Normal layers above flatten into one image; any other
+      // mode needs what is under it, which changes with the drag.
+      const flatAbove = aboveLayers.every((l) => canvasOp(l.blend) === "source-over");
+      const above = aboveLayers.length && flatAbove ? fresh() : null;
+      const target = node.type === "layer" ? fresh() : null;
+      if (
+        !below ||
+        (aboveLayers.length && flatAbove && !above) ||
+        (node.type === "layer" && !target)
+      ) {
+        for (const c of made) c.width = 0;
+        return false;
+      }
+      this.drawTree(below.getContext("2d")!, w, h, null, null, null, { only: belowIds });
+      if (above) this.drawTree(above.getContext("2d")!, w, h, null, null, null, { only: aboveIds });
+      if (target && node.type === "layer") {
+        const src = node.tint ? this.tinted(node.canvas, node.tint) : node.canvas;
+        target.getContext("2d")!.drawImage(src, 0, 0, w, h);
+      }
+      this.opacityCache = { id, below, target, above, inTarget, aboveIds };
     }
+    const c = this.opacityCache!;
+    const ctx = this.displayCtx;
+    ctx.save();
+    ctx.resetTransform();
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(c.below, 0, 0);
+    const sources = c.target ? new Map([[id, c.target]]) : undefined;
+    this.drawTree(ctx, w, h, null, null, null, { only: c.inTarget, sources });
+    ctx.resetTransform();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    if (c.above) ctx.drawImage(c.above, 0, 0);
+    else this.drawTree(ctx, w, h, null, null, null, { only: c.aboveIds });
+    ctx.restore();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
   }
 
   /** Redraw the screen — or only `box` (document units) of it: a stroke changes a small part, and
    *  redrawing every layer whole each frame made drawing on a large document slow (4000×6000:
    *  ~42 ms a frame in WebKit, 2026-11-04). */
   composite(box?: Box | null) {
+    this.endOpacityDrag(); // something else changed: an opacity drag's copies may be stale
     const dpr = this.dpr;
     const ctx = this.displayCtx;
     const docPxW = Math.round(this.docWidth * dpr);
@@ -1118,6 +1234,10 @@ export class LayerManager {
     /** Draw only this part (canvas px; the caller has clipped to it): a source at the canvas's
      *  size gives just that part, so the copy is the part's size, not the layer's. */
     rect: PxRect | null = null,
+    /** `only`: draw just these layers (by id), each as in the whole tree (its groups' visibility
+     *  and opacity apply). `sources`: draw these layers from these canvases instead, already
+     *  tinted (an opacity drag's copies). */
+    part: { only?: Set<number>; sources?: Map<number, HTMLCanvasElement> } = {},
   ) {
     ctx.save();
     ctx.resetTransform();
@@ -1127,10 +1247,13 @@ export class LayerManager {
         const alpha = parentAlpha * (node.opacity / 100);
         if (node.type === "layer") {
           if (node.canvas.width === 0 || node.canvas.height === 0) continue;
+          if (part.only && !part.only.has(node.id)) continue;
           ctx.globalAlpha = alpha;
           ctx.globalCompositeOperation = canvasOp(node.blend);
-          let source = float?.layerId === node.id ? this.withFloat(node, float) : node.canvas;
-          if (node.tint) source = this.tintedLayer(node, source, node.tint);
+          const copy = part.sources?.get(node.id);
+          let source =
+            copy ?? (float?.layerId === node.id ? this.withFloat(node, float) : node.canvas);
+          if (node.tint && !copy) source = this.tintedLayer(node, source, node.tint);
           const off = move?.ids.has(node.id) ? move : null;
           if (off) {
             const k = w / this.docWidth;
