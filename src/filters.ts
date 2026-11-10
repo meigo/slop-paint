@@ -291,21 +291,29 @@ export function applyFilter(
           const r = src[p],
             g = src[p + 1],
             b = src[p + 2];
-          const tone = 1 - luma(r, g, b) / 255;
-          const c = halftoneCoverage(ox + x, oy + y, tone, cell, cos, sin, spec.shape);
+          // The tone as the pixel looks on white: darkness × alpha, so soft or see-through
+          // shading (airbrush, a low-opacity stroke) becomes smaller dots, not faint ones. The
+          // dots themselves are solid.
+          const tone = (1 - luma(r, g, b) / 255) * (a / 255);
+          let c = halftoneCoverage(ox + x, oy + y, tone, cell, cos, sin, spec.shape);
           const ir = black ? 0 : r,
             ig = black ? 0 : g,
             ib = black ? 0 : b;
           if (white) {
-            out[p] = Math.round(ir * c + 255 * (1 - c));
-            out[p + 1] = Math.round(ig * c + 255 * (1 - c));
-            out[p + 2] = Math.round(ib * c + 255 * (1 - c));
-            out[p + 3] = a;
+            // Solid ink over white paper at the layer's own alpha.
+            const pa = a / 255;
+            if (alphaLock) c = Math.min(c, pa);
+            const oa = c + pa * (1 - c);
+            const k = (1 - c) * pa * 255;
+            out[p] = Math.round((ir * c + k) / oa);
+            out[p + 1] = Math.round((ig * c + k) / oa);
+            out[p + 2] = Math.round((ib * c + k) / oa);
+            out[p + 3] = Math.round(oa * 255);
           } else {
             out[p] = ir;
             out[p + 1] = ig;
             out[p + 2] = ib;
-            out[p + 3] = Math.round(a * c);
+            out[p + 3] = Math.round((alphaLock ? Math.min(c, a / 255) : c) * 255);
           }
         }
       }
