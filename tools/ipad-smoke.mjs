@@ -655,6 +655,39 @@ async function main(page) {
     ];
   });
 
+  await step(async () => {
+    // Filter ▸ Halftone on the square Fill enclosed just filled: OK turns the fill into dots (one
+    // undo step); Filter ▸ Levels then Esc changes nothing (Cancel puts the layer back).
+    const inside = rect(0.74, 0.24, 0.07, 0.07);
+    const c0 = await pixels(inside);
+    await menu("Filter", /^Halftone/);
+    const open = await page.getByRole("dialog", { name: "Halftone" }).isVisible();
+    await page.waitForTimeout(300);
+    const c1 = await pixels(inside); // the preview
+    await page.getByRole("dialog").getByRole("button", { name: "OK" }).tap();
+    await page.waitForTimeout(300);
+    const c2 = await pixels(inside);
+    await menu("Filter", /^Levels/);
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    const c3 = await pixels(inside);
+    const gone = !(await page.getByRole("dialog").count());
+    await undo();
+    await page.waitForTimeout(300);
+    const c4 = await pixels(inside);
+    return [
+      open &&
+        c1.avg !== c0.avg &&
+        c2.avg === c1.avg &&
+        c3.avg === c2.avg &&
+        gone &&
+        c4.avg === c0.avg,
+      `Filter ▸ Halftone previews and applies (${c0.avg} → ${c1.avg} → ${c2.avg}), Levels + Esc changes nothing (${c3.avg}), Undo takes the halftone back (${c4.avg})`,
+      "filter",
+    ];
+  });
+
   // ------------------------------------------------------------------- selections and transforms
   const selRect = rect(0.04, bandY(2) - 0.06, 0.6, 0.12);
   const marquee = () =>
