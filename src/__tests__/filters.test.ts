@@ -156,6 +156,31 @@ describe("halftone", () => {
     expect(mean(out, 0)).toBeGreaterThan(80);
     expect(mean(out, 0)).toBeLessThan(180);
   });
+  it("reads see-through shading by its alpha: solid dots covering that share", () => {
+    const src = solid(64, 64, [0, 0, 0, 77]); // black at 30%
+    const out = run(src, 64, 64, { ...FILTER_DEFAULTS.halftone, cell: 6 });
+    expect(mean(out, 3) / 255).toBeCloseTo(0.3, 1);
+    let solidPx = 0;
+    for (let p = 3; p < out.length; p += 4) if (out[p] === 255) solidPx++;
+    expect(solidPx).toBeGreaterThan(64 * 64 * 0.15); // the dots' middles are opaque
+  });
+  it("with alpha lock, no dot gets more alpha than was there", () => {
+    const src = solid(32, 32, [0, 0, 0, 77]);
+    const out = run(src, 32, 32, FILTER_DEFAULTS.halftone, true);
+    for (let p = 3; p < out.length; p += 4) expect(out[p]).toBeLessThanOrEqual(77);
+  });
+  it("white paper over see-through shading: solid dots, the paper at the layer's alpha", () => {
+    const src = solid(64, 64, [0, 0, 0, 128]);
+    const out = run(src, 64, 64, { ...FILTER_DEFAULTS.halftone, cell: 6, paper: "white" });
+    let dot = 0,
+      paper = 0;
+    for (let p = 0; p < out.length; p += 4) {
+      if (out[p + 3] === 255 && out[p] === 0) dot++;
+      if (out[p + 3] === 128 && out[p] === 255) paper++;
+    }
+    expect(dot).toBeGreaterThan(0);
+    expect(paper).toBeGreaterThan(0);
+  });
 });
 
 describe("every filter", () => {
