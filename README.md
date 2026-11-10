@@ -64,6 +64,15 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Thickness**, **Wobble** (the line wanders across the edge) and **Variation** (it swells and
   thins), plus a dice to re-roll the randomness; live preview, one undo step to apply
 
+**Filter menu** (one-off: applied to the layer's pixels, not live)
+
+- **Levels…** (black, midtones, white, and the output range, over a histogram), **Hue/Saturation…**,
+  **Threshold…** (pure black ink; the rest transparent or white) and **Halftone…** (screentone:
+  dots or lines, cell size and angle, black or the layer's own colour, on transparent or white —
+  darker parts get bigger dots, and the screen lines up across layers)
+- Each previews on the canvas as you change it; OK is one undo step, Cancel or Esc puts the layer
+  back. They work on the active layer, inside the selection if there is one, and keep alpha lock
+
 **Selection & transform**
 
 - **Move** (V) drags whole layers: the ones picked with **Select** in the layer panel, or the

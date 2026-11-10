@@ -54,6 +54,15 @@
     type TextSpec,
   } from "./text-layout";
   import TextDialog from "./lib/TextDialog.svelte";
+  import FilterDialog from "./lib/FilterDialog.svelte";
+  import {
+    FILTER_DEFAULTS,
+    FILTER_TITLES,
+    applyFilter,
+    lumaHistogram,
+    type FilterKind,
+    type FilterSpec,
+  } from "./filters";
   import { refFocusChange } from "./ref-tool";
   import {
     enclosedFillRegion,
@@ -1930,6 +1939,7 @@
       showSettingsDialog ||
       shareFileReady ||
       textDialog ||
+      filterDialog ||
       restoreDialog
     );
   }
@@ -2665,7 +2675,7 @@
     // The text dialog previews into its layer with no undo step until OK, and an empty text
     // previews an empty layer: the guard took that for a blanking (its dialog opened under the
     // text one). Saved once it closes — OK and Cancel both re-draw, which schedules the save.
-    if (textDialog) return;
+    if (textDialog || filterDialog) return; // (the filter dialog previews the same way)
     // Paused over blank layers (the dialog closed without a choice): say so again at each save it
     // skips — a later status message had wiped the first notice, and work went unsaved silently.
     if (autosaveHalted) return flashStatus(AUTOSAVE_PAUSED, 0);
@@ -2854,7 +2864,7 @@
 
   /** Back from the background: were the layers blanked while away? */
   function checkBlankOnReturn() {
-    if (!autosaveReady || autosaveHalted || !layers || textDialog) return; // (see flushAutosave)
+    if (!autosaveReady || autosaveHalted || !layers || textDialog || filterDialog) return; // (see flushAutosave)
     if (blankedSince(inkedLayerIds())) haltForBlankLayers();
   }
 
@@ -3210,6 +3220,149 @@
     bumpLayerVersion();
     if (added) syncRefHandles();
     flashStatus("Reference added — drag to place it; pick your layer to draw again", 6000);
+  }
+
+  // --- Filters (Filter menu) ---
+  // One-off, not live: the dialog previews INTO the active layer (re-run from a snapshot of the
+  // ink's bounds, once a frame), OK keeps it as one undo step, Cancel puts the region back. The
+  // rest of the app is `inert` meanwhile and autosave waits, as for the text dialog, so nothing
+  // else can touch the layer while it is open.
+  let filterDialog = $state<{ initial: FilterSpec; histogram: Float64Array | null } | null>(null);
+  let filterSpec: FilterSpec | null = null;
+  /** The last settings of each filter, for the next time it opens (session only). */
+  const lastFilterSpecs: Partial<Record<FilterKind, FilterSpec>> = {};
+  let filterRun: {
+    layer: Layer;
+    before: ImageData; // the WHOLE layer, for the undo step
+    rect: { x: number; y: number; w: number; h: number }; // device px
+    src: ImageData; // `before` cut to rect
+    out: ImageData;
+    scratch: HTMLCanvasElement | null; // for a marquee's clipped write (putImageData ignores clips)
+  } | null = null;
+  let filterRaf = 0;
+
+  function openFilter(kind: FilterKind) {
+    if (!layers || filterDialog || textDialog) return;
+    const title = FILTER_TITLES[kind];
+    const why = paintBlock(layers.active);
+    if (why) return flashStatus(why);
+    if (layers.active.ref) return flashStatus(REF_PAINT_REFUSED);
+    if (outlineActive()) cancelOutline();
+    endGesture();
+    if (selection?.hasFloating) resolveFloat(true); // a float belongs to its layer: apply it first
+    const layer = layers.active;
+    const cw = layer.canvas.width,
+      ch = layer.canvas.height;
+    const before = layer.ctx.getImageData(0, 0, cw, ch);
+    // Every filter keeps transparent pixels transparent, so the ink's bounds are all it can change
+    // — cut to the marquee's box, if there is one.
+    const ink = alphaBounds(before.data, cw, ch);
+    if (!ink) return flashStatus(`Nothing to apply ${title} to — this layer is empty`);
+    let x0 = ink.x,
+      y0 = ink.y,
+      x1 = ink.x + ink.w,
+      y1 = ink.y + ink.h;
+    if (selection?.state === "selected" && selection.rect) {
+      const dpr = docDpr(),
+        r = selection.rect;
+      x0 = Math.max(x0, Math.floor(r.x * dpr));
+      y0 = Math.max(y0, Math.floor(r.y * dpr));
+      x1 = Math.min(x1, Math.ceil((r.x + r.w) * dpr));
+      y1 = Math.min(y1, Math.ceil((r.y + r.h) * dpr));
+      if (x1 <= x0 || y1 <= y0)
+        return flashStatus(`Nothing to apply ${title} to inside the selection`);
+    }
+    const rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    const src = layer.ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
+    filterRun = { layer, before, rect, src, out: new ImageData(rect.w, rect.h), scratch: null };
+    const initial = lastFilterSpecs[kind] ?? FILTER_DEFAULTS[kind];
+    filterSpec = initial;
+    filterDialog = { initial, histogram: kind === "levels" ? lumaHistogram(src.data) : null };
+  }
+
+  /** Coalesced to one animation frame: a slider fires an input per pointer event. */
+  function scheduleFilterPreview() {
+    if (filterRaf) return;
+    filterRaf = requestAnimationFrame(() => {
+      filterRaf = 0;
+      refreshFilterPreview();
+    });
+  }
+
+  function refreshFilterPreview() {
+    const run = filterRun,
+      spec = filterSpec;
+    if (!run || !spec || !layers) return;
+    const { layer, rect: r, src, out } = run;
+    const dpr = docDpr();
+    applyFilter(src.data, out.data, r.w, r.h, r.x, r.y, spec, dpr, layer.alphaLock);
+    const ctx = layer.ctx;
+    if (selection?.state === "selected") {
+      // As Outline: outside the marquee nothing changes, inside the result REPLACES the art in one
+      // `copy` (the region holds all the ink there, so what `copy` clears beyond it was empty).
+      ctx.putImageData(src, r.x, r.y);
+      if (!run.scratch) {
+        run.scratch = document.createElement("canvas");
+        run.scratch.width = r.w;
+        run.scratch.height = r.h;
+      }
+      run.scratch.getContext("2d")!.putImageData(out, 0, 0);
+      ctx.save();
+      try {
+        selection.applyClip(ctx);
+        ctx.globalCompositeOperation = "copy";
+        ctx.drawImage(run.scratch, r.x / dpr, r.y / dpr, r.w / dpr, r.h / dpr);
+      } finally {
+        ctx.restore();
+      }
+    } else {
+      ctx.putImageData(out, r.x, r.y);
+    }
+    layers.composite({
+      x0: r.x / dpr,
+      y0: r.y / dpr,
+      x1: (r.x + r.w) / dpr,
+      y1: (r.y + r.h) / dpr,
+    });
+  }
+
+  function endFilter() {
+    if (filterRaf) {
+      cancelAnimationFrame(filterRaf);
+      filterRaf = 0;
+    }
+    filterDialog = null;
+    filterRun = null;
+    filterSpec = null;
+  }
+
+  function confirmFilter(spec: FilterSpec) {
+    const run = filterRun;
+    if (!run || !layers) return endFilter();
+    filterSpec = spec;
+    refreshFilterPreview(); // the last change may still be waiting for its frame
+    lastFilterSpecs[spec.kind] = spec;
+    endFilter();
+    if (pushPixelEdit(layers, run.layer, run.before)) {
+      bumpPixelVersion(run.layer.id);
+    } else {
+      flashStatus(`${FILTER_TITLES[spec.kind]} changed nothing`);
+    }
+  }
+
+  function cancelFilter() {
+    const run = filterRun;
+    endFilter();
+    if (!run || !layers) return;
+    const { rect: r } = run;
+    run.layer.ctx.putImageData(run.src, r.x, r.y);
+    const dpr = docDpr();
+    layers.composite({
+      x0: r.x / dpr,
+      y0: r.y / dpr,
+      x1: (r.x + r.w) / dpr,
+      y1: (r.y + r.h) / dpr,
+    });
   }
 
   // --- Text references ---
@@ -4069,11 +4222,11 @@
 
 <div class="flex h-full w-full flex-col bg-canvas-bg">
   <!-- One grid, two arrangements, so switching never re-mounts the toolbar, canvas or panel.
-       `inert` while the text dialog is open keeps it modal: it has no full-screen layer to catch
+       `inert` while the text or filter dialog is open keeps it modal: it has no full-screen layer to catch
        taps, as one left the Home Screen app's top edge blurred after it closed (iPadOS). -->
   <div
     class="workspace-layout grid min-h-0 flex-1 overflow-hidden"
-    inert={!!textDialog}
+    inert={!!textDialog || !!filterDialog}
     style:grid-template-columns="minmax(0, 1fr) auto"
     style:grid-template-rows="auto auto minmax(0, 1fr)"
     style:grid-template-areas={panelBeside
@@ -4133,6 +4286,7 @@
           resizeDoc={() => {
             showResizeDialog = true;
           }}
+          {openFilter}
           openSettings={() => {
             showSettingsDialog = true;
           }}
@@ -4256,6 +4410,18 @@
     fonts={fontList}
     checkFont={fontSource}
     onAddFont={addFont}
+  />
+
+  <FilterDialog
+    open={!!filterDialog}
+    initial={filterDialog?.initial ?? FILTER_DEFAULTS.levels}
+    histogram={filterDialog?.histogram ?? null}
+    onChange={(spec) => {
+      filterSpec = spec;
+      scheduleFilterPreview();
+    }}
+    onConfirm={confirmFilter}
+    onCancel={cancelFilter}
   />
 
   <ResizeDocDialog

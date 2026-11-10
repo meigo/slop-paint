@@ -16,7 +16,7 @@
 
 <div class="relative shrink-0" use:clickOutside={close}>
   <button
-    class="flex h-9 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-surface-hover"
+    class="flex h-9 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-surface-hover max-[960px]:px-1.5"
     class:ui-on={open}
     aria-haspopup="menu"
     aria-expanded={open}

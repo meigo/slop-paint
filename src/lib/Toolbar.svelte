@@ -37,6 +37,7 @@
   import { createCurveEditor } from "../pressure-curve";
   import { clickOutside } from "./click-outside";
   import ToolbarMenu from "./ToolbarMenu.svelte";
+  import { FILTER_TITLES, type FilterKind } from "../filters";
   import { MAX_GAP } from "../fill-holes";
   import { SOFT_STEPS, softStepIndex } from "../fill";
   import { MAX_NIB_FLATNESS } from "../calligraphy-brush";
@@ -94,6 +95,7 @@
     importReferenceFromClipboard,
     newDoc,
     resizeDoc,
+    openFilter,
     openSettings,
     resetView,
     reset100,
@@ -157,6 +159,8 @@
     importReferenceFromClipboard: () => void;
     newDoc: () => void;
     resizeDoc: () => void;
+    /** Open a filter's dialog on the active layer (App says why when it can't). */
+    openFilter: (kind: FilterKind) => void;
     openSettings: () => void;
     resetView: () => void;
     reset100: () => void;
@@ -290,6 +294,12 @@
   const menuItem =
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
+  const filters: { kind: FilterKind; title: string }[] = [
+    { kind: "levels", title: "Black point, white point and midtones of the active layer" },
+    { kind: "hueSat", title: "Shift the active layer's colours, saturation and lightness" },
+    { kind: "threshold", title: "Make the active layer pure black ink (and white or transparent)" },
+    { kind: "halftone", title: "Turn the active layer's tones into dots or lines — screentone" },
+  ];
   const dimmable =
     "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";
   // Cut/Delete need a plain marquee; over a float (copy's other case) they wait for Apply/Cancel.
@@ -333,7 +343,7 @@
 <!-- Row 1: tools, history, zoom readout, menus. Fixed height. -->
 <!-- grid-area: App.svelte lays the two rows out in its grid (row 1 always full width). -->
 <div
-  class="z-20 flex h-12 shrink-0 items-center gap-1 border-b border-border bg-surface px-4"
+  class="z-20 flex h-12 shrink-0 items-center gap-1 border-b border-border bg-surface px-4 max-[960px]:px-3"
   style:grid-area="row1"
 >
   <div class="flex shrink-0 items-center gap-1">
@@ -352,7 +362,7 @@
     {/each}
   </div>
 
-  <div class="mx-2 h-6 w-px shrink-0 bg-border"></div>
+  <div class="mx-2 h-6 w-px shrink-0 bg-border max-[960px]:mx-1"></div>
 
   <!-- aria-disabled, not `disabled`: a disabled button dispatches no pointer events, so the status
        bar's hint could never read its title — and on iPad the hint is the only explanation. -->
@@ -373,7 +383,7 @@
     }}><Redo2 size={20} /></button
   >
 
-  <div class="mx-2 h-6 w-px shrink-0 bg-border"></div>
+  <div class="mx-2 h-6 w-px shrink-0 bg-border max-[960px]:mx-1"></div>
 
   <span class="min-w-12 shrink-0 text-center text-[11px] text-text-muted" title="Zoom"
     >{app.zoomText}</span
@@ -382,7 +392,8 @@
   <div class="ml-auto flex shrink-0 items-center gap-1">
     <!-- The same four menus, in the same order, as slop-animator: File (the project and what goes
          in and out of it), Edit, Document (what changes the file itself), View (only how you look
-         at it). Short verbs, "…" when a dialog follows, shortcuts as key chips. -->
+         at it) — plus Filter (slop-paint's own, one-off pixel filters), before View. Short verbs,
+         "…" when a dialog follows, shortcuts as key chips. -->
     <ToolbarMenu label="File">
       {#snippet children(close)}
         <button
@@ -623,6 +634,21 @@
         >
           Layer memory ~{memoryUse.text}
         </div>
+      {/snippet}
+    </ToolbarMenu>
+    <ToolbarMenu label="Filter">
+      {#snippet children(close)}
+        {#each filters as f (f.kind)}
+          <button
+            class={menuItem}
+            role="menuitem"
+            title={f.title}
+            onclick={() => {
+              openFilter(f.kind);
+              close();
+            }}>{FILTER_TITLES[f.kind]}…</button
+          >
+        {/each}
       {/snippet}
     </ToolbarMenu>
     <ToolbarMenu label="View">
