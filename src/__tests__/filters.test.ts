@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   FILTER_DEFAULTS,
   applyFilter,
+  blurChannel,
+  blurPlan,
+  filterReach,
+  posterizeLut,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -183,7 +187,7 @@ describe("halftone", () => {
   });
 });
 
-describe("every filter", () => {
+describe("every filter but the blur", () => {
   it("keeps a transparent pixel transparent", () => {
     const src = new Uint8ClampedArray([0, 0, 0, 0]);
     const specs: FilterSpec[] = [
@@ -191,6 +195,7 @@ describe("every filter", () => {
       { ...FILTER_DEFAULTS.hueSat, lightness: 100 },
       { ...FILTER_DEFAULTS.threshold, paper: "white" },
       { ...FILTER_DEFAULTS.halftone, paper: "white" },
+      { kind: "posterize", levels: 2 },
     ];
     for (const s of specs) expect(run(src, 1, 1, s)[3]).toBe(0);
   });
@@ -210,5 +215,84 @@ describe("hueSat over a buffer", () => {
       hueSatPixel(src[i * 4], src[i * 4 + 1], src[i * 4 + 2], spec, o);
       expect([out[i * 4], out[i * 4 + 1], out[i * 4 + 2]]).toEqual(o);
     }
+  });
+});
+
+describe("posterizeLut", () => {
+  it("gives exactly `levels` values, black and white kept", () => {
+    for (const n of [2, 4, 7, 32]) {
+      const lut = posterizeLut(n);
+      expect(new Set(lut).size).toBe(n);
+      expect(lut[0]).toBe(0);
+      expect(lut[255]).toBe(255);
+    }
+    expect(Array.from(new Set(posterizeLut(3)))).toEqual([0, 128, 255]);
+  });
+});
+
+describe("Gaussian blur", () => {
+  /** The spread (σ) of a blurred impulse along one row. */
+  function measuredSigma(sigma: number) {
+    const w = 401,
+      h = 1;
+    const a = new Float32Array(w);
+    a[200] = 1;
+    blurChannel(a, w, h, blurPlan(sigma), new Float32Array(w));
+    let sum = 0,
+      v = 0;
+    for (let i = 0; i < w; i++) sum += a[i];
+    for (let i = 0; i < w; i++) v += a[i] * (i - 200) ** 2;
+    return { sum, sigma: Math.sqrt(v / sum) };
+  }
+  it("spreads by about σ, sampled or by boxes, and keeps the paint", () => {
+    for (const s of [0.6, 1, 2.5, 3.5, 8, 20]) {
+      const m = measuredSigma(s);
+      expect(m.sum).toBeCloseTo(1, 4);
+      expect(Math.abs(m.sigma - s) / s).toBeLessThan(0.08);
+    }
+  });
+  it("does nothing below a quarter pixel", () => {
+    expect(blurPlan(0.1).kind).toBe("none");
+    expect(filterReach({ kind: "blur", radius: 0.1 })).toBe(0);
+  });
+  it("reaches as far as its kernel or boxes do, at the layer's density; other filters reach nothing", () => {
+    expect(filterReach({ kind: "blur", radius: 2 })).toBe(6);
+    expect(filterReach({ kind: "blur", radius: 1 }, 2)).toBe(6);
+    expect(filterReach({ kind: "blur", radius: 10 })).toBeGreaterThanOrEqual(28);
+    expect(filterReach(FILTER_DEFAULTS.halftone)).toBe(0);
+  });
+  it("blurs paint into transparency without darkening its colour", () => {
+    const w = 40,
+      h = 40;
+    const src = new Uint8ClampedArray(w * h * 4);
+    for (let y = 15; y < 25; y++)
+      for (let x = 15; x < 25; x++) src.set([255, 40, 0, 255], (y * w + x) * 4);
+    const out = run(src, w, h, { kind: "blur", radius: 2 });
+    let alpha = 0;
+    for (let p = 0; p < out.length; p += 4) {
+      alpha += out[p + 3];
+      if (out[p + 3] > 2) {
+        expect(out[p]).toBeGreaterThan(250);
+        expect(Math.abs(out[p + 1] - 40)).toBeLessThan(4);
+      }
+    }
+    expect(out[(14 * w + 20) * 4 + 3]).toBeGreaterThan(0); // spread past the edge
+    expect(alpha / (255 * 100)).toBeCloseTo(1, 1); // and none lost
+  });
+  it("keeps a flat colour flat, up to the canvas edge", () => {
+    const src = solid(30, 30, [90, 120, 200, 255]);
+    const out = run(src, 30, 30, { kind: "blur", radius: 5 });
+    for (let p = 0; p < out.length; p += 4)
+      expect([out[p], out[p + 1], out[p + 2], out[p + 3]]).toEqual([90, 120, 200, 255]);
+  });
+  it("alpha lock keeps the alpha and blurs only the colour", () => {
+    const w = 20,
+      h = 1;
+    const src = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) src.set(x < 10 ? [0, 0, 0, 255] : [255, 255, 255, 128], x * 4);
+    const out = run(src, w, h, { kind: "blur", radius: 2 }, true);
+    for (let x = 0; x < w; x++) expect(out[x * 4 + 3]).toBe(src[x * 4 + 3]);
+    expect(out[9 * 4]).toBeGreaterThan(0);
+    expect(out[10 * 4]).toBeLessThan(255);
   });
 });

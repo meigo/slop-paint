@@ -4,7 +4,7 @@
   // Cancel puts back what was there. As the text dialog: no dim, no cancel on an outside tap, and
   // no full-screen layer (App makes the rest `inert`).
   import { untrack } from "svelte";
-  import { FILTER_TITLES, type FilterSpec, type Paper } from "../filters";
+  import { BLUR_MAX, FILTER_TITLES, type FilterSpec, type Paper } from "../filters";
   import { isConfirmEnter } from "./dialog-keys";
   import { sliderFill } from "./slider-fill";
 
@@ -64,6 +64,16 @@
   // Midtones as Photoshop's gamma (0.1–10), on a slider that is even either side of 1.
   const gammaToSlider = (g: number) => Math.round(Math.log10(g) * 100);
   const sliderToGamma = (s: number) => Math.round(Math.pow(10, s / 100) * 100) / 100;
+
+  // Blur radius on a slider that is even in ratio (0.2 … BLUR_MAX): a small blur needs tenths, a
+  // big one doesn't.
+  const BLUR_MIN = 0.2;
+  const radiusToSlider = (r: number) =>
+    Math.round((Math.log(r / BLUR_MIN) / Math.log(BLUR_MAX / BLUR_MIN)) * 100);
+  const sliderToRadius = (v: number) => {
+    const r = BLUR_MIN * Math.pow(BLUR_MAX / BLUR_MIN, v / 100);
+    return r < 10 ? Math.round(r * 10) / 10 : Math.round(r);
+  };
 
   // The histogram, scaled to its tallest bar (a logarithm, so a few dominant values — the white
   // of a Background — don't flatten the rest).
@@ -245,6 +255,31 @@
         String(s.lightness),
         (v) => update({ lightness: v }),
       )}
+    {:else if spec.kind === "posterize"}
+      {@const s = spec}
+      {@render slider(
+        "Levels",
+        "How many values each colour channel keeps (2 per channel: 8 colours)",
+        s.levels,
+        2,
+        32,
+        String(s.levels),
+        (v) => update({ levels: v }),
+      )}
+    {:else if spec.kind === "blur"}
+      {@const s = spec}
+      {@render slider(
+        "Radius",
+        "How far the blur spreads, in document pixels (the Gaussian's σ)",
+        radiusToSlider(s.radius),
+        0,
+        100,
+        `${s.radius} px`,
+        (v) => update({ radius: sliderToRadius(v) }),
+      )}
+      <p class="text-[11px] text-text-muted">
+        Spreads into transparent parts too. With a selection, only inside it changes.
+      </p>
     {:else if spec.kind === "threshold"}
       {@const s = spec}
       {@render slider(

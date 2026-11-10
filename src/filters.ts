@@ -1,7 +1,7 @@
 // One-off filters (Filter menu): pure per-pixel maths on unpremultiplied RGBA, as `getImageData`
 // gives it. App previews them into the layer and keeps the result as one undo step; nothing here is
-// live. Every filter keeps a fully transparent pixel transparent, so App only works on the ink's
-// bounds.
+// live. Every filter but Gaussian blur keeps a fully transparent pixel transparent; the blur
+// spreads paint up to `filterReach` px, so App works on the ink's bounds grown by that.
 
 export type Paper = "transparent" | "white";
 
@@ -28,12 +28,16 @@ export type HalftoneSpec = {
   ink: "black" | "colour";
   paper: Paper;
 };
-export type FilterSpec = LevelsSpec | HueSatSpec | ThresholdSpec | HalftoneSpec;
+export type PosterizeSpec = { kind: "posterize"; levels: number }; // 2–32 per channel
+export type BlurSpec = { kind: "blur"; radius: number }; // σ in DOCUMENT px, 0.2–BLUR_MAX
+export type FilterSpec =
+  LevelsSpec | HueSatSpec | PosterizeSpec | ThresholdSpec | HalftoneSpec | BlurSpec;
 export type FilterKind = FilterSpec["kind"];
 
 export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K }> } = {
   levels: { kind: "levels", inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 },
   hueSat: { kind: "hueSat", hue: 0, saturation: 0, lightness: 0 },
+  posterize: { kind: "posterize", levels: 4 },
   threshold: { kind: "threshold", level: 128, paper: "transparent" },
   halftone: {
     kind: "halftone",
@@ -43,13 +47,19 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
     ink: "black",
     paper: "transparent",
   },
+  blur: { kind: "blur", radius: 2 },
 };
+
+/** Gaussian blur's largest radius (σ), in document px. */
+export const BLUR_MAX = 64;
 
 export const FILTER_TITLES: Record<FilterKind, string> = {
   levels: "Levels",
   hueSat: "Hue/Saturation",
+  posterize: "Posterize",
   threshold: "Threshold",
   halftone: "Halftone",
+  blur: "Gaussian blur",
 };
 
 /** Entries in Hue/Saturation's colour table (a power of two). */
@@ -70,6 +80,174 @@ export function levelsLut(s: LevelsSpec): Uint8ClampedArray {
     lut[i] = Math.round(s.outBlack + (s.outWhite - s.outBlack) * t);
   }
   return lut;
+}
+
+/** Posterize as a lookup table: `levels` evenly spaced values per channel, black and white kept. */
+export function posterizeLut(levels: number): Uint8ClampedArray {
+  const n = Math.max(2, Math.round(levels)) - 1;
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) lut[i] = Math.round((Math.round((i / 255) * n) * 255) / n);
+  return lut;
+}
+
+// --- Gaussian blur ---
+/** Below this σ (device px) the blur is a no-op; up to `KERNEL_MAX_SIGMA` it is an exact sampled
+ *  Gaussian, above that three box blurs whose widths are picked to give σ (Kovesi's method) — the
+ *  same cost at any radius. */
+const MIN_SIGMA = 0.25;
+const KERNEL_MAX_SIGMA = 3;
+
+export type BlurPlan =
+  | { kind: "none"; reach: 0 }
+  | { kind: "kernel"; weights: Float32Array; reach: number }
+  | { kind: "boxes"; radii: number[]; reach: number };
+
+/** How to blur by σ device px, and how far (px) the blur reaches. */
+export function blurPlan(sigma: number): BlurPlan {
+  if (!(sigma >= MIN_SIGMA)) return { kind: "none", reach: 0 };
+  if (sigma <= KERNEL_MAX_SIGMA) {
+    const r = Math.ceil(3 * sigma);
+    const weights = new Float32Array(2 * r + 1);
+    let sum = 0;
+    for (let i = -r; i <= r; i++) sum += weights[i + r] = Math.exp((-i * i) / (2 * sigma * sigma));
+    for (let i = 0; i < weights.length; i++) weights[i] /= sum;
+    return { kind: "kernel", weights, reach: r };
+  }
+  const n = 3;
+  let wl = Math.floor(Math.sqrt((12 * sigma * sigma) / n + 1));
+  if (wl % 2 === 0) wl--;
+  const wu = wl + 2;
+  const m = Math.round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
+  const radii = [0, 1, 2].map((i) => ((i < m ? wl : wu) - 1) / 2);
+  return { kind: "boxes", radii, reach: radii[0] + radii[1] + radii[2] };
+}
+
+/** How far (device px) a filter can move paint: what App grows its working area by. */
+export function filterReach(spec: FilterSpec, dpr = 1): number {
+  return spec.kind === "blur" ? blurPlan(spec.radius * dpr).reach : 0;
+}
+
+/** A horizontal pass over `w`×`h` floats, the edge value repeated past either end — at the canvas
+ *  edge that keeps paint touching it solid, and elsewhere App's working area ends in transparent
+ *  pixels (or out of the blur's reach). `boxR`: a box of that radius; else the plan's kernel. */
+function blurRows(
+  src: Float32Array,
+  dst: Float32Array,
+  w: number,
+  h: number,
+  plan: BlurPlan,
+  boxR: number,
+) {
+  const last = w - 1;
+  if (plan.kind === "kernel") {
+    const wts = plan.weights,
+      r = plan.reach;
+    for (let y = 0; y < h; y++) {
+      const base = y * w;
+      for (let x = 0; x < w; x++) {
+        let acc = 0;
+        for (let k = -r; k <= r; k++) {
+          const q = x + k;
+          acc += wts[k + r] * src[base + (q < 0 ? 0 : q > last ? last : q)];
+        }
+        dst[base + x] = acc;
+      }
+    }
+    return;
+  }
+  const r = boxR,
+    inv = 1 / (2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const base = y * w;
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += src[base + (k < 0 ? 0 : k > last ? last : k)];
+    for (let x = 0; x < w; x++) {
+      dst[base + x] = sum * inv;
+      const add = x + r + 1,
+        drop = x - r;
+      sum += src[base + (add > last ? last : add)] - src[base + (drop < 0 ? 0 : drop)];
+    }
+  }
+}
+
+/** The vertical pass, walked ROW by row (a running sum per column, or whole rows weighted): going
+ *  down each column jumps a row's length per value, which missed the cache on every read — a
+ *  12-megapixel blur took ~7 s in WebKit that way. `colSum` holds at least `w` values. */
+function blurCols(
+  src: Float32Array,
+  dst: Float32Array,
+  w: number,
+  h: number,
+  plan: BlurPlan,
+  boxR: number,
+  colSum: Float64Array,
+) {
+  const last = h - 1;
+  const row = (y: number) => (y < 0 ? 0 : y > last ? last : y) * w;
+  if (plan.kind === "kernel") {
+    const wts = plan.weights,
+      r = plan.reach;
+    for (let y = 0; y < h; y++) {
+      const o = y * w;
+      dst.fill(0, o, o + w);
+      for (let k = -r; k <= r; k++) {
+        const wt = wts[k + r],
+          i = row(y + k);
+        for (let x = 0; x < w; x++) dst[o + x] += wt * src[i + x];
+      }
+    }
+    return;
+  }
+  const r = boxR,
+    inv = 1 / (2 * r + 1);
+  colSum.fill(0, 0, w);
+  for (let k = -r; k <= r; k++) {
+    const i = row(k);
+    for (let x = 0; x < w; x++) colSum[x] += src[i + x];
+  }
+  for (let y = 0; y < h; y++) {
+    const o = y * w,
+      add = row(y + r + 1),
+      drop = row(y - r);
+    for (let x = 0; x < w; x++) {
+      dst[o + x] = colSum[x] * inv;
+      colSum[x] += src[add + x] - src[drop + x];
+    }
+  }
+}
+
+/** Blur one channel (`w`×`h` floats) in place; `tmp` holds at least as many. */
+export function blurChannel(
+  a: Float32Array,
+  w: number,
+  h: number,
+  plan: BlurPlan,
+  tmp: Float32Array,
+) {
+  if (plan.kind === "none") return;
+  const colSum = new Float64Array(w);
+  if (plan.kind === "kernel") {
+    blurRows(a, tmp, w, h, plan, 0);
+    blurCols(tmp, a, w, h, plan, 0, colSum);
+    return;
+  }
+  for (const r of plan.radii) {
+    if (r < 1) continue;
+    blurRows(a, tmp, w, h, plan, r);
+    blurCols(tmp, a, w, h, plan, r, colSum);
+  }
+}
+
+/** Float work buffers, kept between previews: a slider drag re-runs the blur every frame, and three
+ *  layer-sized arrays a frame churned the collector. Let go by `releaseFilterBuffers`. */
+let blurBufs: Float32Array[] = [];
+function blurBuffers(n: number): Float32Array[] {
+  if (blurBufs.length !== 3 || blurBufs[0].length < n)
+    blurBufs = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
+  return blurBufs.map((b) => b.subarray(0, n));
+}
+export function releaseFilterBuffers() {
+  blurBufs = [];
 }
 
 /** Luma histogram of the painted pixels, each counted by its alpha (a faint edge counts little). */
@@ -229,6 +407,37 @@ export function applyFilter(
         out[p + 2] = lut[src[p + 2]];
         out[p + 3] = src[p + 3];
       }
+      return;
+    }
+    case "posterize": {
+      const lut = posterizeLut(spec.levels);
+      for (let p = 0; p < n; p += 4) {
+        out[p] = lut[src[p]];
+        out[p + 1] = lut[src[p + 1]];
+        out[p + 2] = lut[src[p + 2]];
+        out[p + 3] = src[p + 3];
+      }
+      return;
+    }
+    case "blur": {
+      // Premultiplied, channel by channel (three float planes, not twelve): blurred straight, the
+      // black of transparent pixels would darken the paint's edge. Alpha lock keeps the alpha and
+      // blurs only the colour.
+      const plan = blurPlan(spec.radius * dpr);
+      if (plan.kind === "none") {
+        out.set(src.subarray(0, n));
+        return;
+      }
+      const m = w * h;
+      const [A, C, tmp] = blurBuffers(m);
+      for (let i = 0; i < m; i++) A[i] = src[i * 4 + 3];
+      blurChannel(A, w, h, plan, tmp);
+      for (let c = 0; c < 3; c++) {
+        for (let i = 0, p = 0; i < m; i++, p += 4) C[i] = (src[p + c] * src[p + 3]) / 255;
+        blurChannel(C, w, h, plan, tmp);
+        for (let i = 0, p = c; i < m; i++, p += 4) out[p] = A[i] > 0 ? (C[i] * 255) / A[i] : 0;
+      }
+      for (let i = 0, p = 3; i < m; i++, p += 4) out[p] = alphaLock ? src[p] : A[i];
       return;
     }
     case "hueSat": {

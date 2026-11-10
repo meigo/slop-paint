@@ -67,10 +67,12 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Filter menu** (one-off: applied to the layer's pixels, not live)
 
 - **Levels…** (black, midtones, white, and the output range, over a histogram), **Hue/Saturation…**,
+  **Posterize…** (2–32 steps per channel),
   **Threshold…** (pure black ink; the rest transparent or white) and **Halftone…** (screentone:
   dots or lines, cell size and angle, black or the layer's own colour, on transparent or white —
   darker parts get bigger dots — see-through shading counts as lighter, so a soft airbrush
-  fades into smaller dots — and the screen lines up across layers)
+  fades into smaller dots — and the screen lines up across layers),
+  **Gaussian blur…** (radius 0.2–64 px; it spreads into transparent parts too)
 - Each previews on the canvas as you change it; OK is one undo step, Cancel or Esc puts the layer
   back. They work on the active layer, inside the selection if there is one, and keep alpha lock
 

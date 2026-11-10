@@ -59,7 +59,9 @@
     FILTER_DEFAULTS,
     FILTER_TITLES,
     applyFilter,
+    filterReach,
     lumaHistogram,
+    releaseFilterBuffers,
     type FilterKind,
     type FilterSpec,
   } from "./filters";
@@ -3224,7 +3226,8 @@
 
   // --- Filters (Filter menu) ---
   // One-off, not live: the dialog previews INTO the active layer (re-run from a snapshot of the
-  // ink's bounds, once a frame), OK keeps it as one undo step, Cancel puts the region back. The
+  // ink's bounds grown by the filter's reach, once a frame), OK keeps it as one undo step, Cancel
+  // puts the region back. The
   // rest of the app is `inert` meanwhile and autosave waits, as for the text dialog, so nothing
   // else can touch the layer while it is open.
   let filterDialog = $state<{ initial: FilterSpec; histogram: Float64Array | null } | null>(null);
@@ -3234,7 +3237,9 @@
   let filterRun: {
     layer: Layer;
     before: ImageData; // the WHOLE layer, for the undo step
-    rect: { x: number; y: number; w: number; h: number }; // device px
+    ink: PxRect; // its painted bounds
+    marquee: PxRect | null; // the marquee's box, device px
+    rect: PxRect; // where the filter runs (`filterRect`), device px
     src: ImageData; // `before` cut to rect
     out: ImageData;
     scratch: HTMLCanvasElement | null; // for a marquee's clipped write (putImageData ignores clips)
@@ -3254,30 +3259,70 @@
     const cw = layer.canvas.width,
       ch = layer.canvas.height;
     const before = layer.ctx.getImageData(0, 0, cw, ch);
-    // Every filter keeps transparent pixels transparent, so the ink's bounds are all it can change
-    // — cut to the marquee's box, if there is one.
     const ink = alphaBounds(before.data, cw, ch);
     if (!ink) return flashStatus(`Nothing to apply ${title} to — this layer is empty`);
-    let x0 = ink.x,
-      y0 = ink.y,
-      x1 = ink.x + ink.w,
-      y1 = ink.y + ink.h;
+    let marquee: PxRect | null = null;
     if (selection?.state === "selected" && selection.rect) {
       const dpr = docDpr(),
         r = selection.rect;
-      x0 = Math.max(x0, Math.floor(r.x * dpr));
-      y0 = Math.max(y0, Math.floor(r.y * dpr));
-      x1 = Math.min(x1, Math.ceil((r.x + r.w) * dpr));
-      y1 = Math.min(y1, Math.ceil((r.y + r.h) * dpr));
-      if (x1 <= x0 || y1 <= y0)
-        return flashStatus(`Nothing to apply ${title} to inside the selection`);
+      const x0 = Math.floor(r.x * dpr),
+        y0 = Math.floor(r.y * dpr);
+      marquee = {
+        x: x0,
+        y: y0,
+        w: Math.ceil((r.x + r.w) * dpr) - x0,
+        h: Math.ceil((r.y + r.h) * dpr) - y0,
+      };
     }
-    const rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-    const src = layer.ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
-    filterRun = { layer, before, rect, src, out: new ImageData(rect.w, rect.h), scratch: null };
     const initial = lastFilterSpecs[kind] ?? FILTER_DEFAULTS[kind];
+    const rect = filterRect(ink, marquee, cw, ch, filterReach(initial, docDpr()));
+    if (!rect) return flashStatus(`Nothing to apply ${title} to inside the selection`);
+    const src = cropImage(before, rect);
+    filterRun = {
+      layer,
+      before,
+      ink,
+      marquee,
+      rect,
+      src,
+      out: new ImageData(rect.w, rect.h),
+      scratch: null,
+    };
     filterSpec = initial;
     filterDialog = { initial, histogram: kind === "levels" ? lumaHistogram(src.data) : null };
+  }
+
+  /** Where a filter reaching `reach` px can change anything: the ink's bounds grown by the reach,
+   *  inside the layer, and with a marquee its box grown by the reach too (the blur reads paint just
+   *  outside the marquee; the write is clipped to it). Null when that is empty. */
+  function filterRect(
+    ink: PxRect,
+    marquee: PxRect | null,
+    cw: number,
+    ch: number,
+    reach: number,
+  ): PxRect | null {
+    let x0 = Math.max(0, ink.x - reach),
+      y0 = Math.max(0, ink.y - reach),
+      x1 = Math.min(cw, ink.x + ink.w + reach),
+      y1 = Math.min(ch, ink.y + ink.h + reach);
+    if (marquee) {
+      x0 = Math.max(x0, marquee.x - reach);
+      y0 = Math.max(y0, marquee.y - reach);
+      x1 = Math.min(x1, marquee.x + marquee.w + reach);
+      y1 = Math.min(y1, marquee.y + marquee.h + reach);
+    }
+    return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+  }
+
+  /** `img` cut to `r` (no canvas read: the whole-layer snapshot already holds it). */
+  function cropImage(img: ImageData, r: PxRect): ImageData {
+    const out = new ImageData(r.w, r.h);
+    for (let y = 0; y < r.h; y++) {
+      const from = ((r.y + y) * img.width + r.x) * 4;
+      out.data.set(img.data.subarray(from, from + r.w * 4), y * r.w * 4);
+    }
+    return out;
   }
 
   /** Coalesced to one animation frame: a slider fires an input per pointer event. */
@@ -3293,8 +3338,30 @@
     const run = filterRun,
       spec = filterSpec;
     if (!run || !spec || !layers) return;
-    const { layer, rect: r, src, out } = run;
     const dpr = docDpr();
+    // The blur's reach follows its radius: a bigger one works on a bigger area. Put the old area
+    // back first, so a smaller radius leaves nothing of a bigger one's spread behind.
+    const cw = run.layer.canvas.width,
+      ch = run.layer.canvas.height;
+    const want = filterRect(run.ink, run.marquee, cw, ch, filterReach(spec, dpr));
+    const was = run.rect;
+    if (!want || want.x !== was.x || want.y !== was.y || want.w !== was.w || want.h !== was.h) {
+      run.layer.ctx.putImageData(run.src, was.x, was.y);
+      layers.composite({
+        x0: was.x / dpr,
+        y0: was.y / dpr,
+        x1: (was.x + was.w) / dpr,
+        y1: (was.y + was.h) / dpr,
+      });
+      // Empty: a smaller blur no longer reaches into the marquee. The old area is back as it was,
+      // and stays the run's area (nothing changed in it), ready for a bigger radius again.
+      if (!want) return;
+      run.rect = want;
+      run.src = cropImage(run.before, want);
+      run.out = new ImageData(want.w, want.h);
+      run.scratch = null;
+    }
+    const { layer, rect: r, src, out } = run;
     applyFilter(src.data, out.data, r.w, r.h, r.x, r.y, spec, dpr, layer.alphaLock);
     const ctx = layer.ctx;
     if (selection?.state === "selected") {
@@ -3334,6 +3401,7 @@
     filterDialog = null;
     filterRun = null;
     filterSpec = null;
+    releaseFilterBuffers();
   }
 
   function confirmFilter(spec: FilterSpec) {

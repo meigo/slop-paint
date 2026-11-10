@@ -22,7 +22,7 @@
 // real share sheet (stubbed here: `navigator.share` records the file), the system clipboard, the
 // on-screen keyboard, iPadOS memory limits.
 // First run on a machine: `npx playwright install webkit` (~100 MB).
-/* global setTimeout, getComputedStyle, Element, document, window, navigator, PointerEvent, MouseEvent, FileReader -- used inside page.evaluate / addInitScript, which run in the page */
+/* global setTimeout, getComputedStyle, Element, document, window, navigator, Event, PointerEvent, MouseEvent, FileReader -- used inside page.evaluate / addInitScript, which run in the page */
 import { mkdirSync, rmSync } from "node:fs";
 import process from "node:process";
 import { devices, webkit } from "playwright";
@@ -685,6 +685,31 @@ async function main(page) {
         c4.avg === c0.avg,
       `Filter ▸ Halftone previews and applies (${c0.avg} → ${c1.avg} → ${c2.avg}), Levels + Esc changes nothing (${c3.avg}), Undo takes the halftone back (${c4.avg})`,
       "filter",
+    ];
+  });
+
+  await step(async () => {
+    // Filter ▸ Gaussian blur spreads the filled square's edge out onto the paper beside it (the
+    // working area grows by the blur's reach); Undo takes it back.
+    const beside = rect(0.855, 0.25, 0.012, 0.05); // just right of the square's right side
+    const c0 = await pixels(beside);
+    await menu("Filter", /^Gaussian blur/);
+    const radius = page.getByRole("dialog").locator('input[type="range"]');
+    await radius.evaluate((el) => {
+      el.value = "80";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.waitForTimeout(400);
+    await page.getByRole("dialog").getByRole("button", { name: "OK" }).tap();
+    await page.waitForTimeout(300);
+    const c1 = await pixels(beside);
+    await undo();
+    await page.waitForTimeout(300);
+    const c2 = await pixels(beside);
+    return [
+      c1.avg !== c0.avg && c2.avg === c0.avg,
+      `Filter ▸ Gaussian blur spreads the square past its edge (${c0.avg} → ${c1.avg}), Undo takes it back (${c2.avg})`,
+      "filter-blur",
     ];
   });
 
