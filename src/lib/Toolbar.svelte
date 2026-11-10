@@ -294,11 +294,17 @@
   const menuItem =
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
-  const filters: { kind: FilterKind; title: string }[] = [
-    { kind: "levels", title: "Black point, white point and midtones of the active layer" },
-    { kind: "hueSat", title: "Shift the active layer's colours, saturation and lightness" },
-    { kind: "threshold", title: "Make the active layer pure black ink (and white or transparent)" },
-    { kind: "halftone", title: "Turn the active layer's tones into dots or lines — screentone" },
+  // Adjustments (tone and colour), then a divider, then effects.
+  const filters: { kind: FilterKind; title: string }[][] = [
+    [
+      { kind: "levels", title: "Black point, white point and midtones of the active layer" },
+      { kind: "hueSat", title: "Shift the active layer's colours, saturation and lightness" },
+      {
+        kind: "threshold",
+        title: "Make the active layer pure black ink (and white or transparent)",
+      },
+    ],
+    [{ kind: "halftone", title: "Turn the active layer's tones into dots or lines — screentone" }],
   ];
   const dimmable =
     "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";
@@ -638,16 +644,19 @@
     </ToolbarMenu>
     <ToolbarMenu label="Filter">
       {#snippet children(close)}
-        {#each filters as f (f.kind)}
-          <button
-            class={menuItem}
-            role="menuitem"
-            title={f.title}
-            onclick={() => {
-              openFilter(f.kind);
-              close();
-            }}>{FILTER_TITLES[f.kind]}…</button
-          >
+        {#each filters as group, i (i)}
+          {#if i > 0}<div class="my-1 h-px bg-border"></div>{/if}
+          {#each group as f (f.kind)}
+            <button
+              class={menuItem}
+              role="menuitem"
+              title={f.title}
+              onclick={() => {
+                openFilter(f.kind);
+                close();
+              }}>{FILTER_TITLES[f.kind]}…</button
+            >
+          {/each}
         {/each}
       {/snippet}
     </ToolbarMenu>
