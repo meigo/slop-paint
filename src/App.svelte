@@ -56,10 +56,12 @@
   import TextDialog from "./lib/TextDialog.svelte";
   import FilterDialog from "./lib/FilterDialog.svelte";
   import {
+    BLUR_MAX,
     FILTER_DEFAULTS,
     FILTER_TITLES,
     applyFilter,
     filterReach,
+    filterShared,
     lumaHistogram,
     releaseFilterBuffers,
     type FilterKind,
@@ -128,6 +130,7 @@
     pushLayersEdit,
     pushPixelEdit,
     pushRefEdit,
+    pushRegionsEdit,
     pushStrokeEdit,
     setOnHistoryApplied,
     StrokeBackup,
@@ -3225,46 +3228,82 @@
   }
 
   // --- Filters (Filter menu) ---
-  // One-off, not live: the dialog previews INTO the active layer (re-run from a snapshot of the
-  // ink's bounds grown by the filter's reach, once a frame), OK keeps it as one undo step, Cancel
-  // puts the region back. The
-  // rest of the app is `inert` meanwhile and autosave waits, as for the text dialog, so nothing
-  // else can touch the layer while it is open.
-  let filterDialog = $state<{ initial: FilterSpec; histogram: Float64Array | null } | null>(null);
+  // One-off, not live: the dialog previews INTO the layers (re-run from a snapshot of each one's
+  // ink bounds grown by the filter's reach, once a frame), OK keeps it as one undo step, Cancel
+  // puts the regions back. It runs on what Move would take (2026-11-11): the picked rows, else the
+  // active layer, or every layer in the active group — locked, hidden and reference layers left
+  // out. The rest of the app is `inert` meanwhile and autosave waits, as for the text dialog, so
+  // nothing else can touch the layers while it is open.
+  let filterDialog = $state<{
+    initial: FilterSpec;
+    histogram: Float64Array | null;
+    scope: string;
+  } | null>(null);
   let filterSpec: FilterSpec | null = null;
   /** The last settings of each filter, for the next time it opens (session only). */
   const lastFilterSpecs: Partial<Record<FilterKind, FilterSpec>> = {};
-  let filterRun: {
+  /** One layer of a filter run. Only its `base` is kept, never the whole layer: a group of 40
+   *  full-page layers held whole would be gigabytes on an iPad. */
+  type FilterPart = {
     layer: Layer;
-    before: ImageData; // the WHOLE layer, for the undo step
-    ink: PxRect; // its painted bounds
+    ink: PxRect; // its painted bounds, device px
+    base: PxRect; // `filterRect` at the filter's LARGEST reach: all it can ever change
+    before: ImageData; // base's pixels from before — Cancel and the undo step
+    rect: PxRect | null; // where it runs now (inside base); null: out of the marquee's reach
+    src: ImageData | null; // `before` cut to rect
+  };
+  let filterRun: {
+    parts: FilterPart[];
     marquee: PxRect | null; // the marquee's box, device px
-    rect: PxRect; // where the filter runs (`filterRect`), device px
-    src: ImageData; // `before` cut to rect
-    out: ImageData;
+    out: Uint8ClampedArray<ArrayBuffer>; // the filter's output, shared by the parts (grown as needed)
     scratch: HTMLCanvasElement | null; // for a marquee's clipped write (putImageData ignores clips)
   } | null = null;
   let filterRaf = 0;
 
+  /** The layers a filter takes now, or why there are none. One active layer refuses with its
+   *  own reason (`paintBlock`); a group or a pick leaves out what can't take it and counts it. */
+  function filterTargets(): { layers: Layer[]; skipped: string[] } | string {
+    const lm = layers!;
+    const picks = app.layerSelection.filter((id) => lm.findNode(id));
+    if (!app.layerSelecting && picks.length === 0 && !lm.activeIsGroup) {
+      const why = paintBlock(lm.active);
+      if (why) return why;
+      if (lm.active.ref) return REF_PAINT_REFUSED;
+      return { layers: [lm.active], skipped: [] };
+    }
+    const t = moveTargets();
+    const out: Layer[] = [];
+    let refs = 0;
+    for (const id of t.ids) {
+      const layer = lm.findLayer(id);
+      if (!layer) continue;
+      if (layer.ref) refs++;
+      else out.push(layer);
+    }
+    const skipped = [
+      t.locked && `${t.locked} locked`,
+      t.hidden && `${t.hidden} hidden`,
+      refs && `${refs} reference${refs > 1 ? "s" : ""}`,
+    ].filter((x): x is string => !!x);
+    if (out.length === 0)
+      return skipped.length
+        ? `No layer here takes a filter — ${skipped.join(", ")}`
+        : "No layers picked";
+    return { layers: out, skipped };
+  }
+
   function openFilter(kind: FilterKind) {
     if (!layers || filterDialog || textDialog) return;
     const title = FILTER_TITLES[kind];
-    const why = paintBlock(layers.active);
-    if (why) return flashStatus(why);
-    if (layers.active.ref) return flashStatus(REF_PAINT_REFUSED);
+    const targets = filterTargets();
+    if (typeof targets === "string") return flashStatus(targets);
     if (outlineActive()) cancelOutline();
     endGesture();
     if (selection?.hasFloating) resolveFloat(true); // a float belongs to its layer: apply it first
-    const layer = layers.active;
-    const cw = layer.canvas.width,
-      ch = layer.canvas.height;
-    const before = layer.ctx.getImageData(0, 0, cw, ch);
-    const ink = alphaBounds(before.data, cw, ch);
-    if (!ink) return flashStatus(`Nothing to apply ${title} to — this layer is empty`);
+    const dpr = docDpr();
     let marquee: PxRect | null = null;
     if (selection?.state === "selected" && selection.rect) {
-      const dpr = docDpr(),
-        r = selection.rect;
+      const r = selection.rect;
       const x0 = Math.floor(r.x * dpr),
         y0 = Math.floor(r.y * dpr);
       marquee = {
@@ -3275,21 +3314,55 @@
       };
     }
     const initial = lastFilterSpecs[kind] ?? FILTER_DEFAULTS[kind];
-    const rect = filterRect(ink, marquee, cw, ch, filterReach(initial, docDpr()));
-    if (!rect) return flashStatus(`Nothing to apply ${title} to inside the selection`);
-    const src = cropImage(before, rect);
-    filterRun = {
-      layer,
-      before,
-      ink,
-      marquee,
-      rect,
-      src,
-      out: new ImageData(rect.w, rect.h),
-      scratch: null,
-    };
+    const maxReach = kind === "blur" ? filterReach({ kind: "blur", radius: BLUR_MAX }, dpr) : 0;
+    const reach = filterReach(initial, dpr);
+    const parts: FilterPart[] = [];
+    let inked = 0;
+    for (const layer of targets.layers) {
+      const cw = layer.canvas.width,
+        ch = layer.canvas.height;
+      // Read whole once to find the ink, then keep only the region (the read is let go).
+      const full = layer.ctx.getImageData(0, 0, cw, ch);
+      const ink = alphaBounds(full.data, cw, ch);
+      if (!ink) continue;
+      inked++;
+      const base = filterRect(ink, marquee, cw, ch, maxReach);
+      if (!base) continue;
+      const before = cropImage(full, { x: 0, y: 0 }, base);
+      const rect = filterRect(ink, marquee, cw, ch, reach);
+      parts.push({
+        layer,
+        ink,
+        base,
+        before,
+        rect,
+        src: rect ? cropImage(before, base, rect) : null,
+      });
+    }
+    if (parts.length === 0 || !parts.some((p) => p.rect)) {
+      const what = targets.layers.length > 1 ? "these layers are" : "this layer is";
+      return flashStatus(
+        inked
+          ? `Nothing to apply ${title} to inside the selection`
+          : `Nothing to apply ${title} to — ${what} empty`,
+      );
+    }
+    filterRun = { parts, marquee, out: new Uint8ClampedArray(0), scratch: null };
     filterSpec = initial;
-    filterDialog = { initial, histogram: kind === "levels" ? lumaHistogram(src.data) : null };
+    let histogram: Float64Array | null = null;
+    if (kind === "levels") {
+      histogram = new Float64Array(256);
+      for (const p of parts) {
+        const h = lumaHistogram(p.before.data);
+        for (let i = 0; i < 256; i++) histogram[i] += h[i];
+      }
+    }
+    const n = parts.length;
+    const scope =
+      n > 1 || targets.skipped.length
+        ? `${n} layer${n > 1 ? "s" : ""}${targets.skipped.length ? ` (left out: ${targets.skipped.join(", ")})` : ""}`
+        : "";
+    filterDialog = { initial, histogram, scope };
   }
 
   /** Where a filter reaching `reach` px can change anything: the ink's bounds grown by the reach,
@@ -3315,15 +3388,18 @@
     return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
   }
 
-  /** `img` cut to `r` (no canvas read: the whole-layer snapshot already holds it). */
-  function cropImage(img: ImageData, r: PxRect): ImageData {
+  /** `r` (layer px) cut out of `img`, whose top left lies at `at` on the layer. */
+  function cropImage(img: ImageData, at: { x: number; y: number }, r: PxRect): ImageData {
     const out = new ImageData(r.w, r.h);
     for (let y = 0; y < r.h; y++) {
-      const from = ((r.y + y) * img.width + r.x) * 4;
+      const from = ((r.y - at.y + y) * img.width + (r.x - at.x)) * 4;
       out.data.set(img.data.subarray(from, from + r.w * 4), y * r.w * 4);
     }
     return out;
   }
+
+  const sameRect = (a: PxRect | null, b: PxRect | null) =>
+    a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
 
   /** Coalesced to one animation frame: a slider fires an input per pointer event. */
   function scheduleFilterPreview() {
@@ -3339,58 +3415,80 @@
       spec = filterSpec;
     if (!run || !spec || !layers) return;
     const dpr = docDpr();
+    const reach = filterReach(spec, dpr);
+    let dirty: PxRect | null = null;
+    const touch = (r: PxRect) => {
+      if (!dirty) dirty = { ...r };
+      else {
+        const x1 = Math.max(dirty.x + dirty.w, r.x + r.w),
+          y1 = Math.max(dirty.y + dirty.h, r.y + r.h);
+        dirty.x = Math.min(dirty.x, r.x);
+        dirty.y = Math.min(dirty.y, r.y);
+        dirty.w = x1 - dirty.x;
+        dirty.h = y1 - dirty.y;
+      }
+    };
     // The blur's reach follows its radius: a bigger one works on a bigger area. Put the old area
     // back first, so a smaller radius leaves nothing of a bigger one's spread behind.
-    const cw = run.layer.canvas.width,
-      ch = run.layer.canvas.height;
-    const want = filterRect(run.ink, run.marquee, cw, ch, filterReach(spec, dpr));
-    const was = run.rect;
-    if (!want || want.x !== was.x || want.y !== was.y || want.w !== was.w || want.h !== was.h) {
-      run.layer.ctx.putImageData(run.src, was.x, was.y);
+    for (const part of run.parts) {
+      const cw = part.layer.canvas.width,
+        ch = part.layer.canvas.height;
+      const want = filterRect(part.ink, run.marquee, cw, ch, reach);
+      if (sameRect(want, part.rect)) continue;
+      const was = part.rect;
+      if (was) {
+        const b = part.base;
+        part.layer.ctx.putImageData(part.before, b.x, b.y, was.x - b.x, was.y - b.y, was.w, was.h);
+        touch(was);
+      }
+      part.rect = want;
+      part.src = want ? cropImage(part.before, part.base, want) : null;
+    }
+    const live = run.parts.filter((p) => p.rect && p.src);
+    const shared = filterShared(
+      spec,
+      live.map((p) => p.src!.data),
+    );
+    for (const part of live) {
+      const r = part.rect!,
+        src = part.src!;
+      const n = r.w * r.h * 4;
+      if (run.out.length < n) run.out = new Uint8ClampedArray(n);
+      const out = new ImageData(new Uint8ClampedArray(run.out.buffer, 0, n), r.w, r.h);
+      applyFilter(src.data, out.data, r.w, r.h, r.x, r.y, spec, dpr, part.layer.alphaLock, shared);
+      const ctx = part.layer.ctx;
+      if (selection?.state === "selected") {
+        // As Outline: outside the marquee nothing changes, inside the result REPLACES the art in
+        // one `copy` (the region holds all the ink there, so what `copy` clears beyond it was
+        // empty).
+        ctx.putImageData(src, r.x, r.y);
+        const sc = (run.scratch ??= document.createElement("canvas"));
+        if (sc.width !== r.w || sc.height !== r.h) {
+          sc.width = r.w;
+          sc.height = r.h;
+        }
+        sc.getContext("2d")!.putImageData(out, 0, 0);
+        ctx.save();
+        try {
+          selection.applyClip(ctx);
+          ctx.globalCompositeOperation = "copy";
+          ctx.drawImage(sc, r.x / dpr, r.y / dpr, r.w / dpr, r.h / dpr);
+        } finally {
+          ctx.restore();
+        }
+      } else {
+        ctx.putImageData(out, r.x, r.y);
+      }
+      touch(r);
+    }
+    const d = dirty as PxRect | null;
+    if (d)
       layers.composite({
-        x0: was.x / dpr,
-        y0: was.y / dpr,
-        x1: (was.x + was.w) / dpr,
-        y1: (was.y + was.h) / dpr,
+        x0: d.x / dpr,
+        y0: d.y / dpr,
+        x1: (d.x + d.w) / dpr,
+        y1: (d.y + d.h) / dpr,
       });
-      // Empty: a smaller blur no longer reaches into the marquee. The old area is back as it was,
-      // and stays the run's area (nothing changed in it), ready for a bigger radius again.
-      if (!want) return;
-      run.rect = want;
-      run.src = cropImage(run.before, want);
-      run.out = new ImageData(want.w, want.h);
-      run.scratch = null;
-    }
-    const { layer, rect: r, src, out } = run;
-    applyFilter(src.data, out.data, r.w, r.h, r.x, r.y, spec, dpr, layer.alphaLock);
-    const ctx = layer.ctx;
-    if (selection?.state === "selected") {
-      // As Outline: outside the marquee nothing changes, inside the result REPLACES the art in one
-      // `copy` (the region holds all the ink there, so what `copy` clears beyond it was empty).
-      ctx.putImageData(src, r.x, r.y);
-      if (!run.scratch) {
-        run.scratch = document.createElement("canvas");
-        run.scratch.width = r.w;
-        run.scratch.height = r.h;
-      }
-      run.scratch.getContext("2d")!.putImageData(out, 0, 0);
-      ctx.save();
-      try {
-        selection.applyClip(ctx);
-        ctx.globalCompositeOperation = "copy";
-        ctx.drawImage(run.scratch, r.x / dpr, r.y / dpr, r.w / dpr, r.h / dpr);
-      } finally {
-        ctx.restore();
-      }
-    } else {
-      ctx.putImageData(out, r.x, r.y);
-    }
-    layers.composite({
-      x0: r.x / dpr,
-      y0: r.y / dpr,
-      x1: (r.x + r.w) / dpr,
-      y1: (r.y + r.h) / dpr,
-    });
   }
 
   function endFilter() {
@@ -3398,6 +3496,7 @@
       cancelAnimationFrame(filterRaf);
       filterRaf = 0;
     }
+    if (filterRun?.scratch) filterRun.scratch.width = filterRun.scratch.height = 0;
     filterDialog = null;
     filterRun = null;
     filterSpec = null;
@@ -3411,10 +3510,13 @@
     refreshFilterPreview(); // the last change may still be waiting for its frame
     lastFilterSpecs[spec.kind] = spec;
     endFilter();
-    if (pushPixelEdit(layers, run.layer, run.before)) {
-      bumpPixelVersion(run.layer.id);
-    } else {
+    const parts = run.parts.map((p) => ({ layer: p.layer, rect: p.base, before: p.before }));
+    if (!pushRegionsEdit(layers, parts)) {
       flashStatus(`${FILTER_TITLES[spec.kind]} changed nothing`);
+    } else if (parts.length === 1) {
+      bumpPixelVersion(parts[0].layer.id);
+    } else {
+      bumpLayerVersion(); // several thumbnails
     }
   }
 
@@ -3422,15 +3524,8 @@
     const run = filterRun;
     endFilter();
     if (!run || !layers) return;
-    const { rect: r } = run;
-    run.layer.ctx.putImageData(run.src, r.x, r.y);
-    const dpr = docDpr();
-    layers.composite({
-      x0: r.x / dpr,
-      y0: r.y / dpr,
-      x1: (r.x + r.w) / dpr,
-      y1: (r.y + r.h) / dpr,
-    });
+    for (const p of run.parts) p.layer.ctx.putImageData(p.before, p.base.x, p.base.y);
+    layers.composite();
   }
 
   // --- Text references ---
@@ -4484,6 +4579,7 @@
     open={!!filterDialog}
     initial={filterDialog?.initial ?? FILTER_DEFAULTS.levels}
     histogram={filterDialog?.histogram ?? null}
+    scope={filterDialog?.scope ?? ""}
     onChange={(spec) => {
       filterSpec = spec;
       scheduleFilterPreview();

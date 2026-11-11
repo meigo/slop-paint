@@ -64,7 +64,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Thickness**, **Wobble** (the line wanders across the edge) and **Variation** (it swells and
   thins), plus a dice to re-roll the randomness; live preview, one undo step to apply
 
-**Filter menu** (one-off: applied to the layer's pixels, not live)
+**Filter menu** (one-off: applied to the layers' pixels, not live)
 
 - **Levels…** (black, midtones, white, and the output range, over a histogram), **Hue/Saturation…**,
   **Posterize…** (2–32 colours, picked from the layer's own — a flat fill keeps its exact colour;
@@ -75,8 +75,11 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   darker parts get bigger dots — see-through shading counts as lighter, so a soft airbrush
   fades into smaller dots — and the screen lines up across layers),
   **Gaussian blur…** (radius 0.2–64 px; it spreads into transparent parts too)
-- Each previews on the canvas as you change it; OK is one undo step, Cancel or Esc puts the layer
-  back. They work on the active layer, inside the selection if there is one, and keep alpha lock
+- Each previews on the canvas as you change it; OK is one undo step, Cancel or Esc puts the layers
+  back. They work on the same layers as **Move**: the rows picked with **Select** in the layer
+  panel, else the active layer — or every layer in the active group. Locked, hidden and reference
+  layers are left out (the dialog says how many). Posterize picks one palette for all of them, and
+  Levels shows their histogram together. Inside the selection if there is one; alpha lock is kept
 
 **Selection & transform**
 

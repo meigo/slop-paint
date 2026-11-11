@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Filter ▸ Levels / Hue/Saturation / Posterize / Threshold / Halftone / Gaussian blur. Every change is previewed in the layer
+  // Filter ▸ Levels / Hue/Saturation / Posterize / Threshold / Halftone / Gaussian blur. Every change is previewed in the layers
   // at once (App re-runs the filter from its snapshot, once a frame); OK keeps it as one undo step,
   // Cancel puts back what was there. As the text dialog: no dim, no cancel on an outside tap, and
   // no full-screen layer (App makes the rest `inert`).
@@ -12,14 +12,17 @@
     open = false,
     initial,
     histogram,
+    scope = "",
     onChange,
     onConfirm,
     onCancel,
   }: {
     open: boolean;
     initial: FilterSpec;
-    /** Levels only: the layer's luma histogram (painted pixels, by alpha). */
+    /** Levels only: the luma histogram of every layer it runs on (painted pixels, by alpha). */
     histogram: Float64Array | null;
+    /** Which layers it runs on, when not just the active one ("5 layers (left out: 1 locked)"). */
+    scope?: string;
     onChange: (spec: FilterSpec) => void;
     onConfirm: (spec: FilterSpec) => void;
     onCancel: () => void;
@@ -169,7 +172,12 @@
     role="dialog"
     aria-label={FILTER_TITLES[spec.kind]}
   >
-    <h2 class="text-sm font-semibold text-text">{FILTER_TITLES[spec.kind]}</h2>
+    <div>
+      <h2 class="text-sm font-semibold text-text">{FILTER_TITLES[spec.kind]}</h2>
+      {#if scope}
+        <p class="mt-0.5 text-[11px] text-text-muted">On {scope}</p>
+      {/if}
+    </div>
 
     {#if spec.kind === "levels"}
       {@const s = spec}

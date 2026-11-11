@@ -7,6 +7,7 @@ import {
   filterReach,
   posterizePalette,
   alphaStepLut,
+  filterShared,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -283,6 +284,24 @@ describe("posterize", () => {
     const src = new Uint8ClampedArray([200, 0, 0, 40, 200, 0, 0, 255]);
     const out = run(src, 2, 1, { kind: "posterize", colours: 2, alphaSteps: 2 }, true);
     expect([out[3], out[7]]).toEqual([40, 255]);
+  });
+
+  it("shares one palette and one set of alpha steps across layers", () => {
+    // Two layers: the same red, one also holding blue, the other green.
+    const a = new Uint8ClampedArray([200, 0, 0, 255, 200, 0, 0, 255, 0, 0, 200, 255]);
+    const b = new Uint8ClampedArray([200, 0, 0, 255, 0, 200, 0, 128, 0, 200, 0, 255]);
+    const both = new Uint8ClampedArray([...a, ...b]);
+    const spec = { kind: "posterize", colours: 3, alphaSteps: 2 } as const;
+    const sh = filterShared(spec, [a, b]);
+    expect(sh.palette).toEqual(posterizePalette(both, 3));
+    expect(sh.alphaLut).toEqual(alphaStepLut(both, 2));
+    // Run with it, each layer's red is the same red.
+    const oa = new Uint8ClampedArray(a.length),
+      ob = new Uint8ClampedArray(b.length);
+    applyFilter(a, oa, 3, 1, 0, 0, spec, 1, false, sh);
+    applyFilter(b, ob, 3, 1, 0, 0, spec, 1, false, sh);
+    expect(Array.from(oa.subarray(0, 3))).toEqual(Array.from(ob.subarray(0, 3)));
+    expect(filterShared(FILTER_DEFAULTS.levels, [a, b])).toEqual({});
   });
 
   it("is the same every run", () => {
