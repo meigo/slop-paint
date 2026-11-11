@@ -271,7 +271,7 @@
       {@const s = spec}
       {@render slider(
         "Hue",
-        "Turn every colour round the colour wheel",
+        "Turn every colour round the colour wheel, each as light as it was",
         s.hue,
         -180,
         180,
@@ -280,7 +280,7 @@
       )}
       {@render slider(
         "Saturation",
-        "−100 is grey, +100 as vivid as it goes",
+        "−100 is grey (as light as the colour looks), +100 as vivid as the screen can show",
         s.saturation,
         -100,
         100,

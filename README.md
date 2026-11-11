@@ -66,7 +66,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 
 **Filter menu** (one-off: applied to the layers' pixels, not live)
 
-- **Levels…** (black, midtones, white, and the output range, over a histogram), **Hue/Saturation…**,
+- **Levels…** (black, midtones, white, and the output range, over a histogram),
+  **Hue/Saturation…** (worked by how light colours look, so −100 gives the greys your eye expects),
   **Posterize…** (2–32 colours, picked from the layer's own — a flat fill keeps its exact colour;
   Alpha steps the transparency the same way, Off by default: 2 gives hard edges, and paint laid at
   60% stays 60%),

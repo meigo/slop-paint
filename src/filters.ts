@@ -607,7 +607,51 @@ export function lumaHistogram(rgba: Uint8ClampedArray): Float64Array {
   return h;
 }
 
-/** One pixel's Hue/Saturation/Lightness shift, rgb 0–255 in and out (written to `out`). */
+/** OKLab → sRGB (0–1 per channel, unclamped, into `out`); whether it lies inside sRGB. */
+function oklabToRgb(L: number, a: number, b: number, out: Float64Array): boolean {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  out[0] = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  out[1] = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  out[2] = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
+  const E = 1e-7;
+  return out.every((v) => v >= -E && v <= 1 + E);
+}
+
+/** Linear light (0–1) to an sRGB byte. */
+function toSrgbByte(v: number): number {
+  const c = v <= 0 ? 0 : v >= 1 ? 1 : v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055;
+  return Math.round(c * 255);
+}
+
+/** The most chroma sRGB can show at OKLCH lightness `L` and hue `h` (radians). */
+function maxChroma(L: number, h: number, tmp: Float64Array): number {
+  const ca = Math.cos(h),
+    sa = Math.sin(h);
+  let lo = 0,
+    hi = 0.5;
+  for (let i = 0; i < 20; i++) {
+    const c = (lo + hi) / 2;
+    if (oklabToRgb(L, c * ca, c * sa, tmp)) lo = c;
+    else hi = c;
+  }
+  return lo;
+}
+
+const HS_LAB = new Float64Array(3);
+const HS_RGB = new Float64Array(3);
+
+/**
+ * One pixel's Hue/Saturation/Lightness shift, rgb 0–255 in and out (written to `out`), in OKLCH
+ * (2026-11-11): lightness there is what the eye sees. In HSL (as Photoshop's), lightness is (max +
+ * min) / 2 — a red/blue blend's purple, as bright as the red to the eye, went to a grey 20 darker
+ * than either end at −100 saturation, and the blue beside that valley read as a glowing rim; a hue
+ * turn changed how light colours look (yellow to blue went dark). Hue turns the hue angle;
+ * saturation scales chroma down to grey (−100) or moves it toward the most sRGB can show at that
+ * lightness and hue (+100); lightness moves toward black or white. A colour sRGB can't show loses
+ * chroma, keeping its lightness and hue.
+ */
 export function hueSatPixel(
   r: number,
   g: number,
@@ -616,43 +660,34 @@ export function hueSatPixel(
   out: number[] | Uint8ClampedArray,
   o = 0,
 ): void {
-  r /= 255;
-  g /= 255;
-  b /= 255;
-  const max = Math.max(r, g, b),
-    min = Math.min(r, g, b);
-  let l = (max + min) / 2;
-  let h = 0,
-    sat = 0;
-  const d = max - min;
-  if (d > 0) {
-    sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-    h /= 6;
-  }
-  h = (((h + s.hue / 360) % 1) + 1) % 1;
-  const ks = s.saturation / 100;
-  sat = clamp01(ks < 0 ? sat * (1 + ks) : sat + (1 - sat) * ks * (d > 0 ? 1 : 0));
-  const kl = s.lightness / 100;
-  l = clamp01(kl < 0 ? l * (1 + kl) : l + (1 - l) * kl);
-  if (sat === 0) {
-    out[o] = out[o + 1] = out[o + 2] = Math.round(l * 255);
+  if (!s.hue && !s.saturation && !s.lightness) {
+    out[o] = r;
+    out[o + 1] = g;
+    out[o + 2] = b;
     return;
   }
-  const q = l < 0.5 ? l * (1 + sat) : l + sat - l * sat;
-  const p = 2 * l - q;
-  out[o] = Math.round(hueToRgb(p, q, h + 1 / 3) * 255);
-  out[o + 1] = Math.round(hueToRgb(p, q, h) * 255);
-  out[o + 2] = Math.round(hueToRgb(p, q, h - 1 / 3) * 255);
-}
-
-function hueToRgb(p: number, q: number, t: number): number {
-  if (t < 0) t += 1;
-  if (t > 1) t -= 1;
-  if (t < 1 / 6) return p + (q - p) * 6 * t;
-  if (t < 1 / 2) return q;
-  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-  return p;
+  oklab(r, g, b, HS_LAB, 0);
+  let L = HS_LAB[0];
+  const C = Math.hypot(HS_LAB[1], HS_LAB[2]);
+  const grey = C < 1e-4;
+  const h = Math.atan2(HS_LAB[2], HS_LAB[1]) + (s.hue * Math.PI) / 180;
+  const kl = s.lightness / 100;
+  L = clamp01(kl < 0 ? L * (1 + kl) : L + (1 - L) * kl);
+  const ks = s.saturation / 100;
+  // The gamut's edge is searched for only when needed: a saturation boost, or a result outside.
+  let c = grey ? 0 : C * (ks < 0 ? 1 + ks : 1);
+  if (ks > 0 && !grey) {
+    const cap = maxChroma(L, h, HS_RGB);
+    c = C + (Math.max(cap, C) - C) * ks;
+    if (c > cap) c = cap;
+  }
+  if (!oklabToRgb(L, c * Math.cos(h), c * Math.sin(h), HS_RGB)) {
+    c = Math.min(c, maxChroma(L, h, HS_RGB));
+    oklabToRgb(L, c * Math.cos(h), c * Math.sin(h), HS_RGB);
+  }
+  out[o] = toSrgbByte(HS_RGB[0]);
+  out[o + 1] = toSrgbByte(HS_RGB[1]);
+  out[o + 2] = toSrgbByte(HS_RGB[2]);
 }
 
 /** Share of a unit cell a centred disc of radius `r` (in cells) covers, its parts beyond the cell's

@@ -79,16 +79,63 @@ describe("hueSatPixel", () => {
   it("leaves a colour alone at zero", () => {
     expect(px(200, 80, 30, 0, 0)).toEqual([200, 80, 30]);
   });
-  it("turns red to green at +120°", () => {
-    expect(px(255, 0, 0, 120, 0)).toEqual([0, 255, 0]);
+  /** OKLab lightness of an sRGB colour, 0–1 (for the tests: what the eye sees). */
+  const lightness = ([r, g, b]: number[]) => {
+    const lin = (v: number) => {
+      const c = v / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const [R, G, B] = [lin(r), lin(g), lin(b)];
+    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+    const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+    const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+    return 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  };
+  it("turns red toward green at +120°, as light as it was", () => {
+    const o = px(220, 40, 40, 120, 0);
+    expect(o[1]).toBeGreaterThan(o[0]);
+    expect(o[1]).toBeGreaterThan(o[2]);
+    expect(Math.abs(lightness(o) - lightness([220, 40, 40]))).toBeLessThan(0.01);
   });
-  it("−100 saturation gives a grey", () => {
-    const [r, g, b] = px(255, 0, 0, 0, -100);
-    expect(r).toBe(g);
-    expect(g).toBe(b);
+  it("−100 saturation gives the grey of how light the colour looks", () => {
+    for (const c of [
+      [255, 0, 0],
+      [200, 56, 96],
+      [70, 130, 213],
+      [139, 79, 139],
+    ]) {
+      const [r, g, b] = px(c[0], c[1], c[2], 0, -100);
+      expect(r).toBe(g);
+      expect(g).toBe(b);
+      expect(Math.abs(lightness([r, g, b]) - lightness(c))).toBeLessThan(0.005);
+    }
   });
-  it("+100 saturation doesn't colour a grey", () => {
+  it("−100 saturation keeps a red→blue blend smooth: no sudden step by the purple", () => {
+    // The user's case, sampled across the overlap. HSL jumped 109 → 122 → 132 over three samples
+    // (a dark valley with a light rim beside it). The gentle dip that is left is the blend's own:
+    // mixed in gamma-encoded sRGB, the purple is a little darker than either end.
+    const row = [
+      [200, 56, 96],
+      [189, 60, 103],
+      [175, 60, 113],
+      [159, 68, 125],
+      [139, 79, 139],
+      [121, 88, 155],
+      [105, 97, 167],
+      [90, 107, 182],
+    ].map((c) => px(c[0], c[1], c[2], 0, -100)[0]);
+    for (let i = 1; i < row.length; i++)
+      expect(Math.abs(row[i] - row[i - 1])).toBeLessThanOrEqual(6);
+  });
+  it("+100 saturation doesn't colour a grey, and makes a colour as vivid as it goes", () => {
     expect(px(128, 128, 128, 0, 100)).toEqual([128, 128, 128]);
+    const o = px(150, 110, 100, 0, 100);
+    expect(Math.max(...o) === 255 || Math.min(...o) === 0).toBe(true); // at the gamut's edge
+    expect(Math.abs(lightness(o) - lightness([150, 110, 100]))).toBeLessThan(0.01);
+  });
+  it("keeps every result inside sRGB with its lightness (a hue turn of a vivid colour)", () => {
+    const o = px(255, 255, 0, 180, 0); // yellow's opposite at yellow's lightness can't be as vivid
+    expect(Math.abs(lightness(o) - lightness([255, 255, 0]))).toBeLessThan(0.01);
   });
   it("lightness ±100 gives white / black", () => {
     expect(px(30, 90, 200, 0, 0, 100)).toEqual([255, 255, 255]);
