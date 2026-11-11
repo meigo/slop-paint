@@ -70,11 +70,17 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   **Posterize…** (2–32 colours, picked from the layer's own — a flat fill keeps its exact colour;
   Alpha steps the transparency the same way, Off by default: 2 gives hard edges, and paint laid at
   60% stays 60%),
-  **Threshold…** (pure black ink; the rest transparent or white) and **Halftone…** (screentone:
+  **Threshold…** (pure black ink; the rest transparent or white), **Halftone…** (screentone:
   dots or lines, cell size and angle, black or the layer's own colour, on transparent or white —
   darker parts get bigger dots — see-through shading counts as lighter, so a soft airbrush
   fades into smaller dots — and the screen lines up across layers),
   **Gaussian blur…** (radius 0.2–64 px; it spreads into transparent parts too)
+- **Colour to alpha…** makes a colour transparent — white by default, so a scanned or photographed
+  sketch's paper goes and its grey lines become see-through black, soft edges kept (alpha-locked
+  layers are left out). **Sharpen…** (unsharp mask: Amount, Radius; colour only, no dark halo at
+  the paint's edge). **Drop shadow…** (colour, opacity, distance, angle of the light, blur) and
+  **Glow…** (colour, opacity, size, spread) draw the layer's shape behind its paint, into the
+  transparent space round it
 - Each previews on the canvas as you change it; OK is one undo step, Cancel or Esc puts the layers
   back. They work on the same layers as **Move**: the rows picked with **Select** in the layer
   panel, else the active layer — or every layer in the active group. Locked, hidden and reference

@@ -8,6 +8,9 @@ import {
   posterizePalette,
   alphaStepLut,
   filterShared,
+  colourToAlphaPixel,
+  shadowOffset,
+  filterMaxReach,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -374,5 +377,114 @@ describe("Gaussian blur", () => {
     for (let x = 0; x < w; x++) expect(out[x * 4 + 3]).toBe(src[x * 4 + 3]);
     expect(out[9 * 4]).toBeGreaterThan(0);
     expect(out[10 * 4]).toBeLessThan(255);
+  });
+});
+
+describe("colour to alpha", () => {
+  const WHITE = [255, 255, 255] as const;
+  it("turns grey on white into see-through black, and white into nothing", () => {
+    const o = [0, 0, 0, 0];
+    colourToAlphaPixel(128, 128, 128, WHITE, o);
+    expect(o.slice(0, 3)).toEqual([0, 0, 0]);
+    expect(o[3]).toBeCloseTo(127 / 255, 3);
+    colourToAlphaPixel(255, 255, 255, WHITE, o);
+    expect(o[3]).toBe(0);
+    colourToAlphaPixel(255, 0, 0, WHITE, o);
+    expect(o).toEqual([255, 0, 0, 1]);
+  });
+
+  it("looks the same over the removed colour as before", () => {
+    const key = [40, 200, 120] as const;
+    const o = [0, 0, 0, 0];
+    for (const px of [
+      [10, 20, 30],
+      [250, 128, 7],
+      [40, 200, 121],
+      [0, 255, 255],
+    ]) {
+      colourToAlphaPixel(px[0], px[1], px[2], key, o);
+      for (let i = 0; i < 3; i++)
+        expect(Math.abs(o[i] * o[3] + key[i] * (1 - o[3]) - px[i])).toBeLessThan(1.5);
+    }
+  });
+
+  it("scales by the pixel's own alpha, and keeps the alpha under alpha lock", () => {
+    const src = new Uint8ClampedArray([128, 128, 128, 200, 0, 0, 0, 0]);
+    const out = run(src, 2, 1, FILTER_DEFAULTS.colourToAlpha);
+    expect(Array.from(out.subarray(0, 4))).toEqual([0, 0, 0, Math.round((127 / 255) * 200)]);
+    expect(out[7]).toBe(0);
+    expect(run(src, 2, 1, FILTER_DEFAULTS.colourToAlpha, true)[3]).toBe(200);
+  });
+});
+
+describe("sharpen", () => {
+  const spec = { kind: "sharpen", amount: 100, radius: 1 } as const;
+  it("leaves a flat colour as it is, alpha included", () => {
+    const src = solid(20, 20, [90, 140, 200, 180]);
+    expect(run(src, 20, 20, spec)).toEqual(src);
+  });
+
+  it("raises the contrast across an edge", () => {
+    const w = 20;
+    const src = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) src.set(x < 10 ? [60, 60, 60, 255] : [180, 180, 180, 255], x * 4);
+    const out = run(src, w, 1, spec);
+    expect(out[9 * 4]).toBeLessThan(60);
+    expect(out[10 * 4]).toBeGreaterThan(180);
+    expect(out[0]).toBe(60);
+  });
+
+  it("puts no dark halo along the edge of paint on transparency", () => {
+    const w = 20;
+    const src = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < 10; x++) src.set([220, 40, 40, 255], x * 4);
+    const out = run(src, w, 1, { ...spec, amount: 300 });
+    for (let x = 0; x < 10; x++)
+      expect(Array.from(out.subarray(x * 4, x * 4 + 4))).toEqual([220, 40, 40, 255]);
+  });
+});
+
+describe("drop shadow and glow", () => {
+  /** A 10×10 opaque red square in the middle of a transparent w×w area. */
+  function square(w: number) {
+    const d = new Uint8ClampedArray(w * w * 4);
+    for (let y = 0; y < w; y++)
+      for (let x = 0; x < w; x++)
+        if (x >= w / 2 - 5 && x < w / 2 + 5 && y >= w / 2 - 5 && y < w / 2 + 5)
+          d.set([200, 0, 0, 255], (y * w + x) * 4);
+    return d;
+  }
+  const alphaAt = (d: Uint8ClampedArray, w: number, x: number, y: number) => d[(y * w + x) * 4 + 3];
+
+  it("falls away from the light, behind the paint", () => {
+    const w = 60;
+    const spec = { ...FILTER_DEFAULTS.shadow, blur: 0, distance: 8, angle: 135, opacity: 100 };
+    const { dx, dy } = shadowOffset(spec);
+    expect(dx).toBeGreaterThan(0); // light from the upper left: down-right
+    expect(dy).toBeGreaterThan(0);
+    const out = run(square(w), w, w, spec);
+    expect(alphaAt(out, w, 30 + dx, 30 + dy)).toBe(255); // below-right of the square
+    expect(
+      Array.from(
+        out.subarray(((w / 2 + 6) * w + (w / 2 + 6)) * 4, ((w / 2 + 6) * w + (w / 2 + 6)) * 4 + 3),
+      ),
+    ).toEqual([0, 0, 0]);
+    expect(alphaAt(out, w, 30 - dx - 6, 30 - dy - 6)).toBe(0); // nothing up-left
+    expect(Array.from(out.subarray((30 * w + 30) * 4, (30 * w + 30) * 4 + 4))).toEqual([
+      200, 0, 0, 255,
+    ]);
+    expect(filterMaxReach("shadow")).toBeGreaterThanOrEqual(200);
+  });
+
+  it("glows evenly round the shape, more with spread", () => {
+    const w = 80;
+    const g = { ...FILTER_DEFAULTS.glow, size: 4, opacity: 100, spread: 0 };
+    const out = run(square(w), w, w, g);
+    const right = alphaAt(out, w, 40 + 8, 40),
+      left = alphaAt(out, w, 40 - 9, 40);
+    expect(right).toBeGreaterThan(0);
+    expect(Math.abs(right - left)).toBeLessThanOrEqual(1);
+    expect(alphaAt(run(square(w), w, w, { ...g, spread: 80 }), w, 48, 40)).toBeGreaterThan(right);
+    expect(alphaAt(run(square(w), w, w, g, true), w, 48, 40)).toBe(0); // alpha lock
   });
 });

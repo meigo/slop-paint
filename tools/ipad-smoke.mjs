@@ -714,6 +714,53 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Filter ▸ Drop shadow darkens the paper just below-right of the square (the default light is
+    // from the upper left), not above-left; Colour to alpha on Background (white) turns the paper
+    // transparent (the checkerboard shows). One Undo each.
+    // Boxes over the square's lower-right and upper-left corners and the paper beyond them; the
+    // shadow is pushed out to 40 px so it clears the square at this zoom.
+    const below = rect(0.8, 0.3, 0.1, 0.1);
+    const above = rect(0.65, 0.15, 0.1, 0.1);
+    const b0 = (await pixels(below)).avg,
+      u0 = (await pixels(above)).avg;
+    await menu("Filter", /^Drop shadow/);
+    const dialog = page.getByRole("dialog", { name: "Drop shadow" });
+    await dialog
+      .locator('input[type="range"]')
+      .nth(1)
+      .evaluate((el) => {
+        el.value = "40";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    await page.waitForTimeout(400);
+    await shot(`${String(n).padStart(2, "0")}-shadow-dialog`);
+    await dialog.getByRole("button", { name: "OK" }).tap();
+    await page.waitForTimeout(300);
+    const b1 = (await pixels(below)).avg,
+      u1 = (await pixels(above)).avg;
+    await undo();
+    await page.waitForTimeout(300);
+    const b2 = (await pixels(below)).avg;
+    const paper = rect(0.9, 0.6, 0.03, 0.03);
+    const p0 = await pixels(paper);
+    await page.locator("[data-row-id]", { hasText: "Background" }).first().tap();
+    await menu("Filter", /^Colour to alpha/);
+    await page.waitForTimeout(300);
+    await page.getByRole("dialog").getByRole("button", { name: "OK" }).tap();
+    await page.waitForTimeout(300);
+    const p1 = await pixels(paper);
+    await undo();
+    await page.waitForTimeout(300);
+    const p2 = await pixels(paper);
+    await page.locator("[data-row-id]", { hasText: "Layer 1" }).first().tap();
+    return [
+      b1 !== b0 && u1 === u0 && b2 === b0 && p1.avg !== p0.avg && p2.avg === p0.avg,
+      `Filter ▸ Drop shadow falls below-right (${b0} → ${b1}), not above-left (${u0} → ${u1}), Undo (${b2}); Colour to alpha clears Background's white (${p0.avg} → ${p1.avg}), Undo (${p2.avg})`,
+      "filter-shadow",
+    ];
+  });
+
+  await step(async () => {
     // A filter on two picked rows (the square's layer and Background): Levels with Output white at
     // 0 darkens both — the paper and the square — and ONE Undo puts both back.
     const inside = rect(0.74, 0.24, 0.07, 0.07);

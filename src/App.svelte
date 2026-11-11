@@ -56,10 +56,10 @@
   import TextDialog from "./lib/TextDialog.svelte";
   import FilterDialog from "./lib/FilterDialog.svelte";
   import {
-    BLUR_MAX,
     FILTER_DEFAULTS,
     FILTER_TITLES,
     applyFilter,
+    filterMaxReach,
     filterReach,
     filterShared,
     lumaHistogram,
@@ -3262,28 +3262,35 @@
 
   /** The layers a filter takes now, or why there are none. One active layer refuses with its
    *  own reason (`paintBlock`); a group or a pick leaves out what can't take it and counts it. */
-  function filterTargets(): { layers: Layer[]; skipped: string[] } | string {
+  function filterTargets(kind: FilterKind): { layers: Layer[]; skipped: string[] } | string {
     const lm = layers!;
+    // Colour to alpha only takes alpha away, which alpha lock keeps: it would change nothing.
+    const needsAlpha = kind === "colourToAlpha";
     const picks = app.layerSelection.filter((id) => lm.findNode(id));
     if (!app.layerSelecting && picks.length === 0 && !lm.activeIsGroup) {
       const why = paintBlock(lm.active);
       if (why) return why;
       if (lm.active.ref) return REF_PAINT_REFUSED;
+      if (needsAlpha && lm.active.alphaLock)
+        return `${FILTER_TITLES[kind]} changes only transparency — this layer's alpha is locked`;
       return { layers: [lm.active], skipped: [] };
     }
     const t = moveTargets();
     const out: Layer[] = [];
-    let refs = 0;
+    let refs = 0,
+      alphaLocked = 0;
     for (const id of t.ids) {
       const layer = lm.findLayer(id);
       if (!layer) continue;
       if (layer.ref) refs++;
+      else if (needsAlpha && layer.alphaLock) alphaLocked++;
       else out.push(layer);
     }
     const skipped = [
       t.locked && `${t.locked} locked`,
       t.hidden && `${t.hidden} hidden`,
       refs && `${refs} reference${refs > 1 ? "s" : ""}`,
+      alphaLocked && `${alphaLocked} alpha-locked`,
     ].filter((x): x is string => !!x);
     if (out.length === 0)
       return skipped.length
@@ -3295,7 +3302,7 @@
   function openFilter(kind: FilterKind) {
     if (!layers || filterDialog || textDialog) return;
     const title = FILTER_TITLES[kind];
-    const targets = filterTargets();
+    const targets = filterTargets(kind);
     if (typeof targets === "string") return flashStatus(targets);
     if (outlineActive()) cancelOutline();
     endGesture();
@@ -3314,7 +3321,7 @@
       };
     }
     const initial = lastFilterSpecs[kind] ?? FILTER_DEFAULTS[kind];
-    const maxReach = kind === "blur" ? filterReach({ kind: "blur", radius: BLUR_MAX }, dpr) : 0;
+    const maxReach = filterMaxReach(kind, dpr);
     const reach = filterReach(initial, dpr);
     const parts: FilterPart[] = [];
     let inked = 0;

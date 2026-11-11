@@ -1,7 +1,8 @@
 // One-off filters (Filter menu): pure per-pixel maths on unpremultiplied RGBA, as `getImageData`
-// gives it. App previews them into the layer and keeps the result as one undo step; nothing here is
-// live. Every filter but Gaussian blur keeps a fully transparent pixel transparent; the blur
-// spreads paint up to `filterReach` px, so App works on the ink's bounds grown by that.
+// gives it. App previews them into the layers and keeps the result as one undo step; nothing here
+// is live. Gaussian blur, Drop shadow and Glow spread paint into transparent pixels, up to
+// `filterReach` px, so App works on the ink's bounds grown by that; every other filter keeps a
+// fully transparent pixel transparent.
 
 export type Paper = "transparent" | "white";
 
@@ -32,8 +33,42 @@ export type HalftoneSpec = {
  *  (transparent one of them), picked from the layer's own as the colours are. */
 export type PosterizeSpec = { kind: "posterize"; colours: number; alphaSteps: number };
 export type BlurSpec = { kind: "blur"; radius: number }; // σ in DOCUMENT px, 0.2–BLUR_MAX
+/** Removes `colour` (GIMP's Color to Alpha): each pixel the least alpha that, over `colour`,
+ *  looks as it did. */
+export type ColourToAlphaSpec = { kind: "colourToAlpha"; colour: string }; // "#rrggbb"
+/** Unsharp mask: `amount` % (0–500) of the difference from a blur of σ `radius` DOCUMENT px. */
+export type SharpenSpec = { kind: "sharpen"; amount: number; radius: number };
+/** Behind the paint: its shape in `colour` at `opacity` % (0–100), blurred by σ `blur` DOCUMENT
+ *  px (0–SHADOW_BLUR_MAX), `distance` DOCUMENT px (0–SHADOW_DISTANCE_MAX) away from the light at
+ *  `angle` degrees (Photoshop's: 120 = light from the upper left, the shadow falls down-right). */
+export type ShadowSpec = {
+  kind: "shadow";
+  colour: string;
+  opacity: number;
+  blur: number;
+  distance: number;
+  angle: number;
+};
+/** Behind the paint: its shape in `colour` at `opacity` %, blurred by σ `size` DOCUMENT px and
+ *  strengthened by `spread` % (0–100: how far it stays solid before fading). */
+export type GlowSpec = {
+  kind: "glow";
+  colour: string;
+  opacity: number;
+  size: number;
+  spread: number;
+};
 export type FilterSpec =
-  LevelsSpec | HueSatSpec | PosterizeSpec | ThresholdSpec | HalftoneSpec | BlurSpec;
+  | LevelsSpec
+  | HueSatSpec
+  | PosterizeSpec
+  | ThresholdSpec
+  | ColourToAlphaSpec
+  | HalftoneSpec
+  | BlurSpec
+  | SharpenSpec
+  | ShadowSpec
+  | GlowSpec;
 export type FilterKind = FilterSpec["kind"];
 
 export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K }> } = {
@@ -50,10 +85,19 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
     paper: "transparent",
   },
   blur: { kind: "blur", radius: 2 },
+  colourToAlpha: { kind: "colourToAlpha", colour: "#ffffff" },
+  sharpen: { kind: "sharpen", amount: 100, radius: 1 },
+  shadow: { kind: "shadow", colour: "#000000", opacity: 60, blur: 4, distance: 8, angle: 120 },
+  glow: { kind: "glow", colour: "#ffffff", opacity: 75, size: 8, spread: 0 },
 };
 
 /** Gaussian blur's largest radius (σ), in document px. */
 export const BLUR_MAX = 64;
+/** Sharpen's largest radius (σ), in document px. */
+export const SHARPEN_MAX = 10;
+/** Drop shadow's and Glow's largest blur (σ), and the shadow's largest distance, in document px. */
+export const SHADOW_BLUR_MAX = 64;
+export const SHADOW_DISTANCE_MAX = 200;
 
 export const FILTER_TITLES: Record<FilterKind, string> = {
   levels: "Levels",
@@ -62,6 +106,10 @@ export const FILTER_TITLES: Record<FilterKind, string> = {
   threshold: "Threshold",
   halftone: "Halftone",
   blur: "Gaussian blur",
+  colourToAlpha: "Colour to alpha",
+  sharpen: "Sharpen",
+  shadow: "Drop shadow",
+  glow: "Glow",
 };
 
 /** Entries in Hue/Saturation's colour table (a power of two). */
@@ -347,7 +395,83 @@ export function blurPlan(sigma: number): BlurPlan {
 
 /** How far (device px) a filter can move paint: what App grows its working area by. */
 export function filterReach(spec: FilterSpec, dpr = 1): number {
-  return spec.kind === "blur" ? blurPlan(spec.radius * dpr).reach : 0;
+  switch (spec.kind) {
+    case "blur":
+      return blurPlan(spec.radius * dpr).reach;
+    case "sharpen":
+      return blurPlan(spec.radius * dpr).reach;
+    case "glow":
+      return blurPlan(spec.size * dpr).reach;
+    case "shadow": {
+      const { dx, dy } = shadowOffset(spec, dpr);
+      return blurPlan(spec.blur * dpr).reach + Math.max(Math.abs(dx), Math.abs(dy));
+    }
+    default:
+      return 0;
+  }
+}
+
+/** The most `filterReach` can be for `kind` at any setting: App keeps that much round the ink. */
+export function filterMaxReach(kind: FilterKind, dpr = 1): number {
+  switch (kind) {
+    case "blur":
+      return blurPlan(BLUR_MAX * dpr).reach;
+    case "sharpen":
+      return blurPlan(SHARPEN_MAX * dpr).reach;
+    case "glow":
+      return blurPlan(SHADOW_BLUR_MAX * dpr).reach;
+    case "shadow":
+      return blurPlan(SHADOW_BLUR_MAX * dpr).reach + Math.ceil(SHADOW_DISTANCE_MAX * dpr);
+    default:
+      return 0;
+  }
+}
+
+/** Where a drop shadow falls, in whole device px: away from the light (y down). */
+export function shadowOffset(s: ShadowSpec, dpr = 1): { dx: number; dy: number } {
+  const a = (s.angle * Math.PI) / 180;
+  return {
+    dx: Math.round(-Math.cos(a) * s.distance * dpr),
+    dy: Math.round(Math.sin(a) * s.distance * dpr),
+  };
+}
+
+/** "#rrggbb" as [r, g, b] (0–255); black for anything else. */
+export function parseHex(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return [0, 0, 0];
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+/** GIMP's Color to Alpha for one pixel (0–255 each): the least alpha (0–1) that, over `key`,
+ *  gives `rgb`, and the colour it takes, into `out` [r, g, b, alpha]. */
+export function colourToAlphaPixel(
+  r: number,
+  g: number,
+  b: number,
+  key: readonly [number, number, number],
+  out: number[],
+) {
+  const c = [r / 255, g / 255, b / 255];
+  let alpha = 0;
+  for (let i = 0; i < 3; i++) {
+    const k = key[i] / 255;
+    const v = c[i] > k ? (c[i] - k) / (1 - k) : c[i] < k ? (k - c[i]) / k : 0;
+    if (v > alpha) alpha = v;
+  }
+  if (alpha < 1e-6) {
+    out[0] = r;
+    out[1] = g;
+    out[2] = b;
+    out[3] = 0;
+    return;
+  }
+  for (let i = 0; i < 3; i++) {
+    const k = key[i] / 255;
+    out[i] = Math.round(((c[i] - k) / alpha + k) * 255);
+  }
+  out[3] = alpha;
 }
 
 /** A horizontal pass over `w`×`h` floats, the edge value repeated past either end — at the canvas
@@ -713,6 +837,91 @@ export function applyFilter(
         for (let i = 0, p = c; i < m; i++, p += 4) out[p] = A[i] > 0 ? (C[i] * 255) / A[i] : 0;
       }
       for (let i = 0, p = 3; i < m; i++, p += 4) out[p] = alphaLock ? src[p] : A[i];
+      return;
+    }
+    case "colourToAlpha": {
+      // Only takes alpha away, so under alpha lock (which keeps the alpha) App leaves it out.
+      const key = parseHex(spec.colour);
+      const px = [0, 0, 0, 0];
+      for (let p = 0; p < n; p += 4) {
+        const a = src[p + 3];
+        if (!a) {
+          out[p] = src[p];
+          out[p + 1] = src[p + 1];
+          out[p + 2] = src[p + 2];
+          out[p + 3] = 0;
+          continue;
+        }
+        colourToAlphaPixel(src[p], src[p + 1], src[p + 2], key, px);
+        out[p] = px[0];
+        out[p + 1] = px[1];
+        out[p + 2] = px[2];
+        out[p + 3] = alphaLock ? a : Math.round(px[3] * a);
+      }
+      return;
+    }
+    case "sharpen": {
+      // Unsharp mask on the colour only (the alpha is kept): each channel pushed away from its
+      // blur. The blur is taken premultiplied and divided back by the blurred alpha — the colour
+      // of the paint round a pixel, not darkened by the transparent black beside an edge, which
+      // gave a dark halo along every outline.
+      const plan = blurPlan(spec.radius * dpr);
+      const k = spec.amount / 100;
+      if (plan.kind === "none" || k === 0) {
+        out.set(src.subarray(0, n));
+        return;
+      }
+      const m = w * h;
+      const [A, C, tmp] = blurBuffers(m);
+      for (let i = 0; i < m; i++) A[i] = src[i * 4 + 3];
+      blurChannel(A, w, h, plan, tmp);
+      for (let c = 0; c < 3; c++) {
+        for (let i = 0, p = 0; i < m; i++, p += 4) C[i] = (src[p + c] * src[p + 3]) / 255;
+        blurChannel(C, w, h, plan, tmp);
+        for (let i = 0, p = c; i < m; i++, p += 4) {
+          const v = src[p];
+          out[p] = src[p - c + 3] && A[i] > 0 ? v + k * (v - (C[i] * 255) / A[i]) : v;
+        }
+      }
+      for (let p = 3; p < n; p += 4) out[p] = src[p];
+      return;
+    }
+    case "shadow":
+    case "glow": {
+      // The paint's alpha, blurred, shifted (the shadow) and scaled, in one colour BEHIND the
+      // paint: paint over it, as a layer style would draw it. Alpha lock keeps the alpha, so the
+      // shadow shows only through see-through paint.
+      const sigma = (spec.kind === "shadow" ? spec.blur : spec.size) * dpr;
+      const { dx, dy } = spec.kind === "shadow" ? shadowOffset(spec, dpr) : { dx: 0, dy: 0 };
+      const gain = spec.opacity / 100 / (spec.kind === "glow" ? 1 - 0.95 * (spec.spread / 100) : 1);
+      const [sr, sg, sb] = parseHex(spec.colour);
+      const m = w * h;
+      const [A, , tmp] = blurBuffers(m);
+      for (let i = 0; i < m; i++) A[i] = src[i * 4 + 3];
+      blurChannel(A, w, h, blurPlan(sigma), tmp);
+      for (let y = 0, i = 0; y < h; y++) {
+        const sy = y - dy;
+        for (let x = 0; x < w; x++, i++) {
+          const sx = x - dx;
+          const p = i * 4;
+          const raw = sx >= 0 && sx < w && sy >= 0 && sy < h ? A[sy * w + sx] / 255 : 0;
+          const sh = Math.min(1, raw * gain);
+          const a = src[p + 3] / 255;
+          const oa = a + sh * (1 - a);
+          if (oa <= 0) {
+            out[p] = src[p];
+            out[p + 1] = src[p + 1];
+            out[p + 2] = src[p + 2];
+            out[p + 3] = 0;
+            continue;
+          }
+          const under = sh * (1 - a);
+          out[p] = (src[p] * a + sr * under) / oa;
+          out[p + 1] = (src[p + 1] * a + sg * under) / oa;
+          out[p + 2] = (src[p + 2] * a + sb * under) / oa;
+          out[p + 3] = (alphaLock ? a : oa) * 255;
+        }
+      }
       return;
     }
     case "hueSat": {
