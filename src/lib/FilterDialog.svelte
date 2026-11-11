@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Filter ▸ Levels / Hue/Saturation / Threshold / Halftone. Every change is previewed in the layer
+  // Filter ▸ Levels / Hue/Saturation / Posterize / Threshold / Halftone / Gaussian blur. Every change is previewed in the layer
   // at once (App re-runs the filter from its snapshot, once a frame); OK keeps it as one undo step,
   // Cancel puts back what was there. As the text dialog: no dim, no cancel on an outside tap, and
   // no full-screen layer (App makes the rest `inert`).
@@ -258,13 +258,13 @@
     {:else if spec.kind === "posterize"}
       {@const s = spec}
       {@render slider(
-        "Levels",
-        "How many values each colour channel keeps (2 per channel: 8 colours)",
-        s.levels,
+        "Colours",
+        "How many colours the layer keeps — picked from its own paint",
+        s.colours,
         2,
         32,
-        String(s.levels),
-        (v) => update({ levels: v }),
+        String(s.colours),
+        (v) => update({ colours: v }),
       )}
     {:else if spec.kind === "blur"}
       {@const s = spec}

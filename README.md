@@ -67,7 +67,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 **Filter menu** (one-off: applied to the layer's pixels, not live)
 
 - **Levels…** (black, midtones, white, and the output range, over a histogram), **Hue/Saturation…**,
-  **Posterize…** (2–32 steps per channel),
+  **Posterize…** (2–32 colours, picked from the layer's own — a flat fill keeps its exact colour),
   **Threshold…** (pure black ink; the rest transparent or white) and **Halftone…** (screentone:
   dots or lines, cell size and angle, black or the layer's own colour, on transparent or white —
   darker parts get bigger dots — see-through shading counts as lighter, so a soft airbrush

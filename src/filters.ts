@@ -28,7 +28,7 @@ export type HalftoneSpec = {
   ink: "black" | "colour";
   paper: Paper;
 };
-export type PosterizeSpec = { kind: "posterize"; levels: number }; // 2–32 per channel
+export type PosterizeSpec = { kind: "posterize"; colours: number }; // 2–32, picked from the layer
 export type BlurSpec = { kind: "blur"; radius: number }; // σ in DOCUMENT px, 0.2–BLUR_MAX
 export type FilterSpec =
   LevelsSpec | HueSatSpec | PosterizeSpec | ThresholdSpec | HalftoneSpec | BlurSpec;
@@ -37,7 +37,7 @@ export type FilterKind = FilterSpec["kind"];
 export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K }> } = {
   levels: { kind: "levels", inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 },
   hueSat: { kind: "hueSat", hue: 0, saturation: 0, lightness: 0 },
-  posterize: { kind: "posterize", levels: 4 },
+  posterize: { kind: "posterize", colours: 6 },
   threshold: { kind: "threshold", level: 128, paper: "transparent" },
   halftone: {
     kind: "halftone",
@@ -82,12 +82,151 @@ export function levelsLut(s: LevelsSpec): Uint8ClampedArray {
   return lut;
 }
 
-/** Posterize as a lookup table: `levels` evenly spaced values per channel, black and white kept. */
-export function posterizeLut(levels: number): Uint8ClampedArray {
-  const n = Math.max(2, Math.round(levels)) - 1;
-  const lut = new Uint8ClampedArray(256);
-  for (let i = 0; i < 256; i++) lut[i] = Math.round((Math.round((i / 255) * n) * 255) / n);
-  return lut;
+// --- Posterize ---
+// The layer's own colours, reduced to `colours` of them (k-means on a colour histogram, distances in
+// OKLab, so the groups are the ones the eye sees). Each palette colour is the mean of the paint it
+// stands for, so a flat fill keeps its colour; Photoshop's per-channel steps (0, 85, 170, 255 at 4)
+// moved every colour to the nearest corner of a grid instead — a yellow to a lemon, a red to a pink.
+
+/** A group whose most common colour holds this share of it takes that colour exactly. */
+const DOMINANT = 0.25;
+
+const SRGB_TO_LINEAR = (() => {
+  const t = new Float64Array(256);
+  for (let i = 0; i < 256; i++) {
+    const c = i / 255;
+    t[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  return t;
+})();
+
+/** OKLab of an sRGB colour (0–255 each, may be fractional) into `out` at `o`. */
+function oklab(r: number, g: number, b: number, out: Float64Array, o: number) {
+  const lin = (v: number) => {
+    const i = Math.floor(v);
+    const f = v - i;
+    return i >= 255 ? SRGB_TO_LINEAR[255] : SRGB_TO_LINEAR[i] * (1 - f) + SRGB_TO_LINEAR[i + 1] * f;
+  };
+  const R = lin(r),
+    G = lin(g),
+    B = lin(b);
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  out[o] = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  out[o + 1] = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  out[o + 2] = 0.0259040371 * l + 0.7827717662 * m - 0.808675778 * s;
+}
+
+/**
+ * Up to `colours` colours standing for the painted pixels of `rgba` (weighted by alpha), as
+ * [r, g, b, …] (0–255, rounded). Deterministic: the same pixels give the same palette.
+ */
+export function posterizePalette(rgba: Uint8ClampedArray, colours: number): Uint8ClampedArray {
+  const k = Math.max(1, Math.round(colours));
+  // A 15-bit histogram: weight and colour sums per bin, so a bin's colour is its pixels' mean.
+  const BINS = 1 << 15;
+  const wt = new Float64Array(BINS);
+  const sum = new Float64Array(BINS * 3);
+  for (let p = 0; p < rgba.length; p += 4) {
+    const a = rgba[p + 3];
+    if (!a) continue;
+    const r = rgba[p],
+      g = rgba[p + 1],
+      b = rgba[p + 2];
+    const bin = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    wt[bin] += a;
+    sum[bin * 3] += r * a;
+    sum[bin * 3 + 1] += g * a;
+    sum[bin * 3 + 2] += b * a;
+  }
+  const used: number[] = [];
+  for (let i = 0; i < BINS; i++) if (wt[i]) used.push(i);
+  const n = used.length;
+  if (!n) return new Uint8ClampedArray(0);
+  const W = new Float64Array(n),
+    rgb = new Float64Array(n * 3),
+    lab = new Float64Array(n * 3);
+  for (let j = 0; j < n; j++) {
+    const i = used[j];
+    W[j] = wt[i];
+    for (let c = 0; c < 3; c++) rgb[j * 3 + c] = sum[i * 3 + c] / wt[i];
+    oklab(rgb[j * 3], rgb[j * 3 + 1], rgb[j * 3 + 2], lab, j * 3);
+  }
+  const K = Math.min(k, n);
+  const cen = new Float64Array(K * 3);
+  const d2 = new Float64Array(n).fill(Infinity);
+  // Seeds: the heaviest colour, then each time the colour with the most weight × distance² from
+  // the seeds so far (k-means++, without the dice).
+  let pick = 0;
+  for (let j = 1; j < n; j++) if (W[j] > W[pick]) pick = j;
+  for (let c = 0; c < K; c++) {
+    cen.set(lab.subarray(pick * 3, pick * 3 + 3), c * 3);
+    let best = -1;
+    for (let j = 0; j < n; j++) {
+      const dl = lab[j * 3] - cen[c * 3],
+        da = lab[j * 3 + 1] - cen[c * 3 + 1],
+        db = lab[j * 3 + 2] - cen[c * 3 + 2];
+      const d = dl * dl + da * da + db * db;
+      if (d < d2[j]) d2[j] = d;
+      const score = W[j] * d2[j];
+      if (score > best) {
+        best = score;
+        pick = j;
+      }
+    }
+  }
+  // Lloyd's steps until no colour changes group.
+  const group = new Int32Array(n).fill(-1);
+  const acc = new Float64Array(K * 4);
+  for (let iter = 0; iter < 30; iter++) {
+    let moved = false;
+    acc.fill(0);
+    for (let j = 0; j < n; j++) {
+      let g = 0,
+        bd = Infinity;
+      for (let c = 0; c < K; c++) {
+        const dl = lab[j * 3] - cen[c * 3],
+          da = lab[j * 3 + 1] - cen[c * 3 + 1],
+          db = lab[j * 3 + 2] - cen[c * 3 + 2];
+        const d = dl * dl + da * da + db * db;
+        if (d < bd) {
+          bd = d;
+          g = c;
+        }
+      }
+      if (group[j] !== g) moved = true;
+      group[j] = g;
+      acc[g * 4] += W[j];
+      for (let q = 0; q < 3; q++) acc[g * 4 + 1 + q] += lab[j * 3 + q] * W[j];
+    }
+    if (!moved) break;
+    for (let c = 0; c < K; c++)
+      if (acc[c * 4]) for (let q = 0; q < 3; q++) cen[c * 3 + q] = acc[c * 4 + 1 + q] / acc[c * 4];
+  }
+  // Each group's colour, as painted: its most common colour when that is at least a quarter of it
+  // (a flat fill keeps its exact colour — the mean drifted toward its soft edge's blend), else the
+  // mean of its paint (a gradient's group has no colour of its own). Empty groups are dropped.
+  const out: number[] = [];
+  const tot = new Float64Array(K * 4);
+  const top = new Int32Array(K).fill(-1);
+  for (let j = 0; j < n; j++) {
+    const g = group[j];
+    tot[g * 4] += W[j];
+    for (let q = 0; q < 3; q++) tot[g * 4 + 1 + q] += rgb[j * 3 + q] * W[j];
+    if (top[g] < 0 || W[j] > W[top[g]]) top[g] = j;
+  }
+  for (let c = 0; c < K; c++) {
+    if (!tot[c * 4]) continue;
+    const t = top[c];
+    for (let q = 0; q < 3; q++)
+      out.push(
+        Math.round(
+          W[t] >= DOMINANT * tot[c * 4] ? rgb[t * 3 + q] : tot[c * 4 + 1 + q] / tot[c * 4],
+        ),
+      );
+  }
+  return new Uint8ClampedArray(out);
 }
 
 // --- Gaussian blur ---
@@ -410,12 +549,43 @@ export function applyFilter(
       return;
     }
     case "posterize": {
-      const lut = posterizeLut(spec.levels);
+      // Each pixel takes the palette colour nearest (in OKLab) to its 15-bit bin's centre — 32k
+      // bins at most, so a noisy layer costs no more than a flat one — and keeps its alpha.
+      const pal = posterizePalette(src.subarray(0, n), spec.colours);
+      const K = pal.length / 3;
+      const palLab = new Float64Array(K * 3);
+      for (let c = 0; c < K; c++) oklab(pal[c * 3], pal[c * 3 + 1], pal[c * 3 + 2], palLab, c * 3);
+      const near = new Int8Array(1 << 15).fill(-1);
+      const L = new Float64Array(3);
       for (let p = 0; p < n; p += 4) {
-        out[p] = lut[src[p]];
-        out[p + 1] = lut[src[p + 1]];
-        out[p + 2] = lut[src[p + 2]];
         out[p + 3] = src[p + 3];
+        if (!src[p + 3]) {
+          out[p] = src[p];
+          out[p + 1] = src[p + 1];
+          out[p + 2] = src[p + 2];
+          continue;
+        }
+        const bin = ((src[p] >> 3) << 10) | ((src[p + 1] >> 3) << 5) | (src[p + 2] >> 3);
+        if (near[bin] < 0) {
+          oklab((bin >> 10) * 8 + 3.5, ((bin >> 5) & 31) * 8 + 3.5, (bin & 31) * 8 + 3.5, L, 0);
+          let g = 0,
+            bd = Infinity;
+          for (let c = 0; c < K; c++) {
+            const dl = L[0] - palLab[c * 3],
+              da = L[1] - palLab[c * 3 + 1],
+              db = L[2] - palLab[c * 3 + 2];
+            const d = dl * dl + da * da + db * db;
+            if (d < bd) {
+              bd = d;
+              g = c;
+            }
+          }
+          near[bin] = g;
+        }
+        const c = near[bin] * 3;
+        out[p] = pal[c];
+        out[p + 1] = pal[c + 1];
+        out[p + 2] = pal[c + 2];
       }
       return;
     }

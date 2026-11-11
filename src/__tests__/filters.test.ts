@@ -5,7 +5,7 @@ import {
   blurChannel,
   blurPlan,
   filterReach,
-  posterizeLut,
+  posterizePalette,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -195,7 +195,7 @@ describe("every filter but the blur", () => {
       { ...FILTER_DEFAULTS.hueSat, lightness: 100 },
       { ...FILTER_DEFAULTS.threshold, paper: "white" },
       { ...FILTER_DEFAULTS.halftone, paper: "white" },
-      { kind: "posterize", levels: 2 },
+      { kind: "posterize", colours: 2 },
     ];
     for (const s of specs) expect(run(src, 1, 1, s)[3]).toBe(0);
   });
@@ -218,15 +218,49 @@ describe("hueSat over a buffer", () => {
   });
 });
 
-describe("posterizeLut", () => {
-  it("gives exactly `levels` values, black and white kept", () => {
-    for (const n of [2, 4, 7, 32]) {
-      const lut = posterizeLut(n);
-      expect(new Set(lut).size).toBe(n);
-      expect(lut[0]).toBe(0);
-      expect(lut[255]).toBe(255);
+describe("posterize", () => {
+  const YELLOW = [245, 215, 90] as const,
+    RED = [215, 75, 60] as const;
+  /** Yellow paper with a red patch, and a blurred band between them. */
+  function picture() {
+    const w = 100,
+      h = 1;
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let x = 0; x < w; x++) {
+      const t = Math.min(1, Math.max(0, (x - 40) / 20));
+      for (let c = 0; c < 3; c++) d[x * 4 + c] = Math.round(YELLOW[c] * (1 - t) + RED[c] * t);
+      d[x * 4 + 3] = 255;
     }
-    expect(Array.from(new Set(posterizeLut(3)))).toEqual([0, 128, 255]);
+    return { d, w, h };
+  }
+
+  it("keeps the layer's own colours, not a grid's", () => {
+    const { d, w, h } = picture();
+    const out = run(d, w, h, { kind: "posterize", colours: 2 });
+    expect(Array.from(out.subarray(0, 3))).toEqual([...YELLOW]);
+    expect(Array.from(out.subarray(99 * 4, 99 * 4 + 3))).toEqual([...RED]);
+    const seen = new Set<string>();
+    for (let p = 0; p < out.length; p += 4) seen.add(out.subarray(p, p + 3).join());
+    expect(seen.size).toBe(2);
+  });
+
+  it("gives at most `colours` colours, and fewer when the layer has fewer", () => {
+    const { d } = picture();
+    for (const k of [2, 4, 8]) expect(posterizePalette(d, k).length / 3).toBeLessThanOrEqual(k);
+    expect(posterizePalette(solid(4, 4, [10, 200, 30, 255]), 6)).toEqual(
+      new Uint8ClampedArray([10, 200, 30]),
+    );
+  });
+
+  it("keeps the alpha and skips transparent pixels", () => {
+    const src = new Uint8ClampedArray([200, 0, 0, 128, 0, 0, 255, 0, 0, 0, 200, 255]);
+    const out = run(src, 3, 1, { kind: "posterize", colours: 2 });
+    expect(Array.from(out)).toEqual([200, 0, 0, 128, 0, 0, 255, 0, 0, 0, 200, 255]);
+  });
+
+  it("is the same every run", () => {
+    const { d } = picture();
+    expect(posterizePalette(d, 5)).toEqual(posterizePalette(d, 5));
   });
 });
 
