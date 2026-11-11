@@ -415,8 +415,10 @@ export function filterReach(spec: FilterSpec, dpr = 1): number {
     case "posterize":
       return spec.smooth ? EDGE_R + 1 : 0; // the cut's slope is read from pixels round it
     case "halftone":
-      // Dots are sampled per cell and may reach past the paint by their radius: a cell round.
-      return spec.shape === "dots" ? Math.ceil(spec.cell * dpr) + 2 : 0;
+      // Dots are sampled per cell, and a cell holding paint can reach ~1.42 cells past it (its
+      // centre up to 0.71 cell out, its corners 0.71 cell further at 45°): read whole, or its empty
+      // pixels go uncounted and the dot comes out too big (2026-11-11 review).
+      return spec.shape === "dots" ? Math.ceil(1.5 * spec.cell * dpr) + 2 : 0;
     case "shadow": {
       const { dx, dy } = shadowOffset(spec, dpr);
       return blurPlan(spec.blur * dpr).reach + Math.max(Math.abs(dx), Math.abs(dy));
@@ -441,7 +443,7 @@ export function filterMaxReach(kind: FilterKind, dpr = 1): number {
     case "posterize":
       return EDGE_R + 1;
     case "halftone":
-      return Math.ceil(HALFTONE_CELL_MAX * dpr) + 2;
+      return Math.ceil(1.5 * HALFTONE_CELL_MAX * dpr) + 2;
     default:
       return 0;
   }

@@ -7,6 +7,7 @@
   import {
     BLUR_MAX,
     FILTER_TITLES,
+    HALFTONE_CELL_MAX,
     SHADOW_BLUR_MAX,
     SHADOW_DISTANCE_MAX,
     SHARPEN_MAX,
@@ -476,7 +477,7 @@
         "The screen's spacing, in document pixels: one dot or line per cell",
         s.cell,
         3,
-        48,
+        HALFTONE_CELL_MAX,
         `${s.cell} px`,
         (v) => update({ cell: v }),
       )}

@@ -1291,31 +1291,53 @@ export class LayerManager {
           ctx.globalCompositeOperation = canvasOp(node.blend);
           // A drag's copy of the layer's pixels (untinted) stands in for its canvas.
           const base = part.sources?.get(node.id) ?? node.canvas;
-          let source = float?.layerId === node.id ? this.withFloat(node, float, base) : base;
-          if (node.tint) source = this.tintedLayer(node, source, node.tint);
+          const floated = float?.layerId === node.id;
           const off = move?.ids.has(node.id) ? move : null;
+          if (
+            rect &&
+            !off &&
+            !floated &&
+            base === node.canvas &&
+            base.width === w &&
+            base.height === h
+          ) {
+            // Safari copies a CPU-backed (`willReadFrequently`) canvas WHOLE when it is drawn
+            // from, whatever part is asked for and whether it changed or not: ~20 ms per
+            // 4000×6000 layer, every frame, on a Mac and an iPad (Safari 27.2, 2026-11-04;
+            // Playwright's WebKit showed it only for a changed canvas, so this first covered
+            // the live layer alone; reported as WebKit bug 330116). Reading the part and drawing
+            // that copies only the part (as the Blend tool reads under its dabs). A tint is put on
+            // that part too (2026-11-11 review: a tinted layer was tinted WHOLE every frame — the
+            // stroke layer through the scratch, the others into a document-sized cache each).
+            const { x, y, w: rw, h: rh } = rect;
+            // Sized (which also resets it) for EVERY layer, even at the same size: reused as it
+            // was, WebKit drew later layers' parts in place of earlier ones — the screen went
+            // stale through undo, redo and the eraser (tried in the 2026-11-11 review, reverted).
+            const ps = (this.partScratch ??= document.createElement("canvas"));
+            ps.width = rw;
+            ps.height = rh;
+            const pc = ps.getContext("2d")!;
+            pc.putImageData(node.ctx.getImageData(x, y, rw, rh), 0, 0);
+            if (node.tint) {
+              pc.save();
+              pc.globalCompositeOperation = "source-in";
+              pc.fillStyle = node.tint;
+              pc.fillRect(0, 0, rw, rh);
+              pc.restore();
+            }
+            ctx.drawImage(ps, x, y);
+            continue;
+          }
+          let source = floated ? this.withFloat(node, float!, base) : base;
+          if (node.tint) source = this.tintedLayer(node, source, node.tint);
           if (off) {
             const k = w / this.docWidth;
             ctx.drawImage(source, off.dx * k, off.dy * k, w, h);
           } else if (rect && source.width === w && source.height === h) {
+            // The float and tint scratches are default canvases, which Safari draws parts of
+            // cheaply (see above).
             const { x, y, w: rw, h: rh } = rect;
-            if (source === node.canvas) {
-              // Safari copies a CPU-backed (`willReadFrequently`) canvas WHOLE when it is drawn
-              // from, whatever part is asked for and whether it changed or not: ~20 ms per
-              // 4000×6000 layer, every frame, on a Mac and an iPad (Safari 27.2, 2026-11-04;
-              // Playwright's WebKit showed it only for a changed canvas, so this first covered
-              // the live layer alone; reported as WebKit bug 330116). Reading the part and drawing
-              // that copies only the part (as the Blend tool reads under its dabs). The float and
-              // tint scratches are default canvases, which Safari draws parts of cheaply, so they
-              // take the sub-rect below.
-              const part = (this.partScratch ??= document.createElement("canvas"));
-              part.width = rw; // also clears it
-              part.height = rh;
-              part.getContext("2d")!.putImageData(node.ctx.getImageData(x, y, rw, rh), 0, 0);
-              ctx.drawImage(part, x, y);
-            } else {
-              ctx.drawImage(source, x, y, rw, rh, x, y, rw, rh);
-            }
+            ctx.drawImage(source, x, y, rw, rh, x, y, rw, rh);
           } else {
             ctx.drawImage(source, 0, 0, w, h);
           }

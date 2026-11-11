@@ -9,7 +9,6 @@ import {
   changedTiles,
   cropPixels,
   offCanvasRects,
-  tilesIn,
   type PixelRect,
 } from "./history";
 import {
@@ -128,11 +127,28 @@ export class StrokeBackup {
 
   /** Keep the tiles of `rect` (canvas px) not kept yet. Call it BEFORE writing there. */
   keep(rect: PixelRect) {
+    // Tile numbers as `tilesIn` gives them, without an object per tile: this runs every frame of a
+    // stroke over its whole redrawn part, mostly tiles already kept (2026-11-11 review).
+    if (rect.w <= 0 || rect.h <= 0) return;
     const { width, height } = this.layer.canvas;
-    for (const t of tilesIn(rect, width, height)) {
-      if (this.tiles.has(t.key)) continue;
-      const r = { x: t.x, y: t.y, w: t.w, h: t.h };
-      this.tiles.set(t.key, { r, was: this.layer.ctx.getImageData(r.x, r.y, r.w, r.h) });
+    const T = UNDO_TILE;
+    const across = Math.ceil(width / T);
+    const tx0 = Math.max(0, Math.floor(rect.x / T)),
+      ty0 = Math.max(0, Math.floor(rect.y / T));
+    const tx1 = Math.min(across, Math.ceil((rect.x + rect.w) / T)),
+      ty1 = Math.min(Math.ceil(height / T), Math.ceil((rect.y + rect.h) / T));
+    for (let ty = ty0; ty < ty1; ty++) {
+      for (let tx = tx0; tx < tx1; tx++) {
+        const key = ty * across + tx;
+        if (this.tiles.has(key)) continue;
+        const r = {
+          x: tx * T,
+          y: ty * T,
+          w: Math.min(T, width - tx * T),
+          h: Math.min(T, height - ty * T),
+        };
+        this.tiles.set(key, { r, was: this.layer.ctx.getImageData(r.x, r.y, r.w, r.h) });
+      }
     }
   }
 
