@@ -713,6 +713,43 @@ async function main(page) {
     ];
   });
 
+  await step(async () => {
+    // A filter on two picked rows (the square's layer and Background): Levels with Output white at
+    // 0 darkens both — the paper and the square — and ONE Undo puts both back.
+    const inside = rect(0.74, 0.24, 0.07, 0.07);
+    const paper = rect(0.9, 0.6, 0.03, 0.03);
+    const a0 = (await pixels(inside)).avg,
+      p0 = (await pixels(paper)).avg;
+    await page.getByRole("button", { name: "Select", exact: true }).tap();
+    await page.locator("[data-row-id]", { hasText: "Background" }).first().tap();
+    await menu("Filter", /^Levels/);
+    const dialog = page.getByRole("dialog", { name: "Levels" });
+    const scope = (await dialog.innerText()).match(/On [^\n]*/)?.[0] ?? "(no scope line)";
+    await dialog
+      .locator('input[type="range"]')
+      .nth(4)
+      .evaluate((el) => {
+        el.value = "0";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    await page.waitForTimeout(400);
+    await dialog.getByRole("button", { name: "OK" }).tap();
+    await page.waitForTimeout(300);
+    const a1 = (await pixels(inside)).avg,
+      p1 = (await pixels(paper)).avg;
+    await shot(`${String(n).padStart(2, "0")}-filter-two-layers`);
+    await undo();
+    await page.waitForTimeout(300);
+    const a2 = (await pixels(inside)).avg,
+      p2 = (await pixels(paper)).avg;
+    await page.getByRole("button", { name: "Done", exact: true }).tap();
+    return [
+      /2 layers/.test(scope) && a1 !== a0 && p1 !== p0 && a2 === a0 && p2 === p0,
+      `Filter ▸ Levels on 2 picked rows ("${scope}") darkens the square (${a0} → ${a1}) and the paper (${p0} → ${p1}); one Undo puts both back (${a2}, ${p2})`,
+      "filter-layers",
+    ];
+  });
+
   // ------------------------------------------------------------------- selections and transforms
   const selRect = rect(0.04, bandY(2) - 0.06, 0.6, 0.12);
   const marquee = () =>

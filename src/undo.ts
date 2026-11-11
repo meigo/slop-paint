@@ -72,6 +72,44 @@ function diffTiles(before: ImageData, full: ImageData): Tile[] {
   }));
 }
 
+/** Record pixel changes already made to several layers, each inside its own region, as ONE step
+ *  (Filter on a group or picked rows, 2026-11-11). `before` is each region's pixels from before;
+ *  only the 64-px tiles of a region that changed are kept, both sides, so a layer is never held
+ *  whole. Pushes nothing (false) when no pixel changed anywhere. */
+export function pushRegionsEdit(
+  layers: LayerManager,
+  parts: { layer: Layer; rect: PixelRect; before: ImageData }[],
+): boolean {
+  const changed = parts
+    .map((p) => ({ layer: p.layer, tiles: regionTiles(p.layer, p.rect, p.before) }))
+    .filter((p) => p.tiles.length > 0);
+  if (changed.length === 0) return false;
+  const put = (side: "was" | "now") => {
+    for (const p of changed)
+      for (const t of p.tiles) layers.restoreTo(p.layer, t[side], t.r.x, t.r.y);
+    hooks.onHistoryApplied();
+  };
+  const bytes = changed.reduce((sum, p) => sum + tilesBytes(p.tiles), 0);
+  history.push({
+    undo: () => put("was"),
+    redo: () => put("now"),
+    bytes,
+    layers: changed.length,
+  });
+  return true;
+}
+
+/** The changed tiles of one layer's region (in layer px), each side cropped out. Its own function,
+ *  as `diffTiles`, so no step's closure holds the region's whole buffers. */
+function regionTiles(layer: Layer, rect: PixelRect, before: ImageData): Tile[] {
+  const now = layer.ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
+  return changedTiles(before.data, now.data, rect.w, rect.h, UNDO_TILE).map((r) => ({
+    r: { x: rect.x + r.x, y: rect.y + r.y, w: r.w, h: r.h },
+    was: new ImageData(cropPixels(before.data, rect.w, r), r.w, r.h),
+    now: new ImageData(cropPixels(now.data, rect.w, r), r.w, r.h),
+  }));
+}
+
 /**
  * A stroke's pixels from before it, kept TILE BY TILE as the stroke first reaches each one
  * (2026-11-05): `keep(rect)` is called before every write to the layer, so a tile is read while it

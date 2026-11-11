@@ -121,27 +121,32 @@ function oklab(r: number, g: number, b: number, out: Float64Array, o: number) {
 }
 
 /**
- * Up to `colours` colours standing for the painted pixels of `rgba` (weighted by alpha), as
- * [r, g, b, …] (0–255, rounded). Deterministic: the same pixels give the same palette.
+ * Up to `colours` colours standing for the painted pixels of `pixels` (weighted by alpha), as
+ * [r, g, b, …] (0–255, rounded). Several buffers (layers) give ONE palette for all of them.
+ * Deterministic: the same pixels give the same palette.
  */
-export function posterizePalette(rgba: Uint8ClampedArray, colours: number): Uint8ClampedArray {
+export function posterizePalette(
+  pixels: Uint8ClampedArray | Uint8ClampedArray[],
+  colours: number,
+): Uint8ClampedArray {
   const k = Math.max(1, Math.round(colours));
   // A 15-bit histogram: weight and colour sums per bin, so a bin's colour is its pixels' mean.
   const BINS = 1 << 15;
   const wt = new Float64Array(BINS);
   const sum = new Float64Array(BINS * 3);
-  for (let p = 0; p < rgba.length; p += 4) {
-    const a = rgba[p + 3];
-    if (!a) continue;
-    const r = rgba[p],
-      g = rgba[p + 1],
-      b = rgba[p + 2];
-    const bin = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-    wt[bin] += a;
-    sum[bin * 3] += r * a;
-    sum[bin * 3 + 1] += g * a;
-    sum[bin * 3 + 2] += b * a;
-  }
+  for (const rgba of Array.isArray(pixels) ? pixels : [pixels])
+    for (let p = 0; p < rgba.length; p += 4) {
+      const a = rgba[p + 3];
+      if (!a) continue;
+      const r = rgba[p],
+        g = rgba[p + 1],
+        b = rgba[p + 2];
+      const bin = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      wt[bin] += a;
+      sum[bin * 3] += r * a;
+      sum[bin * 3 + 1] += g * a;
+      sum[bin * 3 + 2] += b * a;
+    }
   const used: number[] = [];
   for (let i = 0; i < BINS; i++) if (wt[i]) used.push(i);
   const n = used.length;
@@ -235,11 +240,16 @@ export function posterizePalette(rgba: Uint8ClampedArray, colours: number): Uint
  * Alpha stepped as the colours are: `steps` levels, one of them transparent (fixed, so faint pixels
  * drop out instead of being lifted into sight) and the rest picked from the layer's painted alphas
  * by k-means (a group takes its most common alpha when that is at least a quarter of it, so paint
- * laid at 60% stays 60%). As a table: alpha → stepped alpha.
+ * laid at 60% stays 60%). Several buffers (layers) give one table for all. As a table: alpha →
+ * stepped alpha.
  */
-export function alphaStepLut(rgba: Uint8ClampedArray, steps: number): Uint8ClampedArray {
+export function alphaStepLut(
+  pixels: Uint8ClampedArray | Uint8ClampedArray[],
+  steps: number,
+): Uint8ClampedArray {
   const hist = new Float64Array(256);
-  for (let p = 3; p < rgba.length; p += 4) if (rgba[p]) hist[rgba[p]]++;
+  for (const rgba of Array.isArray(pixels) ? pixels : [pixels])
+    for (let p = 3; p < rgba.length; p += 4) if (rgba[p]) hist[rgba[p]]++;
   const values: number[] = [];
   for (let a = 1; a < 256; a++) if (hist[a]) values.push(a);
   const K = Math.min(Math.max(1, Math.round(steps) - 1), values.length);
@@ -594,10 +604,24 @@ export function halftoneCoverage(
   return clamp01(r - d + 0.5) * Math.min(1, 2 * r);
 }
 
+/** What a filter works out from ALL the layers it runs on, so they come out alike (Posterize: one
+ *  palette and one set of alpha steps — picked per layer, two layers' reds became two reds). */
+export type FilterShared = { palette?: Uint8ClampedArray; alphaLut?: Uint8ClampedArray };
+
+/** `FilterShared` for `spec` over the regions `pixels` (each the RGBA of one layer's region). */
+export function filterShared(spec: FilterSpec, pixels: Uint8ClampedArray[]): FilterShared {
+  if (spec.kind !== "posterize") return {};
+  return {
+    palette: posterizePalette(pixels, spec.colours),
+    alphaLut: spec.alphaSteps >= 2 ? alphaStepLut(pixels, spec.alphaSteps) : undefined,
+  };
+}
+
 /**
  * Run `spec` over a region: `src` and `out` are its RGBA (w × h), `ox`, `oy` its place on the layer
  * in device px (the halftone screen is anchored to the layer), `dpr` the layer's pixels per document
- * px (the halftone cell is in document px). `alphaLock`: never more alpha than was there.
+ * px (the halftone cell is in document px). `alphaLock`: never more alpha than was there. `shared`:
+ * what several layers run together share (`filterShared`); worked out from `src` alone without it.
  */
 export function applyFilter(
   src: Uint8ClampedArray,
@@ -609,6 +633,7 @@ export function applyFilter(
   spec: FilterSpec,
   dpr = 1,
   alphaLock = false,
+  shared?: FilterShared,
 ): void {
   const n = w * h * 4;
   switch (spec.kind) {
@@ -626,10 +651,10 @@ export function applyFilter(
       // Each pixel takes the palette colour nearest (in OKLab) to its 15-bit bin's centre — 32k
       // bins at most, so a noisy layer costs no more than a flat one. Its alpha is kept, or stepped
       // (`alphaStepLut`) — never under alpha lock, which keeps the layer's alpha.
-      const pal = posterizePalette(src.subarray(0, n), spec.colours);
+      const pal = shared?.palette ?? posterizePalette(src.subarray(0, n), spec.colours);
       const aLut =
         spec.alphaSteps >= 2 && !alphaLock
-          ? alphaStepLut(src.subarray(0, n), spec.alphaSteps)
+          ? (shared?.alphaLut ?? alphaStepLut(src.subarray(0, n), spec.alphaSteps))
           : null;
       const K = pal.length / 3;
       const palLab = new Float64Array(K * 3);
