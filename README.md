@@ -70,8 +70,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   **Hue/Saturation…** (worked by how light colours look, so −100 gives the greys your eye expects),
   **Posterize…** (2–32 colours, picked from the layer's own — a flat fill keeps its exact colour;
   Alpha steps the transparency the same way, Off by default: 2 gives hard edges, and paint laid at
-  60% stays 60%),
-  **Threshold…** (pure black ink; the rest transparent or white), **Halftone…** (screentone:
+  60% stays 60%; Edges: Smooth antialiases where one colour or step meets the next, Hard keeps only
+  the exact colours, for pixel art),
+  **Threshold…** (pure black ink; the rest transparent or white; Edges: Smooth or Hard), **Halftone…** (screentone:
   dots or lines, cell size and angle, black or the layer's own colour, on transparent or white —
   darker parts get bigger dots — see-through shading counts as lighter, so a soft airbrush
   fades into smaller dots — and the screen lines up across layers),

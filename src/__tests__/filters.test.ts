@@ -11,6 +11,8 @@ import {
   colourToAlphaPixel,
   shadowOffset,
   filterMaxReach,
+  fieldShare,
+  edgeBand,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -247,7 +249,7 @@ describe("every filter but the blur", () => {
       { ...FILTER_DEFAULTS.hueSat, lightness: 100 },
       { ...FILTER_DEFAULTS.threshold, paper: "white" },
       { ...FILTER_DEFAULTS.halftone, paper: "white" },
-      { kind: "posterize", colours: 2, alphaSteps: 0 },
+      { kind: "posterize", colours: 2, alphaSteps: 0, smooth: false },
     ];
     for (const s of specs) expect(run(src, 1, 1, s)[3]).toBe(0);
   });
@@ -288,7 +290,7 @@ describe("posterize", () => {
 
   it("keeps the layer's own colours, not a grid's", () => {
     const { d, w, h } = picture();
-    const out = run(d, w, h, { kind: "posterize", colours: 2, alphaSteps: 0 });
+    const out = run(d, w, h, { kind: "posterize", colours: 2, alphaSteps: 0, smooth: false });
     expect(Array.from(out.subarray(0, 3))).toEqual([...YELLOW]);
     expect(Array.from(out.subarray(99 * 4, 99 * 4 + 3))).toEqual([...RED]);
     const seen = new Set<string>();
@@ -306,7 +308,7 @@ describe("posterize", () => {
 
   it("keeps the alpha and skips transparent pixels", () => {
     const src = new Uint8ClampedArray([200, 0, 0, 128, 0, 0, 255, 0, 0, 0, 200, 255]);
-    const out = run(src, 3, 1, { kind: "posterize", colours: 2, alphaSteps: 0 });
+    const out = run(src, 3, 1, { kind: "posterize", colours: 2, alphaSteps: 0, smooth: false });
     expect(Array.from(out)).toEqual([200, 0, 0, 128, 0, 0, 255, 0, 0, 0, 200, 255]);
   });
 
@@ -326,13 +328,24 @@ describe("posterize", () => {
     const lut2 = alphaStepLut(solid(1, 1, [0, 0, 0, 153]), 2);
     expect(lut2[153]).toBe(153);
     expect(lut2[60]).toBe(0);
-    const out = run(src, px.length, 1, { kind: "posterize", colours: 2, alphaSteps: 3 });
+    const out = run(src, px.length, 1, {
+      kind: "posterize",
+      colours: 2,
+      alphaSteps: 3,
+      smooth: false,
+    });
     expect(new Set(Array.from(out.filter((_, i) => i % 4 === 3)))).toEqual(new Set([0, 153, 255]));
   });
 
   it("keeps the alpha under alpha lock", () => {
     const src = new Uint8ClampedArray([200, 0, 0, 40, 200, 0, 0, 255]);
-    const out = run(src, 2, 1, { kind: "posterize", colours: 2, alphaSteps: 2 }, true);
+    const out = run(
+      src,
+      2,
+      1,
+      { kind: "posterize", colours: 2, alphaSteps: 2, smooth: false },
+      true,
+    );
     expect([out[3], out[7]]).toEqual([40, 255]);
   });
 
@@ -341,7 +354,7 @@ describe("posterize", () => {
     const a = new Uint8ClampedArray([200, 0, 0, 255, 200, 0, 0, 255, 0, 0, 200, 255]);
     const b = new Uint8ClampedArray([200, 0, 0, 255, 0, 200, 0, 128, 0, 200, 0, 255]);
     const both = new Uint8ClampedArray([...a, ...b]);
-    const spec = { kind: "posterize", colours: 3, alphaSteps: 2 } as const;
+    const spec = { kind: "posterize", colours: 3, alphaSteps: 2, smooth: false } as const;
     const sh = filterShared(spec, [a, b]);
     expect(sh.palette).toEqual(posterizePalette(both, 3));
     expect(sh.alphaLut).toEqual(alphaStepLut(both, 2));
@@ -533,5 +546,87 @@ describe("drop shadow and glow", () => {
     expect(Math.abs(right - left)).toBeLessThanOrEqual(1);
     expect(alphaAt(run(square(w), w, w, { ...g, spread: 80 }), w, 48, 40)).toBeGreaterThan(right);
     expect(alphaAt(run(square(w), w, w, g, true), w, 48, 40)).toBe(0); // alpha lock
+  });
+});
+
+describe("smooth edges (Threshold, Posterize)", () => {
+  it("fieldShare: a hard step stays hard, a quantized ramp gets a partial pixel, a line stays", () => {
+    const share = (vals: number[], x: number) => fieldShare(x, 0, vals.length, 1, (j) => vals[j]);
+    const step = [100, 100, 100, -100, -100, -100];
+    expect(step.map((_, x) => share(step, x))).toEqual([1, 1, 1, 0, 0, 0]);
+    // A slow ramp stored in whole numbers (runs of 2–3 equal values): still a partial pixel.
+    const ramp = Array.from({ length: 26 }, (_, x) => Math.round(5.2 - 0.4 * x));
+    expect(ramp.map((_, x) => share(ramp, x)).some((v) => v > 0 && v < 1)).toBe(true);
+    const line = [-100, -100, -100, 100, -100, -100, -100];
+    expect(share(line, 3)).toBe(1);
+    expect(share([3, 3, 3], 1)).toBe(1); // flat: by its sign
+  });
+
+  it("edgeBand marks the pixels within 2 px of a change, and nothing on a flat area", () => {
+    const label = Uint8Array.from({ length: 12 }, (_, x) => (x < 6 ? 0 : 1));
+    expect(Array.from(edgeBand(label, 12, 1))).toEqual([0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0]);
+    expect(Array.from(edgeBand(new Uint8Array(5), 5, 1))).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  /** A row of `w` opaque greys, `fn(x)`. */
+  const greys = (w: number, fn: (x: number) => number) => {
+    const d = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) d.set([fn(x), fn(x), fn(x), 255], x * 4);
+    return d;
+  };
+  const alphas = (d: Uint8ClampedArray) => Array.from(d.filter((_, i) => i % 4 === 3));
+
+  it("Threshold: a soft ramp gets an antialiased cut, a hard step stays hard", () => {
+    const ramp = greys(32, (x) => x * 8 + 2); // 2 … 250, the level 128 between x 15 and 16
+    const hard = alphas(run(ramp, 32, 1, { ...FILTER_DEFAULTS.threshold, smooth: false }));
+    const soft = alphas(run(ramp, 32, 1, FILTER_DEFAULTS.threshold));
+    expect(hard.filter((a) => a > 0 && a < 255)).toEqual([]);
+    const mid = soft.filter((a) => a > 0 && a < 255);
+    expect(mid.length).toBeGreaterThan(0);
+    expect(mid.length).toBeLessThanOrEqual(2);
+    for (let x = 1; x < 32; x++) expect(soft[x]).toBeLessThanOrEqual(soft[x - 1]); // dark → light
+    const step = greys(8, (x) => (x < 4 ? 0 : 255));
+    expect(alphas(run(step, 8, 1, FILTER_DEFAULTS.threshold))).toEqual([
+      255, 255, 255, 255, 0, 0, 0, 0,
+    ]);
+  });
+
+  it("Posterize: a blend's border between two colours mixes just those two, nowhere else", () => {
+    const w = 40,
+      A = [220, 40, 40],
+      B = [40, 80, 220];
+    const d = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) {
+      const t = x / (w - 1);
+      d.set(
+        [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t, 255],
+        x * 4,
+      );
+    }
+    const spec = { kind: "posterize", colours: 2, alphaSteps: 0, smooth: true } as const;
+    const out = run(d, w, 1, spec);
+    const hardOut = run(d, w, 1, { ...spec, smooth: false });
+    const pal = new Set<string>();
+    for (let x = 0; x < w; x++) pal.add(hardOut.subarray(x * 4, x * 4 + 3).join());
+    expect(pal.size).toBe(2);
+    let mixed = 0;
+    for (let x = 0; x < w; x++) if (!pal.has(out.subarray(x * 4, x * 4 + 3).join())) mixed++;
+    expect(mixed).toBeGreaterThan(0);
+    expect(mixed).toBeLessThanOrEqual(2);
+    expect(Array.from(out.subarray(0, 3))).toEqual(Array.from(hardOut.subarray(0, 3)));
+  });
+
+  it("Posterize alpha steps: a soft edge's cut is antialiased; transparent stays transparent", () => {
+    const w = 32;
+    const d = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) d.set([200, 0, 0, Math.max(0, 255 - x * 10)], x * 4);
+    const spec = { kind: "posterize", colours: 2, alphaSteps: 2, smooth: true } as const;
+    const a = alphas(run(d, w, 1, spec));
+    const levels = new Set(alphas(run(d, w, 1, { ...spec, smooth: false })));
+    expect(levels.size).toBe(2);
+    const between = a.filter((v) => !levels.has(v));
+    expect(between.length).toBeGreaterThan(0);
+    expect(between.length).toBeLessThanOrEqual(2);
+    for (let x = 26; x < w; x++) expect(a[x]).toBe(0);
   });
 });

@@ -20,7 +20,9 @@ export type HueSatSpec = {
   saturation: number; // −100…100
   lightness: number; // −100…100
 };
-export type ThresholdSpec = { kind: "threshold"; level: number; paper: Paper };
+/** `smooth`: antialias the cut (Threshold and Posterize): a pixel the cut runs through gets a
+ *  share of each side, by how far it lies from the cut — else every pixel takes one side (jagged). */
+export type ThresholdSpec = { kind: "threshold"; level: number; paper: Paper; smooth: boolean };
 export type HalftoneSpec = {
   kind: "halftone";
   cell: number; // screen period in DOCUMENT px (App scales it to the layer's device px)
@@ -31,7 +33,12 @@ export type HalftoneSpec = {
 };
 /** `colours`: 2–32, picked from the layer. `alphaSteps`: 0 keeps the alpha, else 2–32 levels of it
  *  (transparent one of them), picked from the layer's own as the colours are. */
-export type PosterizeSpec = { kind: "posterize"; colours: number; alphaSteps: number };
+export type PosterizeSpec = {
+  kind: "posterize";
+  colours: number;
+  alphaSteps: number;
+  smooth: boolean;
+};
 export type BlurSpec = { kind: "blur"; radius: number }; // σ in DOCUMENT px, 0.2–BLUR_MAX
 /** Removes `colour` (GIMP's Color to Alpha): each pixel the least alpha that, over `colour`,
  *  looks as it did. */
@@ -74,8 +81,8 @@ export type FilterKind = FilterSpec["kind"];
 export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K }> } = {
   levels: { kind: "levels", inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 },
   hueSat: { kind: "hueSat", hue: 0, saturation: 0, lightness: 0 },
-  posterize: { kind: "posterize", colours: 6, alphaSteps: 0 },
-  threshold: { kind: "threshold", level: 128, paper: "transparent" },
+  posterize: { kind: "posterize", colours: 6, alphaSteps: 0, smooth: true },
+  threshold: { kind: "threshold", level: 128, paper: "transparent", smooth: true },
   halftone: {
     kind: "halftone",
     cell: 8,
@@ -402,6 +409,9 @@ export function filterReach(spec: FilterSpec, dpr = 1): number {
       return blurPlan(spec.radius * dpr).reach;
     case "glow":
       return blurPlan(spec.size * dpr).reach;
+    case "threshold":
+    case "posterize":
+      return spec.smooth ? EDGE_R + 1 : 0; // the cut's slope is read from pixels round it
     case "shadow": {
       const { dx, dy } = shadowOffset(spec, dpr);
       return blurPlan(spec.blur * dpr).reach + Math.max(Math.abs(dx), Math.abs(dy));
@@ -422,6 +432,9 @@ export function filterMaxReach(kind: FilterKind, dpr = 1): number {
       return blurPlan(SHADOW_BLUR_MAX * dpr).reach;
     case "shadow":
       return blurPlan(SHADOW_BLUR_MAX * dpr).reach + Math.ceil(SHADOW_DISTANCE_MAX * dpr);
+    case "threshold":
+    case "posterize":
+      return EDGE_R + 1;
     default:
       return 0;
   }
@@ -763,6 +776,230 @@ export function halftoneCoverage(
   return clamp01(r - d + 0.5) * Math.min(1, 2 * r);
 }
 
+/** How far (px) round a pixel the smooth cut reads the field. A slow blend in 8 bits holds runs of
+ *  2–3 equal pixels: read between neighbours, the slope was often 0 and the cut could only fall at
+ *  a run's end — Posterize's smooth edges came out as stepped as hard ones. */
+const EDGE_R = 2;
+
+/**
+ * Which pixels lie within EDGE_R px (a square round them) of a change of `label` — the only ones a
+ * smooth cut can make partial. One pass marking each change, then a box max across and down.
+ */
+export function edgeBand(label: Int8Array | Uint8Array, w: number, h: number): Uint8Array {
+  const mark = new Uint8Array(w * h);
+  for (let y = 0, i = 0; y < h; y++) {
+    for (let x = 0; x < w; x++, i++) {
+      if (x < w - 1 && label[i] !== label[i + 1]) mark[i] = mark[i + 1] = 1;
+      if (y < h - 1 && label[i] !== label[i + w]) mark[i] = mark[i + w] = 1;
+    }
+  }
+  const tmp = new Uint8Array(w * h);
+  const R = EDGE_R;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let v = 0;
+      for (let k = Math.max(0, x - R); k <= Math.min(w - 1, x + R) && !v; k++) v = mark[row + k];
+      tmp[row + x] = v;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 0;
+      for (let k = Math.max(0, y - R); k <= Math.min(h - 1, y + R) && !v; k++) v = tmp[k * w + x];
+      mark[y * w + x] = v;
+    }
+  }
+  return mark;
+}
+
+/**
+ * How much of pixel (`x`, `y`) of a `w`×`h` area lies on the positive side of the cut where the
+ * field `f` crosses 0 (`f(j)` for pixel index j; NaN: no value there, left out). The field is taken
+ * as linear: the cut lies f / slope px away, so the pixel's share is 0.5 + that, clamped. The slope
+ * is read across ±EDGE_R px. The value is the mean of the square round the pixel (exact for a
+ * linear field, and it smooths out an 8-bit blend's runs) when that agrees with the pixel's own to
+ * within 1.5 px of slope; else the pixel's own — a 1-px line isn't averaged away, and a cut through
+ * a hard step (slope smaller than the step) leaves both sides whole.
+ */
+export function fieldShare(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  f: (j: number) => number,
+): number {
+  const R = EDGE_R;
+  const f0 = f(y * w + x);
+  // The square's samples: their mean, and the means of its outer columns and rows (the slope).
+  let sum = 0,
+    n = 0,
+    lS = 0,
+    lN = 0,
+    rS = 0,
+    rN = 0,
+    uS = 0,
+    uN = 0,
+    dS = 0,
+    dN = 0;
+  for (let dy = -R; dy <= R; dy++) {
+    const yy = y + dy;
+    if (yy < 0 || yy >= h) continue;
+    for (let dx = -R; dx <= R; dx++) {
+      const xx = x + dx;
+      if (xx < 0 || xx >= w) continue;
+      const v = f(yy * w + xx);
+      if (v !== v) continue;
+      sum += v;
+      n++;
+      if (dx === -R) {
+        lS += v;
+        lN++;
+      } else if (dx === R) {
+        rS += v;
+        rN++;
+      }
+      if (dy === -R) {
+        uS += v;
+        uN++;
+      } else if (dy === R) {
+        dS += v;
+        dN++;
+      }
+    }
+  }
+  const mean = n ? sum / n : f0;
+  const grad = (aS: number, aN: number, bS: number, bN: number) =>
+    aN && bN
+      ? (bS / bN - aS / aN) / (2 * R)
+      : bN
+        ? (bS / bN - mean) / R
+        : aN
+          ? (mean - aS / aN) / R
+          : 0;
+  const slope = Math.hypot(grad(lS, lN, rS, rN), grad(uS, uN, dS, dN));
+  const v = Math.abs(mean - f0) <= 1.5 * slope ? mean : f0;
+  if (slope < 1e-9) return v > 0 ? 1 : v < 0 ? 0 : 0.5;
+  return clamp01(0.5 + v / slope);
+}
+
+/**
+ * Posterize's smooth edges, over the hard result in `out`: a pixel within EDGE_R px of another
+ * palette colour (`edgeBand`) gets a mix of its colour and that one, by how far the border between
+ * them (equal OKLab distance to both: a plane through colour space, so a field linear in the
+ * pixel's OKLab) lies from it — `fieldShare`. Alpha steps likewise: the cut halfway between two
+ * levels, read on the source alpha. Transparent pixels stay transparent. Each colour's OKLab is
+ * worked out once, through a direct-mapped table.
+ */
+function posterizeEdges(
+  src: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  pal: Uint8ClampedArray,
+  palLab: Float64Array,
+  near: Int8Array,
+  aLut: Uint8ClampedArray | null,
+) {
+  const m = w * h;
+  const idx = new Int8Array(m).fill(-1);
+  const lvl = aLut ? new Uint8Array(m) : null;
+  for (let i = 0, p = 0; i < m; i++, p += 4) {
+    if (src[p + 3])
+      idx[i] = near[((src[p] >> 3) << 10) | ((src[p + 1] >> 3) << 5) | (src[p + 2] >> 3)];
+    if (lvl) lvl[i] = aLut![src[p + 3]];
+  }
+  const colourBand = edgeBand(idx, w, h);
+  const alphaBand = lvl ? edgeBand(lvl, w, h) : null;
+  const keys = new Int32Array(HUE_CACHE).fill(-1);
+  const vals = new Float64Array(HUE_CACHE * 3);
+  /** Index of pixel j's OKLab in `vals`. */
+  const labOf = (j: number) => {
+    const q = j * 4;
+    const k = (src[q] << 16) | (src[q + 1] << 8) | src[q + 2];
+    const slot = (Math.imul(k, 0x9e3779b1) >>> 16) & (HUE_CACHE - 1);
+    if (keys[slot] !== k) {
+      keys[slot] = k;
+      oklab(src[q], src[q + 1], src[q + 2], vals, slot * 3);
+    }
+    return slot * 3;
+  };
+  // d²(x, c2) − d²(x, c1) = x · 2(c1 − c2) + |c2|² − |c1|²: linear in x.
+  let nx = 0,
+    ny = 0,
+    nz = 0,
+    k0 = 0,
+    l1 = 0,
+    l2 = 0;
+  const colourField = (j: number) => {
+    if (idx[j] < 0) return NaN;
+    const o = labOf(j);
+    return vals[o] * nx + vals[o + 1] * ny + vals[o + 2] * nz + k0;
+  };
+  const alphaField = (j: number) => (src[j * 4 + 3] - (l1 + l2) / 2) * (l1 > l2 ? 1 : -1);
+  const R = EDGE_R;
+  for (let y = 0, i = 0; y < h; y++) {
+    for (let x = 0; x < w; x++, i++) {
+      const c1 = idx[i];
+      if (c1 < 0) continue;
+      const p = i * 4;
+      if (colourBand[i]) {
+        // The other side: of the palette colours within R px, the one nearest this pixel's own.
+        const o = labOf(i);
+        let best = Infinity,
+          c2 = -1;
+        for (let yy = Math.max(0, y - R); yy <= Math.min(h - 1, y + R); yy++) {
+          for (let xx = Math.max(0, x - R); xx <= Math.min(w - 1, x + R); xx++) {
+            const c = idx[yy * w + xx];
+            if (c < 0 || c === c1 || c === c2) continue;
+            const dl = vals[o] - palLab[c * 3],
+              da = vals[o + 1] - palLab[c * 3 + 1],
+              db = vals[o + 2] - palLab[c * 3 + 2];
+            const d = dl * dl + da * da + db * db;
+            if (d < best) {
+              best = d;
+              c2 = c;
+            }
+          }
+        }
+        if (c2 >= 0) {
+          const a1 = c1 * 3,
+            a2 = c2 * 3;
+          nx = 2 * (palLab[a1] - palLab[a2]);
+          ny = 2 * (palLab[a1 + 1] - palLab[a2 + 1]);
+          nz = 2 * (palLab[a1 + 2] - palLab[a2 + 2]);
+          k0 =
+            palLab[a2] ** 2 +
+            palLab[a2 + 1] ** 2 +
+            palLab[a2 + 2] ** 2 -
+            (palLab[a1] ** 2 + palLab[a1 + 1] ** 2 + palLab[a1 + 2] ** 2);
+          const t = fieldShare(x, y, w, h, colourField);
+          for (let ch = 0; ch < 3; ch++)
+            out[p + ch] = Math.round(pal[a1 + ch] * t + pal[a2 + ch] * (1 - t));
+        }
+      }
+      if (alphaBand && alphaBand[i]) {
+        // Alpha: between this pixel's level and the nearest other level within R px
+        // (transparent pixels count: that is the shape's edge).
+        const a = src[p + 3];
+        l1 = lvl![i];
+        let al = -1;
+        for (let yy = Math.max(0, y - R); yy <= Math.min(h - 1, y + R); yy++) {
+          for (let xx = Math.max(0, x - R); xx <= Math.min(w - 1, x + R); xx++) {
+            const l = lvl![yy * w + xx];
+            if (l !== l1 && (al < 0 || Math.abs(l - a) < Math.abs(al - a))) al = l;
+          }
+        }
+        if (al >= 0) {
+          l2 = al;
+          const t = fieldShare(x, y, w, h, alphaField);
+          out[p + 3] = Math.round(l1 * t + l2 * (1 - t));
+        }
+      }
+    }
+  }
+}
+
 /** What a filter works out from ALL the layers it runs on, so they come out alike (Posterize: one
  *  palette and one set of alpha steps — picked per layer, two layers' reds became two reds). */
 export type FilterShared = { palette?: Uint8ClampedArray; alphaLut?: Uint8ClampedArray };
@@ -851,6 +1088,7 @@ export function applyFilter(
         out[p + 2] = pal[c + 2];
         if (aLut) out[p + 3] = aLut[src[p + 3]];
       }
+      if (spec.smooth) posterizeEdges(src, out, w, h, pal, palLab, near, aLut);
       return;
     }
     case "blur": {
@@ -985,19 +1223,44 @@ export function applyFilter(
       return;
     }
     case "threshold": {
-      // Judged as the pixel looks on white, so a faint grey edge counts as light.
+      // Judged as the pixel looks on white, so a faint grey edge counts as light. Smooth: each
+      // pixel's share of ink comes from how far the level lies from it (`cutCoverage` over the
+      // "seen" plane), so the cut through a soft shape is antialiased instead of stair-stepped.
       const white = spec.paper === "white";
-      for (let p = 0; p < n; p += 4) {
+      const m = w * h;
+      const S = blurBuffers(m)[0];
+      for (let i = 0, p = 0; i < m; i++, p += 4) {
         const a = src[p + 3];
-        const seen = 255 - (a / 255) * (255 - luma(src[p], src[p + 1], src[p + 2]));
-        if (a && seen < spec.level) {
-          out[p] = out[p + 1] = out[p + 2] = 0;
-          out[p + 3] = alphaLock ? a : 255;
-        } else if (white && a) {
-          out[p] = out[p + 1] = out[p + 2] = 255;
-          out[p + 3] = a;
-        } else {
-          out[p] = out[p + 1] = out[p + 2] = out[p + 3] = 0;
+        S[i] = 255 - (a / 255) * (255 - luma(src[p], src[p + 1], src[p + 2]));
+      }
+      const field = (j: number) => spec.level - S[j];
+      // Smooth: only pixels within EDGE_R px of the hard cut can come out partial.
+      let band: Uint8Array | null = null;
+      if (spec.smooth) {
+        const hard = new Uint8Array(m);
+        for (let i = 0; i < m; i++) hard[i] = S[i] < spec.level ? 1 : 0;
+        band = edgeBand(hard, w, h);
+      }
+      for (let y = 0, i = 0; y < h; y++) {
+        for (let x = 0; x < w; x++, i++) {
+          const p = i * 4;
+          const a = src[p + 3];
+          if (!a) {
+            out[p] = out[p + 1] = out[p + 2] = out[p + 3] = 0;
+            continue;
+          }
+          const f = spec.level - S[i];
+          const ink = band && band[i] ? fieldShare(x, y, w, h, field) : f > 0 ? 1 : 0;
+          // Ink: opaque black (alpha lock: its own alpha). Not ink: transparent, or white at its
+          // own alpha. Mixed by the ink's share, premultiplied.
+          const inkA = alphaLock ? a : 255;
+          const paperA = white ? a : 0;
+          const oa = ink * inkA + (1 - ink) * paperA;
+          out[p] =
+            out[p + 1] =
+            out[p + 2] =
+              oa > 0 ? Math.round(((1 - ink) * paperA * 255) / oa) : 0;
+          out[p + 3] = Math.round(oa);
         }
       }
       return;

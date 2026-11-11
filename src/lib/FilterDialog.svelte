@@ -121,6 +121,19 @@
     },
   ];
 
+  const edges: { value: "smooth" | "hard"; label: string; title: string }[] = [
+    {
+      value: "smooth",
+      label: "Smooth",
+      title: "Antialiased: a pixel the cut runs through gets a share of each side",
+    },
+    {
+      value: "hard",
+      label: "Hard",
+      title: "Every pixel takes one side — jagged, but only the exact colours (pixel art)",
+    },
+  ];
+
   const row = "flex items-center gap-2 text-xs text-text-secondary";
   const seg = (on: boolean) =>
     `h-7 cursor-pointer rounded-md px-2 text-xs ${on ? "ui-on" : "text-text-secondary hover:bg-surface-hover"}`;
@@ -316,6 +329,9 @@
         s.alphaSteps >= 2 ? String(s.alphaSteps) : "Off",
         (v) => update({ alphaSteps: v < 2 ? 0 : v }),
       )}
+      {@render choice("Edges", edges, s.smooth ? "smooth" : "hard", (v) =>
+        update({ smooth: v === "smooth" }),
+      )}
     {:else if spec.kind === "blur"}
       {@const s = spec}
       {@render slider(
@@ -450,6 +466,9 @@
         (v) => update({ level: v }),
       )}
       {@render choice("Paper", papers, s.paper, (v) => update({ paper: v }))}
+      {@render choice("Edges", edges, s.smooth ? "smooth" : "hard", (v) =>
+        update({ smooth: v === "smooth" }),
+      )}
     {:else if spec.kind === "halftone"}
       {@const s = spec}
       {@render slider(
