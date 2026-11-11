@@ -54,6 +54,7 @@
     type TextSpec,
   } from "./text-layout";
   import TextDialog from "./lib/TextDialog.svelte";
+  import { cropPixels } from "./history";
   import FilterDialog from "./lib/FilterDialog.svelte";
   import {
     FILTER_DEFAULTS,
@@ -1189,6 +1190,9 @@
       // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged file
       // fails here with the open document unchanged.
       endGesture(); // a press still down finishes on the old document, not the new one
+      // A dialog opened while the file was read or decoded works on the layers this replaces.
+      if (filterDialog) cancelFilter();
+      if (textDialog) cancelText();
       try {
         size = image
           ? loadImageDocument(image, layers)
@@ -1647,8 +1651,13 @@
         if (selectionMode === "create") selection.updateCreate(p.x, p.y);
         else if (selectionMode === "drag") selection.updateDrag(p.x, p.y);
         if (selectionMode === "create") selection.endCreate();
+        // A drag of a lifted selection drew from the drag's copies (`compositeLive`): end it in an
+        // ordinary redraw, which lets them go (up to three document-sized canvases, kept until
+        // some other redraw otherwise — 2026-11-11 review).
+        const floatDrag = selectionMode === "drag" && selection.hasFloating;
         selection.endDrag();
         selectionMode = null;
+        if (floatDrag) scheduleComposite();
       }
 
       canvasClipEl.style.cursor = selection.getCursor(selection.hitTest(p.x, p.y));
@@ -3328,14 +3337,14 @@
     for (const layer of targets.layers) {
       const cw = layer.canvas.width,
         ch = layer.canvas.height;
-      // Read whole once to find the ink, then keep only the region (the read is let go).
-      const full = layer.ctx.getImageData(0, 0, cw, ch);
-      const ink = alphaBounds(full.data, cw, ch);
+      // The ink's bounds from strips (a whole-layer read per layer piled up gigabytes on a big
+      // group before the collector caught up — 2026-11-11 review), then only the region is read.
+      const ink = inkBounds(layer);
       if (!ink) continue;
       inked++;
       const base = filterRect(ink, marquee, cw, ch, maxReach);
       if (!base) continue;
-      const before = cropImage(full, { x: 0, y: 0 }, base);
+      const before = layer.ctx.getImageData(base.x, base.y, base.w, base.h);
       const rect = filterRect(ink, marquee, cw, ch, reach);
       parts.push({
         layer,
@@ -3397,12 +3406,29 @@
 
   /** `r` (layer px) cut out of `img`, whose top left lies at `at` on the layer. */
   function cropImage(img: ImageData, at: { x: number; y: number }, r: PxRect): ImageData {
-    const out = new ImageData(r.w, r.h);
-    for (let y = 0; y < r.h; y++) {
-      const from = ((r.y - at.y + y) * img.width + (r.x - at.x)) * 4;
-      out.data.set(img.data.subarray(from, from + r.w * 4), y * r.w * 4);
+    const local = { x: r.x - at.x, y: r.y - at.y, w: r.w, h: r.h };
+    return new ImageData(cropPixels(img.data, img.width, local), r.w, r.h);
+  }
+
+  /** A layer's painted bounds (canvas px), read in strips of rows, never whole. */
+  function inkBounds(layer: Layer): PxRect | null {
+    const w = layer.canvas.width,
+      h = layer.canvas.height;
+    const STRIP = 256;
+    let x0 = Infinity,
+      y0 = Infinity,
+      x1 = -Infinity,
+      y1 = -Infinity;
+    for (let y = 0; y < h; y += STRIP) {
+      const sh = Math.min(STRIP, h - y);
+      const b = alphaBounds(layer.ctx.getImageData(0, y, w, sh).data, w, sh);
+      if (!b) continue;
+      x0 = Math.min(x0, b.x);
+      x1 = Math.max(x1, b.x + b.w);
+      y0 = Math.min(y0, y + b.y);
+      y1 = Math.max(y1, y + b.y + b.h);
     }
-    return out;
+    return x0 < x1 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
   }
 
   const sameRect = (a: PxRect | null, b: PxRect | null) =>

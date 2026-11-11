@@ -208,6 +208,37 @@ describe("halftone", () => {
     const painted = out.subarray(w * 4 * (EMPTY + 8));
     expect(mean(painted, 3) / 255).toBeCloseTo(1 - 128 / 255, 1);
   });
+  it("gives the same dots on the area App works on (ink bounds + reach) as on the whole canvas", () => {
+    // A grey square on a big transparent canvas, at 45° with a big cell: the cells along its edge
+    // straddle the area's border unless the reach covers them whole.
+    const W = 200,
+      H = 200,
+      x0 = 70,
+      y0 = 60,
+      s = 50;
+    const full = new Uint8ClampedArray(W * H * 4);
+    for (let y = y0; y < y0 + s; y++)
+      for (let x = x0; x < x0 + s; x++) full.set([90, 90, 90, 255], (y * W + x) * 4);
+    const spec = { ...FILTER_DEFAULTS.halftone, cell: 24, angle: 45 } as const;
+    const whole = new Uint8ClampedArray(full.length);
+    applyFilter(full, whole, W, H, 0, 0, spec);
+    const r = filterReach(spec);
+    const ax = x0 - r,
+      ay = y0 - r,
+      aw = s + 2 * r,
+      ah = s + 2 * r;
+    expect(ax).toBeGreaterThanOrEqual(0);
+    const area = new Uint8ClampedArray(aw * ah * 4);
+    for (let y = 0; y < ah; y++)
+      area.set(full.subarray(((ay + y) * W + ax) * 4, ((ay + y) * W + ax + aw) * 4), y * aw * 4);
+    const part = new Uint8ClampedArray(area.length);
+    applyFilter(area, part, aw, ah, ax, ay, spec);
+    let diff = 0;
+    for (let y = 0; y < ah; y++)
+      for (let x = 0; x < aw; x++)
+        if (part[(y * aw + x) * 4 + 3] !== whole[((ay + y) * W + ax + x) * 4 + 3]) diff++;
+    expect(diff).toBe(0);
+  });
   it("draws each dot round and in one colour, even over a change of tone and colour", () => {
     // Left of x = 34 a dark red, right of it a light blue: the step runs through the dots of the
     // column of cells round x = 32 (angle 0, cell 8: dot centres at multiples of 8).
@@ -431,7 +462,7 @@ describe("Gaussian blur", () => {
     expect(filterReach({ kind: "blur", radius: 2 })).toBe(6);
     expect(filterReach({ kind: "blur", radius: 1 }, 2)).toBe(6);
     expect(filterReach({ kind: "blur", radius: 10 })).toBeGreaterThanOrEqual(28);
-    expect(filterReach(FILTER_DEFAULTS.halftone)).toBe(10); // dots: a cell (8) + 2
+    expect(filterReach(FILTER_DEFAULTS.halftone)).toBe(14); // dots: 1.5 cells (8) + 2
     expect(filterReach({ ...FILTER_DEFAULTS.halftone, shape: "lines" })).toBe(0);
     expect(filterReach(FILTER_DEFAULTS.levels)).toBe(0);
   });
