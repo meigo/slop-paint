@@ -1,7 +1,7 @@
 // One-off filters (Filter menu): pure per-pixel maths on unpremultiplied RGBA, as `getImageData`
 // gives it. App previews them into the layer and keeps the result as one undo step; nothing here is
-// live. Every filter keeps a fully transparent pixel transparent, so App only works on the ink's
-// bounds.
+// live. Every filter but Gaussian blur keeps a fully transparent pixel transparent; the blur
+// spreads paint up to `filterReach` px, so App works on the ink's bounds grown by that.
 
 export type Paper = "transparent" | "white";
 
@@ -28,12 +28,18 @@ export type HalftoneSpec = {
   ink: "black" | "colour";
   paper: Paper;
 };
-export type FilterSpec = LevelsSpec | HueSatSpec | ThresholdSpec | HalftoneSpec;
+/** `colours`: 2–32, picked from the layer. `alphaSteps`: 0 keeps the alpha, else 2–32 levels of it
+ *  (transparent one of them), picked from the layer's own as the colours are. */
+export type PosterizeSpec = { kind: "posterize"; colours: number; alphaSteps: number };
+export type BlurSpec = { kind: "blur"; radius: number }; // σ in DOCUMENT px, 0.2–BLUR_MAX
+export type FilterSpec =
+  LevelsSpec | HueSatSpec | PosterizeSpec | ThresholdSpec | HalftoneSpec | BlurSpec;
 export type FilterKind = FilterSpec["kind"];
 
 export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K }> } = {
   levels: { kind: "levels", inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 },
   hueSat: { kind: "hueSat", hue: 0, saturation: 0, lightness: 0 },
+  posterize: { kind: "posterize", colours: 6, alphaSteps: 0 },
   threshold: { kind: "threshold", level: 128, paper: "transparent" },
   halftone: {
     kind: "halftone",
@@ -43,13 +49,19 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
     ink: "black",
     paper: "transparent",
   },
+  blur: { kind: "blur", radius: 2 },
 };
+
+/** Gaussian blur's largest radius (σ), in document px. */
+export const BLUR_MAX = 64;
 
 export const FILTER_TITLES: Record<FilterKind, string> = {
   levels: "Levels",
   hueSat: "Hue/Saturation",
+  posterize: "Posterize",
   threshold: "Threshold",
   halftone: "Halftone",
+  blur: "Gaussian blur",
 };
 
 /** Entries in Hue/Saturation's colour table (a power of two). */
@@ -70,6 +82,385 @@ export function levelsLut(s: LevelsSpec): Uint8ClampedArray {
     lut[i] = Math.round(s.outBlack + (s.outWhite - s.outBlack) * t);
   }
   return lut;
+}
+
+// --- Posterize ---
+// The layer's own colours, reduced to `colours` of them (k-means on a colour histogram, distances in
+// OKLab, so the groups are the ones the eye sees). Each palette colour is the mean of the paint it
+// stands for, so a flat fill keeps its colour; Photoshop's per-channel steps (0, 85, 170, 255 at 4)
+// moved every colour to the nearest corner of a grid instead — a yellow to a lemon, a red to a pink.
+
+/** A group whose most common colour holds this share of it takes that colour exactly. */
+const DOMINANT = 0.25;
+
+const SRGB_TO_LINEAR = (() => {
+  const t = new Float64Array(256);
+  for (let i = 0; i < 256; i++) {
+    const c = i / 255;
+    t[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  return t;
+})();
+
+/** OKLab of an sRGB colour (0–255 each, may be fractional) into `out` at `o`. */
+function oklab(r: number, g: number, b: number, out: Float64Array, o: number) {
+  const lin = (v: number) => {
+    const i = Math.floor(v);
+    const f = v - i;
+    return i >= 255 ? SRGB_TO_LINEAR[255] : SRGB_TO_LINEAR[i] * (1 - f) + SRGB_TO_LINEAR[i + 1] * f;
+  };
+  const R = lin(r),
+    G = lin(g),
+    B = lin(b);
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  out[o] = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  out[o + 1] = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  out[o + 2] = 0.0259040371 * l + 0.7827717662 * m - 0.808675778 * s;
+}
+
+/**
+ * Up to `colours` colours standing for the painted pixels of `rgba` (weighted by alpha), as
+ * [r, g, b, …] (0–255, rounded). Deterministic: the same pixels give the same palette.
+ */
+export function posterizePalette(rgba: Uint8ClampedArray, colours: number): Uint8ClampedArray {
+  const k = Math.max(1, Math.round(colours));
+  // A 15-bit histogram: weight and colour sums per bin, so a bin's colour is its pixels' mean.
+  const BINS = 1 << 15;
+  const wt = new Float64Array(BINS);
+  const sum = new Float64Array(BINS * 3);
+  for (let p = 0; p < rgba.length; p += 4) {
+    const a = rgba[p + 3];
+    if (!a) continue;
+    const r = rgba[p],
+      g = rgba[p + 1],
+      b = rgba[p + 2];
+    const bin = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    wt[bin] += a;
+    sum[bin * 3] += r * a;
+    sum[bin * 3 + 1] += g * a;
+    sum[bin * 3 + 2] += b * a;
+  }
+  const used: number[] = [];
+  for (let i = 0; i < BINS; i++) if (wt[i]) used.push(i);
+  const n = used.length;
+  if (!n) return new Uint8ClampedArray(0);
+  const W = new Float64Array(n),
+    rgb = new Float64Array(n * 3),
+    lab = new Float64Array(n * 3);
+  for (let j = 0; j < n; j++) {
+    const i = used[j];
+    W[j] = wt[i];
+    for (let c = 0; c < 3; c++) rgb[j * 3 + c] = sum[i * 3 + c] / wt[i];
+    oklab(rgb[j * 3], rgb[j * 3 + 1], rgb[j * 3 + 2], lab, j * 3);
+  }
+  const K = Math.min(k, n);
+  const cen = new Float64Array(K * 3);
+  const d2 = new Float64Array(n).fill(Infinity);
+  // Seeds: the heaviest colour, then each time the colour with the most weight × distance² from
+  // the seeds so far (k-means++, without the dice).
+  let pick = 0;
+  for (let j = 1; j < n; j++) if (W[j] > W[pick]) pick = j;
+  for (let c = 0; c < K; c++) {
+    cen.set(lab.subarray(pick * 3, pick * 3 + 3), c * 3);
+    let best = -1;
+    for (let j = 0; j < n; j++) {
+      const dl = lab[j * 3] - cen[c * 3],
+        da = lab[j * 3 + 1] - cen[c * 3 + 1],
+        db = lab[j * 3 + 2] - cen[c * 3 + 2];
+      const d = dl * dl + da * da + db * db;
+      if (d < d2[j]) d2[j] = d;
+      const score = W[j] * d2[j];
+      if (score > best) {
+        best = score;
+        pick = j;
+      }
+    }
+  }
+  // Lloyd's steps until no colour changes group.
+  const group = new Int32Array(n).fill(-1);
+  const acc = new Float64Array(K * 4);
+  for (let iter = 0; iter < 30; iter++) {
+    let moved = false;
+    acc.fill(0);
+    for (let j = 0; j < n; j++) {
+      let g = 0,
+        bd = Infinity;
+      for (let c = 0; c < K; c++) {
+        const dl = lab[j * 3] - cen[c * 3],
+          da = lab[j * 3 + 1] - cen[c * 3 + 1],
+          db = lab[j * 3 + 2] - cen[c * 3 + 2];
+        const d = dl * dl + da * da + db * db;
+        if (d < bd) {
+          bd = d;
+          g = c;
+        }
+      }
+      if (group[j] !== g) moved = true;
+      group[j] = g;
+      acc[g * 4] += W[j];
+      for (let q = 0; q < 3; q++) acc[g * 4 + 1 + q] += lab[j * 3 + q] * W[j];
+    }
+    if (!moved) break;
+    for (let c = 0; c < K; c++)
+      if (acc[c * 4]) for (let q = 0; q < 3; q++) cen[c * 3 + q] = acc[c * 4 + 1 + q] / acc[c * 4];
+  }
+  // Each group's colour, as painted: its most common colour when that is at least a quarter of it
+  // (a flat fill keeps its exact colour — the mean drifted toward its soft edge's blend), else the
+  // mean of its paint (a gradient's group has no colour of its own). Empty groups are dropped.
+  const out: number[] = [];
+  const tot = new Float64Array(K * 4);
+  const top = new Int32Array(K).fill(-1);
+  for (let j = 0; j < n; j++) {
+    const g = group[j];
+    tot[g * 4] += W[j];
+    for (let q = 0; q < 3; q++) tot[g * 4 + 1 + q] += rgb[j * 3 + q] * W[j];
+    if (top[g] < 0 || W[j] > W[top[g]]) top[g] = j;
+  }
+  for (let c = 0; c < K; c++) {
+    if (!tot[c * 4]) continue;
+    const t = top[c];
+    for (let q = 0; q < 3; q++)
+      out.push(
+        Math.round(
+          W[t] >= DOMINANT * tot[c * 4] ? rgb[t * 3 + q] : tot[c * 4 + 1 + q] / tot[c * 4],
+        ),
+      );
+  }
+  return new Uint8ClampedArray(out);
+}
+
+/**
+ * Alpha stepped as the colours are: `steps` levels, one of them transparent (fixed, so faint pixels
+ * drop out instead of being lifted into sight) and the rest picked from the layer's painted alphas
+ * by k-means (a group takes its most common alpha when that is at least a quarter of it, so paint
+ * laid at 60% stays 60%). As a table: alpha → stepped alpha.
+ */
+export function alphaStepLut(rgba: Uint8ClampedArray, steps: number): Uint8ClampedArray {
+  const hist = new Float64Array(256);
+  for (let p = 3; p < rgba.length; p += 4) if (rgba[p]) hist[rgba[p]]++;
+  const values: number[] = [];
+  for (let a = 1; a < 256; a++) if (hist[a]) values.push(a);
+  const K = Math.min(Math.max(1, Math.round(steps) - 1), values.length);
+  // Centres: index 0 is the fixed transparent level, 1…K are free.
+  const cen = [0];
+  const d2 = values.map((a) => a * a);
+  for (let c = 0; c < K; c++) {
+    let pick = -1,
+      best = -1;
+    for (let j = 0; j < values.length; j++) {
+      const score = hist[values[j]] * d2[j];
+      if (score > best) {
+        best = score;
+        pick = j;
+      }
+    }
+    if (best <= 0) break;
+    cen.push(values[pick]);
+    for (let j = 0; j < values.length; j++)
+      d2[j] = Math.min(d2[j], (values[j] - values[pick]) ** 2);
+  }
+  const nearest = (a: number) => {
+    let g = 0;
+    for (let c = 1; c < cen.length; c++) if (Math.abs(a - cen[c]) < Math.abs(a - cen[g])) g = c;
+    return g;
+  };
+  for (let iter = 0; iter < 30; iter++) {
+    const sw = new Float64Array(cen.length),
+      sa = new Float64Array(cen.length);
+    for (const a of values) {
+      const g = nearest(a);
+      sw[g] += hist[a];
+      sa[g] += hist[a] * a;
+    }
+    let moved = false;
+    for (let c = 1; c < cen.length; c++) {
+      if (!sw[c]) continue;
+      const m = sa[c] / sw[c];
+      if (Math.abs(m - cen[c]) > 1e-6) moved = true;
+      cen[c] = m;
+    }
+    if (!moved) break;
+  }
+  // Each free group's level, as for the colours: its most common alpha if it dominates, else the mean.
+  const tot = new Float64Array(cen.length),
+    sum = new Float64Array(cen.length),
+    top = new Int32Array(cen.length).fill(-1);
+  for (const a of values) {
+    const g = nearest(a);
+    tot[g] += hist[a];
+    sum[g] += hist[a] * a;
+    if (top[g] < 0 || hist[a] > hist[top[g]]) top[g] = a;
+  }
+  const level = cen.map((_, c) =>
+    c === 0 || !tot[c]
+      ? 0
+      : Math.round(hist[top[c]] >= DOMINANT * tot[c] ? top[c] : sum[c] / tot[c]),
+  );
+  const lut = new Uint8ClampedArray(256);
+  for (let a = 1; a < 256; a++) lut[a] = level[nearest(a)];
+  return lut;
+}
+
+// --- Gaussian blur ---
+/** Below this σ (device px) the blur is a no-op; up to `KERNEL_MAX_SIGMA` it is an exact sampled
+ *  Gaussian, above that three box blurs whose widths are picked to give σ (Kovesi's method) — the
+ *  same cost at any radius. */
+const MIN_SIGMA = 0.25;
+const KERNEL_MAX_SIGMA = 3;
+
+export type BlurPlan =
+  | { kind: "none"; reach: 0 }
+  | { kind: "kernel"; weights: Float32Array; reach: number }
+  | { kind: "boxes"; radii: number[]; reach: number };
+
+/** How to blur by σ device px, and how far (px) the blur reaches. */
+export function blurPlan(sigma: number): BlurPlan {
+  if (!(sigma >= MIN_SIGMA)) return { kind: "none", reach: 0 };
+  if (sigma <= KERNEL_MAX_SIGMA) {
+    const r = Math.ceil(3 * sigma);
+    const weights = new Float32Array(2 * r + 1);
+    let sum = 0;
+    for (let i = -r; i <= r; i++) sum += weights[i + r] = Math.exp((-i * i) / (2 * sigma * sigma));
+    for (let i = 0; i < weights.length; i++) weights[i] /= sum;
+    return { kind: "kernel", weights, reach: r };
+  }
+  const n = 3;
+  let wl = Math.floor(Math.sqrt((12 * sigma * sigma) / n + 1));
+  if (wl % 2 === 0) wl--;
+  const wu = wl + 2;
+  const m = Math.round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
+  const radii = [0, 1, 2].map((i) => ((i < m ? wl : wu) - 1) / 2);
+  return { kind: "boxes", radii, reach: radii[0] + radii[1] + radii[2] };
+}
+
+/** How far (device px) a filter can move paint: what App grows its working area by. */
+export function filterReach(spec: FilterSpec, dpr = 1): number {
+  return spec.kind === "blur" ? blurPlan(spec.radius * dpr).reach : 0;
+}
+
+/** A horizontal pass over `w`×`h` floats, the edge value repeated past either end — at the canvas
+ *  edge that keeps paint touching it solid, and elsewhere App's working area ends in transparent
+ *  pixels (or out of the blur's reach). `boxR`: a box of that radius; else the plan's kernel. */
+function blurRows(
+  src: Float32Array,
+  dst: Float32Array,
+  w: number,
+  h: number,
+  plan: BlurPlan,
+  boxR: number,
+) {
+  const last = w - 1;
+  if (plan.kind === "kernel") {
+    const wts = plan.weights,
+      r = plan.reach;
+    for (let y = 0; y < h; y++) {
+      const base = y * w;
+      for (let x = 0; x < w; x++) {
+        let acc = 0;
+        for (let k = -r; k <= r; k++) {
+          const q = x + k;
+          acc += wts[k + r] * src[base + (q < 0 ? 0 : q > last ? last : q)];
+        }
+        dst[base + x] = acc;
+      }
+    }
+    return;
+  }
+  const r = boxR,
+    inv = 1 / (2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const base = y * w;
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += src[base + (k < 0 ? 0 : k > last ? last : k)];
+    for (let x = 0; x < w; x++) {
+      dst[base + x] = sum * inv;
+      const add = x + r + 1,
+        drop = x - r;
+      sum += src[base + (add > last ? last : add)] - src[base + (drop < 0 ? 0 : drop)];
+    }
+  }
+}
+
+/** The vertical pass, walked ROW by row (a running sum per column, or whole rows weighted): going
+ *  down each column jumps a row's length per value, which missed the cache on every read — a
+ *  12-megapixel blur took ~7 s in WebKit that way. `colSum` holds at least `w` values. */
+function blurCols(
+  src: Float32Array,
+  dst: Float32Array,
+  w: number,
+  h: number,
+  plan: BlurPlan,
+  boxR: number,
+  colSum: Float64Array,
+) {
+  const last = h - 1;
+  const row = (y: number) => (y < 0 ? 0 : y > last ? last : y) * w;
+  if (plan.kind === "kernel") {
+    const wts = plan.weights,
+      r = plan.reach;
+    for (let y = 0; y < h; y++) {
+      const o = y * w;
+      dst.fill(0, o, o + w);
+      for (let k = -r; k <= r; k++) {
+        const wt = wts[k + r],
+          i = row(y + k);
+        for (let x = 0; x < w; x++) dst[o + x] += wt * src[i + x];
+      }
+    }
+    return;
+  }
+  const r = boxR,
+    inv = 1 / (2 * r + 1);
+  colSum.fill(0, 0, w);
+  for (let k = -r; k <= r; k++) {
+    const i = row(k);
+    for (let x = 0; x < w; x++) colSum[x] += src[i + x];
+  }
+  for (let y = 0; y < h; y++) {
+    const o = y * w,
+      add = row(y + r + 1),
+      drop = row(y - r);
+    for (let x = 0; x < w; x++) {
+      dst[o + x] = colSum[x] * inv;
+      colSum[x] += src[add + x] - src[drop + x];
+    }
+  }
+}
+
+/** Blur one channel (`w`×`h` floats) in place; `tmp` holds at least as many. */
+export function blurChannel(
+  a: Float32Array,
+  w: number,
+  h: number,
+  plan: BlurPlan,
+  tmp: Float32Array,
+) {
+  if (plan.kind === "none") return;
+  const colSum = new Float64Array(w);
+  if (plan.kind === "kernel") {
+    blurRows(a, tmp, w, h, plan, 0);
+    blurCols(tmp, a, w, h, plan, 0, colSum);
+    return;
+  }
+  for (const r of plan.radii) {
+    if (r < 1) continue;
+    blurRows(a, tmp, w, h, plan, r);
+    blurCols(tmp, a, w, h, plan, r, colSum);
+  }
+}
+
+/** Float work buffers, kept between previews: a slider drag re-runs the blur every frame, and three
+ *  layer-sized arrays a frame churned the collector. Let go by `releaseFilterBuffers`. */
+let blurBufs: Float32Array[] = [];
+function blurBuffers(n: number): Float32Array[] {
+  if (blurBufs.length !== 3 || blurBufs[0].length < n)
+    blurBufs = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
+  return blurBufs.map((b) => b.subarray(0, n));
+}
+export function releaseFilterBuffers() {
+  blurBufs = [];
 }
 
 /** Luma histogram of the painted pixels, each counted by its alpha (a faint edge counts little). */
@@ -229,6 +620,74 @@ export function applyFilter(
         out[p + 2] = lut[src[p + 2]];
         out[p + 3] = src[p + 3];
       }
+      return;
+    }
+    case "posterize": {
+      // Each pixel takes the palette colour nearest (in OKLab) to its 15-bit bin's centre — 32k
+      // bins at most, so a noisy layer costs no more than a flat one. Its alpha is kept, or stepped
+      // (`alphaStepLut`) — never under alpha lock, which keeps the layer's alpha.
+      const pal = posterizePalette(src.subarray(0, n), spec.colours);
+      const aLut =
+        spec.alphaSteps >= 2 && !alphaLock
+          ? alphaStepLut(src.subarray(0, n), spec.alphaSteps)
+          : null;
+      const K = pal.length / 3;
+      const palLab = new Float64Array(K * 3);
+      for (let c = 0; c < K; c++) oklab(pal[c * 3], pal[c * 3 + 1], pal[c * 3 + 2], palLab, c * 3);
+      const near = new Int8Array(1 << 15).fill(-1);
+      const L = new Float64Array(3);
+      for (let p = 0; p < n; p += 4) {
+        out[p + 3] = src[p + 3];
+        if (!src[p + 3]) {
+          out[p] = src[p];
+          out[p + 1] = src[p + 1];
+          out[p + 2] = src[p + 2];
+          continue;
+        }
+        const bin = ((src[p] >> 3) << 10) | ((src[p + 1] >> 3) << 5) | (src[p + 2] >> 3);
+        if (near[bin] < 0) {
+          oklab((bin >> 10) * 8 + 3.5, ((bin >> 5) & 31) * 8 + 3.5, (bin & 31) * 8 + 3.5, L, 0);
+          let g = 0,
+            bd = Infinity;
+          for (let c = 0; c < K; c++) {
+            const dl = L[0] - palLab[c * 3],
+              da = L[1] - palLab[c * 3 + 1],
+              db = L[2] - palLab[c * 3 + 2];
+            const d = dl * dl + da * da + db * db;
+            if (d < bd) {
+              bd = d;
+              g = c;
+            }
+          }
+          near[bin] = g;
+        }
+        const c = near[bin] * 3;
+        out[p] = pal[c];
+        out[p + 1] = pal[c + 1];
+        out[p + 2] = pal[c + 2];
+        if (aLut) out[p + 3] = aLut[src[p + 3]];
+      }
+      return;
+    }
+    case "blur": {
+      // Premultiplied, channel by channel (three float planes, not twelve): blurred straight, the
+      // black of transparent pixels would darken the paint's edge. Alpha lock keeps the alpha and
+      // blurs only the colour.
+      const plan = blurPlan(spec.radius * dpr);
+      if (plan.kind === "none") {
+        out.set(src.subarray(0, n));
+        return;
+      }
+      const m = w * h;
+      const [A, C, tmp] = blurBuffers(m);
+      for (let i = 0; i < m; i++) A[i] = src[i * 4 + 3];
+      blurChannel(A, w, h, plan, tmp);
+      for (let c = 0; c < 3; c++) {
+        for (let i = 0, p = 0; i < m; i++, p += 4) C[i] = (src[p + c] * src[p + 3]) / 255;
+        blurChannel(C, w, h, plan, tmp);
+        for (let i = 0, p = c; i < m; i++, p += 4) out[p] = A[i] > 0 ? (C[i] * 255) / A[i] : 0;
+      }
+      for (let i = 0, p = 3; i < m; i++, p += 4) out[p] = alphaLock ? src[p] : A[i];
       return;
     }
     case "hueSat": {

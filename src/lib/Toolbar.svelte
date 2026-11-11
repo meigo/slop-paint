@@ -299,12 +299,16 @@
     [
       { kind: "levels", title: "Black point, white point and midtones of the active layer" },
       { kind: "hueSat", title: "Shift the active layer's colours, saturation and lightness" },
+      { kind: "posterize", title: "Cut the active layer's colours down to a few flat steps" },
       {
         kind: "threshold",
         title: "Make the active layer pure black ink (and white or transparent)",
       },
     ],
-    [{ kind: "halftone", title: "Turn the active layer's tones into dots or lines — screentone" }],
+    [
+      { kind: "halftone", title: "Turn the active layer's tones into dots or lines — screentone" },
+      { kind: "blur", title: "Soften the active layer (a Gaussian blur)" },
+    ],
   ];
   const dimmable =
     "aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent";

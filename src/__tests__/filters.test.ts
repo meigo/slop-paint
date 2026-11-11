@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   FILTER_DEFAULTS,
   applyFilter,
+  blurChannel,
+  blurPlan,
+  filterReach,
+  posterizePalette,
+  alphaStepLut,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -183,7 +188,7 @@ describe("halftone", () => {
   });
 });
 
-describe("every filter", () => {
+describe("every filter but the blur", () => {
   it("keeps a transparent pixel transparent", () => {
     const src = new Uint8ClampedArray([0, 0, 0, 0]);
     const specs: FilterSpec[] = [
@@ -191,6 +196,7 @@ describe("every filter", () => {
       { ...FILTER_DEFAULTS.hueSat, lightness: 100 },
       { ...FILTER_DEFAULTS.threshold, paper: "white" },
       { ...FILTER_DEFAULTS.halftone, paper: "white" },
+      { kind: "posterize", colours: 2, alphaSteps: 0 },
     ];
     for (const s of specs) expect(run(src, 1, 1, s)[3]).toBe(0);
   });
@@ -210,5 +216,144 @@ describe("hueSat over a buffer", () => {
       hueSatPixel(src[i * 4], src[i * 4 + 1], src[i * 4 + 2], spec, o);
       expect([out[i * 4], out[i * 4 + 1], out[i * 4 + 2]]).toEqual(o);
     }
+  });
+});
+
+describe("posterize", () => {
+  const YELLOW = [245, 215, 90] as const,
+    RED = [215, 75, 60] as const;
+  /** Yellow paper with a red patch, and a blurred band between them. */
+  function picture() {
+    const w = 100,
+      h = 1;
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let x = 0; x < w; x++) {
+      const t = Math.min(1, Math.max(0, (x - 40) / 20));
+      for (let c = 0; c < 3; c++) d[x * 4 + c] = Math.round(YELLOW[c] * (1 - t) + RED[c] * t);
+      d[x * 4 + 3] = 255;
+    }
+    return { d, w, h };
+  }
+
+  it("keeps the layer's own colours, not a grid's", () => {
+    const { d, w, h } = picture();
+    const out = run(d, w, h, { kind: "posterize", colours: 2, alphaSteps: 0 });
+    expect(Array.from(out.subarray(0, 3))).toEqual([...YELLOW]);
+    expect(Array.from(out.subarray(99 * 4, 99 * 4 + 3))).toEqual([...RED]);
+    const seen = new Set<string>();
+    for (let p = 0; p < out.length; p += 4) seen.add(out.subarray(p, p + 3).join());
+    expect(seen.size).toBe(2);
+  });
+
+  it("gives at most `colours` colours, and fewer when the layer has fewer", () => {
+    const { d } = picture();
+    for (const k of [2, 4, 8]) expect(posterizePalette(d, k).length / 3).toBeLessThanOrEqual(k);
+    expect(posterizePalette(solid(4, 4, [10, 200, 30, 255]), 6)).toEqual(
+      new Uint8ClampedArray([10, 200, 30]),
+    );
+  });
+
+  it("keeps the alpha and skips transparent pixels", () => {
+    const src = new Uint8ClampedArray([200, 0, 0, 128, 0, 0, 255, 0, 0, 0, 200, 255]);
+    const out = run(src, 3, 1, { kind: "posterize", colours: 2, alphaSteps: 0 });
+    expect(Array.from(out)).toEqual([200, 0, 0, 128, 0, 0, 255, 0, 0, 0, 200, 255]);
+  });
+
+  it("steps the alpha to the layer's own levels, transparent always one", () => {
+    // A soft edge 1…254 around a solid core, plus paint laid at 60% (153).
+    const px: number[] = [];
+    for (let a = 1; a < 255; a++) px.push(a);
+    for (let i = 0; i < 2000; i++) px.push(255);
+    for (let i = 0; i < 2000; i++) px.push(153);
+    const src = new Uint8ClampedArray(px.length * 4);
+    px.forEach((a, i) => src.set([200, 0, 0, a], i * 4));
+    const lut3 = alphaStepLut(src, 3);
+    expect(new Set(lut3)).toEqual(new Set([0, 153, 255]));
+    expect(lut3[0]).toBe(0);
+    expect(lut3[20]).toBe(0);
+    expect(lut3[160]).toBe(153);
+    const lut2 = alphaStepLut(solid(1, 1, [0, 0, 0, 153]), 2);
+    expect(lut2[153]).toBe(153);
+    expect(lut2[60]).toBe(0);
+    const out = run(src, px.length, 1, { kind: "posterize", colours: 2, alphaSteps: 3 });
+    expect(new Set(Array.from(out.filter((_, i) => i % 4 === 3)))).toEqual(new Set([0, 153, 255]));
+  });
+
+  it("keeps the alpha under alpha lock", () => {
+    const src = new Uint8ClampedArray([200, 0, 0, 40, 200, 0, 0, 255]);
+    const out = run(src, 2, 1, { kind: "posterize", colours: 2, alphaSteps: 2 }, true);
+    expect([out[3], out[7]]).toEqual([40, 255]);
+  });
+
+  it("is the same every run", () => {
+    const { d } = picture();
+    expect(posterizePalette(d, 5)).toEqual(posterizePalette(d, 5));
+  });
+});
+
+describe("Gaussian blur", () => {
+  /** The spread (σ) of a blurred impulse along one row. */
+  function measuredSigma(sigma: number) {
+    const w = 401,
+      h = 1;
+    const a = new Float32Array(w);
+    a[200] = 1;
+    blurChannel(a, w, h, blurPlan(sigma), new Float32Array(w));
+    let sum = 0,
+      v = 0;
+    for (let i = 0; i < w; i++) sum += a[i];
+    for (let i = 0; i < w; i++) v += a[i] * (i - 200) ** 2;
+    return { sum, sigma: Math.sqrt(v / sum) };
+  }
+  it("spreads by about σ, sampled or by boxes, and keeps the paint", () => {
+    for (const s of [0.6, 1, 2.5, 3.5, 8, 20]) {
+      const m = measuredSigma(s);
+      expect(m.sum).toBeCloseTo(1, 4);
+      expect(Math.abs(m.sigma - s) / s).toBeLessThan(0.08);
+    }
+  });
+  it("does nothing below a quarter pixel", () => {
+    expect(blurPlan(0.1).kind).toBe("none");
+    expect(filterReach({ kind: "blur", radius: 0.1 })).toBe(0);
+  });
+  it("reaches as far as its kernel or boxes do, at the layer's density; other filters reach nothing", () => {
+    expect(filterReach({ kind: "blur", radius: 2 })).toBe(6);
+    expect(filterReach({ kind: "blur", radius: 1 }, 2)).toBe(6);
+    expect(filterReach({ kind: "blur", radius: 10 })).toBeGreaterThanOrEqual(28);
+    expect(filterReach(FILTER_DEFAULTS.halftone)).toBe(0);
+  });
+  it("blurs paint into transparency without darkening its colour", () => {
+    const w = 40,
+      h = 40;
+    const src = new Uint8ClampedArray(w * h * 4);
+    for (let y = 15; y < 25; y++)
+      for (let x = 15; x < 25; x++) src.set([255, 40, 0, 255], (y * w + x) * 4);
+    const out = run(src, w, h, { kind: "blur", radius: 2 });
+    let alpha = 0;
+    for (let p = 0; p < out.length; p += 4) {
+      alpha += out[p + 3];
+      if (out[p + 3] > 2) {
+        expect(out[p]).toBeGreaterThan(250);
+        expect(Math.abs(out[p + 1] - 40)).toBeLessThan(4);
+      }
+    }
+    expect(out[(14 * w + 20) * 4 + 3]).toBeGreaterThan(0); // spread past the edge
+    expect(alpha / (255 * 100)).toBeCloseTo(1, 1); // and none lost
+  });
+  it("keeps a flat colour flat, up to the canvas edge", () => {
+    const src = solid(30, 30, [90, 120, 200, 255]);
+    const out = run(src, 30, 30, { kind: "blur", radius: 5 });
+    for (let p = 0; p < out.length; p += 4)
+      expect([out[p], out[p + 1], out[p + 2], out[p + 3]]).toEqual([90, 120, 200, 255]);
+  });
+  it("alpha lock keeps the alpha and blurs only the colour", () => {
+    const w = 20,
+      h = 1;
+    const src = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) src.set(x < 10 ? [0, 0, 0, 255] : [255, 255, 255, 128], x * 4);
+    const out = run(src, w, h, { kind: "blur", radius: 2 }, true);
+    for (let x = 0; x < w; x++) expect(out[x * 4 + 3]).toBe(src[x * 4 + 3]);
+    expect(out[9 * 4]).toBeGreaterThan(0);
+    expect(out[10 * 4]).toBeLessThan(255);
   });
 });
