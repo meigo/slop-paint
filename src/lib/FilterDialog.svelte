@@ -266,6 +266,15 @@
         String(s.colours),
         (v) => update({ colours: v }),
       )}
+      {@render slider(
+        "Alpha",
+        "Steps of transparency, picked from the layer's own (one of them fully transparent) — Off keeps it as it is",
+        Math.max(1, s.alphaSteps),
+        1,
+        32,
+        s.alphaSteps >= 2 ? String(s.alphaSteps) : "Off",
+        (v) => update({ alphaSteps: v < 2 ? 0 : v }),
+      )}
     {:else if spec.kind === "blur"}
       {@const s = spec}
       {@render slider(

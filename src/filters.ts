@@ -28,7 +28,9 @@ export type HalftoneSpec = {
   ink: "black" | "colour";
   paper: Paper;
 };
-export type PosterizeSpec = { kind: "posterize"; colours: number }; // 2–32, picked from the layer
+/** `colours`: 2–32, picked from the layer. `alphaSteps`: 0 keeps the alpha, else 2–32 levels of it
+ *  (transparent one of them), picked from the layer's own as the colours are. */
+export type PosterizeSpec = { kind: "posterize"; colours: number; alphaSteps: number };
 export type BlurSpec = { kind: "blur"; radius: number }; // σ in DOCUMENT px, 0.2–BLUR_MAX
 export type FilterSpec =
   LevelsSpec | HueSatSpec | PosterizeSpec | ThresholdSpec | HalftoneSpec | BlurSpec;
@@ -37,7 +39,7 @@ export type FilterKind = FilterSpec["kind"];
 export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K }> } = {
   levels: { kind: "levels", inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 },
   hueSat: { kind: "hueSat", hue: 0, saturation: 0, lightness: 0 },
-  posterize: { kind: "posterize", colours: 6 },
+  posterize: { kind: "posterize", colours: 6, alphaSteps: 0 },
   threshold: { kind: "threshold", level: 128, paper: "transparent" },
   halftone: {
     kind: "halftone",
@@ -227,6 +229,78 @@ export function posterizePalette(rgba: Uint8ClampedArray, colours: number): Uint
       );
   }
   return new Uint8ClampedArray(out);
+}
+
+/**
+ * Alpha stepped as the colours are: `steps` levels, one of them transparent (fixed, so faint pixels
+ * drop out instead of being lifted into sight) and the rest picked from the layer's painted alphas
+ * by k-means (a group takes its most common alpha when that is at least a quarter of it, so paint
+ * laid at 60% stays 60%). As a table: alpha → stepped alpha.
+ */
+export function alphaStepLut(rgba: Uint8ClampedArray, steps: number): Uint8ClampedArray {
+  const hist = new Float64Array(256);
+  for (let p = 3; p < rgba.length; p += 4) if (rgba[p]) hist[rgba[p]]++;
+  const values: number[] = [];
+  for (let a = 1; a < 256; a++) if (hist[a]) values.push(a);
+  const K = Math.min(Math.max(1, Math.round(steps) - 1), values.length);
+  // Centres: index 0 is the fixed transparent level, 1…K are free.
+  const cen = [0];
+  const d2 = values.map((a) => a * a);
+  for (let c = 0; c < K; c++) {
+    let pick = -1,
+      best = -1;
+    for (let j = 0; j < values.length; j++) {
+      const score = hist[values[j]] * d2[j];
+      if (score > best) {
+        best = score;
+        pick = j;
+      }
+    }
+    if (best <= 0) break;
+    cen.push(values[pick]);
+    for (let j = 0; j < values.length; j++)
+      d2[j] = Math.min(d2[j], (values[j] - values[pick]) ** 2);
+  }
+  const nearest = (a: number) => {
+    let g = 0;
+    for (let c = 1; c < cen.length; c++) if (Math.abs(a - cen[c]) < Math.abs(a - cen[g])) g = c;
+    return g;
+  };
+  for (let iter = 0; iter < 30; iter++) {
+    const sw = new Float64Array(cen.length),
+      sa = new Float64Array(cen.length);
+    for (const a of values) {
+      const g = nearest(a);
+      sw[g] += hist[a];
+      sa[g] += hist[a] * a;
+    }
+    let moved = false;
+    for (let c = 1; c < cen.length; c++) {
+      if (!sw[c]) continue;
+      const m = sa[c] / sw[c];
+      if (Math.abs(m - cen[c]) > 1e-6) moved = true;
+      cen[c] = m;
+    }
+    if (!moved) break;
+  }
+  // Each free group's level, as for the colours: its most common alpha if it dominates, else the mean.
+  const tot = new Float64Array(cen.length),
+    sum = new Float64Array(cen.length),
+    top = new Int32Array(cen.length).fill(-1);
+  for (const a of values) {
+    const g = nearest(a);
+    tot[g] += hist[a];
+    sum[g] += hist[a] * a;
+    if (top[g] < 0 || hist[a] > hist[top[g]]) top[g] = a;
+  }
+  const level = cen.map((_, c) =>
+    c === 0 || !tot[c]
+      ? 0
+      : Math.round(hist[top[c]] >= DOMINANT * tot[c] ? top[c] : sum[c] / tot[c]),
+  );
+  const lut = new Uint8ClampedArray(256);
+  for (let a = 1; a < 256; a++) lut[a] = level[nearest(a)];
+  return lut;
 }
 
 // --- Gaussian blur ---
@@ -550,8 +624,13 @@ export function applyFilter(
     }
     case "posterize": {
       // Each pixel takes the palette colour nearest (in OKLab) to its 15-bit bin's centre — 32k
-      // bins at most, so a noisy layer costs no more than a flat one — and keeps its alpha.
+      // bins at most, so a noisy layer costs no more than a flat one. Its alpha is kept, or stepped
+      // (`alphaStepLut`) — never under alpha lock, which keeps the layer's alpha.
       const pal = posterizePalette(src.subarray(0, n), spec.colours);
+      const aLut =
+        spec.alphaSteps >= 2 && !alphaLock
+          ? alphaStepLut(src.subarray(0, n), spec.alphaSteps)
+          : null;
       const K = pal.length / 3;
       const palLab = new Float64Array(K * 3);
       for (let c = 0; c < K; c++) oklab(pal[c * 3], pal[c * 3 + 1], pal[c * 3 + 2], palLab, c * 3);
@@ -586,6 +665,7 @@ export function applyFilter(
         out[p] = pal[c];
         out[p + 1] = pal[c + 1];
         out[p + 2] = pal[c + 2];
+        if (aLut) out[p + 3] = aLut[src[p + 3]];
       }
       return;
     }
