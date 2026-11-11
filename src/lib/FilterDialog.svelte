@@ -1,10 +1,18 @@
 <script lang="ts">
-  // Filter ▸ Levels / Hue/Saturation / Posterize / Threshold / Halftone / Gaussian blur. Every change is previewed in the layers
+  // Filter ▸ every filter's settings. Every change is previewed in the layers
   // at once (App re-runs the filter from its snapshot, once a frame); OK keeps it as one undo step,
   // Cancel puts back what was there. As the text dialog: no dim, no cancel on an outside tap, and
   // no full-screen layer (App makes the rest `inert`).
   import { untrack } from "svelte";
-  import { BLUR_MAX, FILTER_TITLES, type FilterSpec, type Paper } from "../filters";
+  import {
+    BLUR_MAX,
+    FILTER_TITLES,
+    SHADOW_BLUR_MAX,
+    SHADOW_DISTANCE_MAX,
+    SHARPEN_MAX,
+    type FilterSpec,
+    type Paper,
+  } from "../filters";
   import { isConfirmEnter } from "./dialog-keys";
   import { sliderFill } from "./slider-fill";
 
@@ -145,6 +153,31 @@
   </label>
 {/snippet}
 
+{#snippet colour(
+  label: string,
+  title: string,
+  value: string,
+  set: (v: string) => void,
+  presets: { value: string; label: string }[] = [],
+)}
+  <div class={row} {title}>
+    <span class="w-20 shrink-0">{label}</span>
+    <input
+      type="color"
+      class="h-7 w-10 shrink-0 cursor-pointer rounded-md border border-border bg-surface-raised p-0.5"
+      aria-label={label}
+      {value}
+      oninput={(e) => set(e.currentTarget.value)}
+    />
+    {#each presets as p (p.value)}
+      <button class={seg(value.toLowerCase() === p.value)} onclick={() => set(p.value)}
+        >{p.label}</button
+      >
+    {/each}
+    <span class="ml-auto text-text-muted tabular-nums">{value}</span>
+  </div>
+{/snippet}
+
 {#snippet choice<T extends string>(
   label: string,
   items: { value: T; label: string; title: string }[],
@@ -238,7 +271,7 @@
       {@const s = spec}
       {@render slider(
         "Hue",
-        "Turn every colour round the colour wheel",
+        "Turn every colour round the colour wheel, each as light as it was",
         s.hue,
         -180,
         180,
@@ -247,7 +280,7 @@
       )}
       {@render slider(
         "Saturation",
-        "−100 is grey, +100 as vivid as it goes",
+        "−100 is grey (as light as the colour looks), +100 as vivid as the screen can show",
         s.saturation,
         -100,
         100,
@@ -296,6 +329,114 @@
       )}
       <p class="text-[11px] text-text-muted">
         Spreads into transparent parts too. With a selection, only inside it changes.
+      </p>
+    {:else if spec.kind === "colourToAlpha"}
+      {@const s = spec}
+      {@render colour(
+        "Colour",
+        "The colour to make transparent; mixes of it become see-through",
+        s.colour,
+        (v) => update({ colour: v }),
+        [
+          { value: "#ffffff", label: "White" },
+          { value: "#000000", label: "Black" },
+        ],
+      )}
+      <p class="text-[11px] text-text-muted">
+        Grey on white becomes see-through black, so a scanned sketch keeps its soft lines.
+        Alpha-locked layers are left out.
+      </p>
+    {:else if spec.kind === "sharpen"}
+      {@const s = spec}
+      {@render slider(
+        "Amount",
+        "How much the edges are pushed apart",
+        s.amount,
+        0,
+        500,
+        `${s.amount}%`,
+        (v) => update({ amount: v }),
+      )}
+      {@render slider(
+        "Radius",
+        "How wide an edge it works on, in document pixels",
+        Math.round(s.radius * 10),
+        3,
+        SHARPEN_MAX * 10,
+        `${s.radius} px`,
+        (v) => update({ radius: v / 10 }),
+      )}
+    {:else if spec.kind === "shadow"}
+      {@const s = spec}
+      {@render colour("Colour", "The shadow's colour", s.colour, (v) => update({ colour: v }))}
+      {@render slider(
+        "Opacity",
+        "How dark the shadow is",
+        s.opacity,
+        0,
+        100,
+        `${s.opacity}%`,
+        (v) => update({ opacity: v }),
+      )}
+      {@render slider(
+        "Distance",
+        "How far the shadow falls from the shape, in document pixels",
+        s.distance,
+        0,
+        SHADOW_DISTANCE_MAX,
+        `${s.distance} px`,
+        (v) => update({ distance: v }),
+      )}
+      {@render slider(
+        "Angle",
+        "Where the light comes from (120°: the upper left, the shadow falls down-right)",
+        s.angle,
+        0,
+        360,
+        `${s.angle}°`,
+        (v) => update({ angle: v }),
+      )}
+      {@render slider(
+        "Blur",
+        "How soft the shadow is, in document pixels",
+        s.blur,
+        0,
+        SHADOW_BLUR_MAX,
+        `${s.blur} px`,
+        (v) => update({ blur: v }),
+      )}
+    {:else if spec.kind === "glow"}
+      {@const s = spec}
+      {@render colour("Colour", "The glow's colour", s.colour, (v) => update({ colour: v }))}
+      {@render slider(
+        "Opacity",
+        "How strong the glow is",
+        s.opacity,
+        0,
+        100,
+        `${s.opacity}%`,
+        (v) => update({ opacity: v }),
+      )}
+      {@render slider(
+        "Size",
+        "How far the glow spreads out, in document pixels",
+        s.size,
+        1,
+        SHADOW_BLUR_MAX,
+        `${s.size} px`,
+        (v) => update({ size: v }),
+      )}
+      {@render slider(
+        "Spread",
+        "How far it stays solid before it fades",
+        s.spread,
+        0,
+        100,
+        `${s.spread}%`,
+        (v) => update({ spread: v }),
+      )}
+      <p class="text-[11px] text-text-muted">
+        Drawn behind the paint, so it shows round the shape — not on a filled Background.
       </p>
     {:else if spec.kind === "threshold"}
       {@const s = spec}

@@ -295,19 +295,27 @@
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
   // Adjustments (tone and colour), then a divider, then effects.
+  // Each runs on the active layer, or on the picked rows or every layer of the active group (as
+  // Move): the titles say "the layer" for short.
   const filters: { kind: FilterKind; title: string }[][] = [
     [
-      { kind: "levels", title: "Black point, white point and midtones of the active layer" },
-      { kind: "hueSat", title: "Shift the active layer's colours, saturation and lightness" },
-      { kind: "posterize", title: "Cut the active layer's colours down to a few flat steps" },
+      { kind: "levels", title: "Black point, white point and midtones of the layer" },
+      { kind: "hueSat", title: "Shift the layer's colours, saturation and lightness" },
+      { kind: "posterize", title: "Cut the layer's colours down to a few flat steps" },
+      { kind: "threshold", title: "Make the layer pure black ink (and white or transparent)" },
       {
-        kind: "threshold",
-        title: "Make the active layer pure black ink (and white or transparent)",
+        kind: "colourToAlpha",
+        title: "Make a colour transparent (white: a scanned sketch's paper), soft edges kept",
       },
     ],
     [
-      { kind: "halftone", title: "Turn the active layer's tones into dots or lines — screentone" },
-      { kind: "blur", title: "Soften the active layer (a Gaussian blur)" },
+      { kind: "blur", title: "Soften the layer (a Gaussian blur)" },
+      { kind: "sharpen", title: "Crisp up the layer's edges (unsharp mask)" },
+    ],
+    [
+      { kind: "halftone", title: "Turn the layer's tones into dots or lines — screentone" },
+      { kind: "shadow", title: "A soft shadow of the layer's shape behind it" },
+      { kind: "glow", title: "A glow round the layer's shape, behind it" },
     ],
   ];
   const dimmable =

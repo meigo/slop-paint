@@ -8,6 +8,9 @@ import {
   posterizePalette,
   alphaStepLut,
   filterShared,
+  colourToAlphaPixel,
+  shadowOffset,
+  filterMaxReach,
   dotRadius,
   halftoneCoverage,
   hueSatPixel,
@@ -76,16 +79,63 @@ describe("hueSatPixel", () => {
   it("leaves a colour alone at zero", () => {
     expect(px(200, 80, 30, 0, 0)).toEqual([200, 80, 30]);
   });
-  it("turns red to green at +120°", () => {
-    expect(px(255, 0, 0, 120, 0)).toEqual([0, 255, 0]);
+  /** OKLab lightness of an sRGB colour, 0–1 (for the tests: what the eye sees). */
+  const lightness = ([r, g, b]: number[]) => {
+    const lin = (v: number) => {
+      const c = v / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const [R, G, B] = [lin(r), lin(g), lin(b)];
+    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+    const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+    const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+    return 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  };
+  it("turns red toward green at +120°, as light as it was", () => {
+    const o = px(220, 40, 40, 120, 0);
+    expect(o[1]).toBeGreaterThan(o[0]);
+    expect(o[1]).toBeGreaterThan(o[2]);
+    expect(Math.abs(lightness(o) - lightness([220, 40, 40]))).toBeLessThan(0.01);
   });
-  it("−100 saturation gives a grey", () => {
-    const [r, g, b] = px(255, 0, 0, 0, -100);
-    expect(r).toBe(g);
-    expect(g).toBe(b);
+  it("−100 saturation gives the grey of how light the colour looks", () => {
+    for (const c of [
+      [255, 0, 0],
+      [200, 56, 96],
+      [70, 130, 213],
+      [139, 79, 139],
+    ]) {
+      const [r, g, b] = px(c[0], c[1], c[2], 0, -100);
+      expect(r).toBe(g);
+      expect(g).toBe(b);
+      expect(Math.abs(lightness([r, g, b]) - lightness(c))).toBeLessThan(0.005);
+    }
   });
-  it("+100 saturation doesn't colour a grey", () => {
+  it("−100 saturation keeps a red→blue blend smooth: no sudden step by the purple", () => {
+    // The user's case, sampled across the overlap. HSL jumped 109 → 122 → 132 over three samples
+    // (a dark valley with a light rim beside it). The gentle dip that is left is the blend's own:
+    // mixed in gamma-encoded sRGB, the purple is a little darker than either end.
+    const row = [
+      [200, 56, 96],
+      [189, 60, 103],
+      [175, 60, 113],
+      [159, 68, 125],
+      [139, 79, 139],
+      [121, 88, 155],
+      [105, 97, 167],
+      [90, 107, 182],
+    ].map((c) => px(c[0], c[1], c[2], 0, -100)[0]);
+    for (let i = 1; i < row.length; i++)
+      expect(Math.abs(row[i] - row[i - 1])).toBeLessThanOrEqual(6);
+  });
+  it("+100 saturation doesn't colour a grey, and makes a colour as vivid as it goes", () => {
     expect(px(128, 128, 128, 0, 100)).toEqual([128, 128, 128]);
+    const o = px(150, 110, 100, 0, 100);
+    expect(Math.max(...o) === 255 || Math.min(...o) === 0).toBe(true); // at the gamut's edge
+    expect(Math.abs(lightness(o) - lightness([150, 110, 100]))).toBeLessThan(0.01);
+  });
+  it("keeps every result inside sRGB with its lightness (a hue turn of a vivid colour)", () => {
+    const o = px(255, 255, 0, 180, 0); // yellow's opposite at yellow's lightness can't be as vivid
+    expect(Math.abs(lightness(o) - lightness([255, 255, 0]))).toBeLessThan(0.01);
   });
   it("lightness ±100 gives white / black", () => {
     expect(px(30, 90, 200, 0, 0, 100)).toEqual([255, 255, 255]);
@@ -374,5 +424,114 @@ describe("Gaussian blur", () => {
     for (let x = 0; x < w; x++) expect(out[x * 4 + 3]).toBe(src[x * 4 + 3]);
     expect(out[9 * 4]).toBeGreaterThan(0);
     expect(out[10 * 4]).toBeLessThan(255);
+  });
+});
+
+describe("colour to alpha", () => {
+  const WHITE = [255, 255, 255] as const;
+  it("turns grey on white into see-through black, and white into nothing", () => {
+    const o = [0, 0, 0, 0];
+    colourToAlphaPixel(128, 128, 128, WHITE, o);
+    expect(o.slice(0, 3)).toEqual([0, 0, 0]);
+    expect(o[3]).toBeCloseTo(127 / 255, 3);
+    colourToAlphaPixel(255, 255, 255, WHITE, o);
+    expect(o[3]).toBe(0);
+    colourToAlphaPixel(255, 0, 0, WHITE, o);
+    expect(o).toEqual([255, 0, 0, 1]);
+  });
+
+  it("looks the same over the removed colour as before", () => {
+    const key = [40, 200, 120] as const;
+    const o = [0, 0, 0, 0];
+    for (const px of [
+      [10, 20, 30],
+      [250, 128, 7],
+      [40, 200, 121],
+      [0, 255, 255],
+    ]) {
+      colourToAlphaPixel(px[0], px[1], px[2], key, o);
+      for (let i = 0; i < 3; i++)
+        expect(Math.abs(o[i] * o[3] + key[i] * (1 - o[3]) - px[i])).toBeLessThan(1.5);
+    }
+  });
+
+  it("scales by the pixel's own alpha, and keeps the alpha under alpha lock", () => {
+    const src = new Uint8ClampedArray([128, 128, 128, 200, 0, 0, 0, 0]);
+    const out = run(src, 2, 1, FILTER_DEFAULTS.colourToAlpha);
+    expect(Array.from(out.subarray(0, 4))).toEqual([0, 0, 0, Math.round((127 / 255) * 200)]);
+    expect(out[7]).toBe(0);
+    expect(run(src, 2, 1, FILTER_DEFAULTS.colourToAlpha, true)[3]).toBe(200);
+  });
+});
+
+describe("sharpen", () => {
+  const spec = { kind: "sharpen", amount: 100, radius: 1 } as const;
+  it("leaves a flat colour as it is, alpha included", () => {
+    const src = solid(20, 20, [90, 140, 200, 180]);
+    expect(run(src, 20, 20, spec)).toEqual(src);
+  });
+
+  it("raises the contrast across an edge", () => {
+    const w = 20;
+    const src = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < w; x++) src.set(x < 10 ? [60, 60, 60, 255] : [180, 180, 180, 255], x * 4);
+    const out = run(src, w, 1, spec);
+    expect(out[9 * 4]).toBeLessThan(60);
+    expect(out[10 * 4]).toBeGreaterThan(180);
+    expect(out[0]).toBe(60);
+  });
+
+  it("puts no dark halo along the edge of paint on transparency", () => {
+    const w = 20;
+    const src = new Uint8ClampedArray(w * 4);
+    for (let x = 0; x < 10; x++) src.set([220, 40, 40, 255], x * 4);
+    const out = run(src, w, 1, { ...spec, amount: 300 });
+    for (let x = 0; x < 10; x++)
+      expect(Array.from(out.subarray(x * 4, x * 4 + 4))).toEqual([220, 40, 40, 255]);
+  });
+});
+
+describe("drop shadow and glow", () => {
+  /** A 10×10 opaque red square in the middle of a transparent w×w area. */
+  function square(w: number) {
+    const d = new Uint8ClampedArray(w * w * 4);
+    for (let y = 0; y < w; y++)
+      for (let x = 0; x < w; x++)
+        if (x >= w / 2 - 5 && x < w / 2 + 5 && y >= w / 2 - 5 && y < w / 2 + 5)
+          d.set([200, 0, 0, 255], (y * w + x) * 4);
+    return d;
+  }
+  const alphaAt = (d: Uint8ClampedArray, w: number, x: number, y: number) => d[(y * w + x) * 4 + 3];
+
+  it("falls away from the light, behind the paint", () => {
+    const w = 60;
+    const spec = { ...FILTER_DEFAULTS.shadow, blur: 0, distance: 8, angle: 135, opacity: 100 };
+    const { dx, dy } = shadowOffset(spec);
+    expect(dx).toBeGreaterThan(0); // light from the upper left: down-right
+    expect(dy).toBeGreaterThan(0);
+    const out = run(square(w), w, w, spec);
+    expect(alphaAt(out, w, 30 + dx, 30 + dy)).toBe(255); // below-right of the square
+    expect(
+      Array.from(
+        out.subarray(((w / 2 + 6) * w + (w / 2 + 6)) * 4, ((w / 2 + 6) * w + (w / 2 + 6)) * 4 + 3),
+      ),
+    ).toEqual([0, 0, 0]);
+    expect(alphaAt(out, w, 30 - dx - 6, 30 - dy - 6)).toBe(0); // nothing up-left
+    expect(Array.from(out.subarray((30 * w + 30) * 4, (30 * w + 30) * 4 + 4))).toEqual([
+      200, 0, 0, 255,
+    ]);
+    expect(filterMaxReach("shadow")).toBeGreaterThanOrEqual(200);
+  });
+
+  it("glows evenly round the shape, more with spread", () => {
+    const w = 80;
+    const g = { ...FILTER_DEFAULTS.glow, size: 4, opacity: 100, spread: 0 };
+    const out = run(square(w), w, w, g);
+    const right = alphaAt(out, w, 40 + 8, 40),
+      left = alphaAt(out, w, 40 - 9, 40);
+    expect(right).toBeGreaterThan(0);
+    expect(Math.abs(right - left)).toBeLessThanOrEqual(1);
+    expect(alphaAt(run(square(w), w, w, { ...g, spread: 80 }), w, 48, 40)).toBeGreaterThan(right);
+    expect(alphaAt(run(square(w), w, w, g, true), w, 48, 40)).toBe(0); // alpha lock
   });
 });
