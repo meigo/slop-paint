@@ -1,7 +1,7 @@
 // One-off filters (Filter menu): pure per-pixel maths on unpremultiplied RGBA, as `getImageData`
 // gives it. App previews them into the layers and keeps the result as one undo step; nothing here
-// is live. Gaussian blur, Drop shadow and Glow spread paint into transparent pixels, up to
-// `filterReach` px, so App works on the ink's bounds grown by that; every other filter keeps a
+// is live. Gaussian blur, Drop shadow, Glow and Halftone's dots reach into transparent pixels, up
+// to `filterReach` px, so App works on the ink's bounds grown by that; every other filter keeps a
 // fully transparent pixel transparent.
 
 export type Paper = "transparent" | "white";
@@ -100,6 +100,8 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
 
 /** Gaussian blur's largest radius (σ), in document px. */
 export const BLUR_MAX = 64;
+/** Halftone's largest cell, in document px. */
+export const HALFTONE_CELL_MAX = 48;
 /** Sharpen's largest radius (σ), in document px. */
 export const SHARPEN_MAX = 10;
 /** Drop shadow's and Glow's largest blur (σ), and the shadow's largest distance, in document px. */
@@ -412,6 +414,9 @@ export function filterReach(spec: FilterSpec, dpr = 1): number {
     case "threshold":
     case "posterize":
       return spec.smooth ? EDGE_R + 1 : 0; // the cut's slope is read from pixels round it
+    case "halftone":
+      // Dots are sampled per cell and may reach past the paint by their radius: a cell round.
+      return spec.shape === "dots" ? Math.ceil(spec.cell * dpr) + 2 : 0;
     case "shadow": {
       const { dx, dy } = shadowOffset(spec, dpr);
       return blurPlan(spec.blur * dpr).reach + Math.max(Math.abs(dx), Math.abs(dy));
@@ -435,6 +440,8 @@ export function filterMaxReach(kind: FilterKind, dpr = 1): number {
     case "threshold":
     case "posterize":
       return EDGE_R + 1;
+    case "halftone":
+      return Math.ceil(HALFTONE_CELL_MAX * dpr) + 2;
     default:
       return 0;
   }
@@ -774,6 +781,189 @@ export function halftoneCoverage(
   const r = dotRadius(tone, cell);
   // Antialiased edge; a dot under a pixel across is drawn fainter, not as a half-grey pixel.
   return clamp01(r - d + 0.5) * Math.min(1, 2 * r);
+}
+
+/** One pixel of halftone output: ink (`r`, `g`, `b`) covering `c` of it, over transparent paper or
+ *  white at the pixel's own alpha `a` (0–255). Alpha lock: no more alpha than `a`. */
+function halftoneInk(
+  out: Uint8ClampedArray,
+  p: number,
+  r: number,
+  g: number,
+  b: number,
+  c: number,
+  a: number,
+  white: boolean,
+  alphaLock: boolean,
+) {
+  const pa = a / 255;
+  if (alphaLock) c = Math.min(c, pa);
+  if (white) {
+    // Solid ink over white paper at the layer's own alpha.
+    const oa = c + pa * (1 - c);
+    if (oa <= 0) {
+      out[p] = out[p + 1] = out[p + 2] = out[p + 3] = 0;
+      return;
+    }
+    const k = (1 - c) * pa * 255;
+    out[p] = Math.round((r * c + k) / oa);
+    out[p + 1] = Math.round((g * c + k) / oa);
+    out[p + 2] = Math.round((b * c + k) / oa);
+    out[p + 3] = Math.round(oa * 255);
+  } else {
+    out[p] = r;
+    out[p + 1] = g;
+    out[p + 2] = b;
+    out[p + 3] = Math.round(c * 255);
+  }
+}
+
+/**
+ * Halftone dots, ONE tone and ONE colour per dot (2026-11-11, the user's ask): each pixel adds its
+ * tone (darkness × alpha, as on white) and colour to the screen cell it lies in, and each cell then
+ * draws a round dot of that cell's mean tone (`dotRadius`) in its alpha-weighted mean colour. Per
+ * pixel, a dot over a change of tone came out half big, half small, and its colour shifted across
+ * it. A pixel is covered by the deepest of the four dots round it (dots past half tone overlap their
+ * neighbours). A dot may reach past the paint by its radius, as printed screens do; App's area grows
+ * by `filterReach`, so each cell is read whole.
+ */
+function halftoneDots(
+  src: Uint8ClampedArray,
+  out: Uint8ClampedArray,
+  w: number,
+  h: number,
+  ox: number,
+  oy: number,
+  cell: number,
+  cos: number,
+  sin: number,
+  black: boolean,
+  white: boolean,
+  alphaLock: boolean,
+) {
+  // Screen coordinates (in cells) of the area's corners: the lattice points it needs, plus one.
+  const uv = (x: number, y: number) => [(x * cos + y * sin) / cell, (-x * sin + y * cos) / cell];
+  let i0 = Infinity,
+    j0 = Infinity,
+    i1 = -Infinity,
+    j1 = -Infinity;
+  for (const [x, y] of [
+    [ox, oy],
+    [ox + w, oy],
+    [ox, oy + h],
+    [ox + w, oy + h],
+  ]) {
+    const [u, v] = uv(x, y);
+    i0 = Math.min(i0, Math.floor(u) - 1);
+    j0 = Math.min(j0, Math.floor(v) - 1);
+    i1 = Math.max(i1, Math.ceil(u) + 1);
+    j1 = Math.max(j1, Math.ceil(v) + 1);
+  }
+  const ni = i1 - i0 + 1,
+    nj = j1 - j0 + 1;
+  const nc = ni * nj;
+  // Per cell: pixel count, tone sum, alpha sum, and alpha-weighted colour sums.
+  const cnt = new Float32Array(nc),
+    tone = new Float32Array(nc),
+    al = new Float32Array(nc),
+    cr = new Float32Array(nc),
+    cg = new Float32Array(nc),
+    cb = new Float32Array(nc);
+  for (let y = 0, p = 0; y < h; y++) {
+    const py = oy + y + 0.5;
+    for (let x = 0; x < w; x++, p += 4) {
+      const px = ox + x + 0.5;
+      const k =
+        (Math.round((-px * sin + py * cos) / cell) - j0) * ni +
+        (Math.round((px * cos + py * sin) / cell) - i0);
+      cnt[k]++;
+      const a = src[p + 3];
+      if (!a) continue;
+      const r = src[p],
+        g = src[p + 1],
+        b = src[p + 2];
+      tone[k] += (1 - luma(r, g, b) / 255) * (a / 255);
+      al[k] += a;
+      cr[k] += r * a;
+      cg[k] += g * a;
+      cb[k] += b * a;
+    }
+  }
+  // Each cell's dot radius and colour, and whether the dot passes half a cell (overlaps).
+  const rad = new Float32Array(nc);
+  const big = new Uint8Array(nc);
+  for (let k = 0; k < nc; k++) {
+    if (!cnt[k] || !al[k]) continue;
+    rad[k] = dotRadius(tone[k] / cnt[k], cell);
+    big[k] = rad[k] + 0.5 > cell / 2 ? 1 : 0;
+    if (!black) {
+      cr[k] /= al[k];
+      cg[k] /= al[k];
+      cb[k] /= al[k];
+    }
+  }
+  for (let y = 0, p = 0; y < h; y++) {
+    const py = oy + y + 0.5;
+    for (let x = 0; x < w; x++, p += 4) {
+      const px = ox + x + 0.5;
+      const u = (px * cos + py * sin) / cell,
+        v = (-px * sin + py * cos) / cell;
+      const fu = Math.floor(u),
+        fv = Math.floor(v);
+      // The four lattice points round the pixel: the deepest dot covering it wins. Unless one of
+      // them is big enough to pass half a cell (and overlap), only the nearest can cover it.
+      const ka = (fv - j0) * ni + (fu - i0);
+      let c = 0,
+        best = -Infinity,
+        kb = -1;
+      if (big[ka] | big[ka + 1] | big[ka + ni] | big[ka + ni + 1]) {
+        for (let dj = 0; dj <= 1; dj++) {
+          for (let di = 0; di <= 1; di++) {
+            const k = ka + dj * ni + di;
+            const r = rad[k];
+            if (!r) continue;
+            const du = u - fu - di,
+              dv = v - fv - dj;
+            const d = Math.sqrt(du * du + dv * dv) * cell;
+            const cov = clamp01(r - d + 0.5) * Math.min(1, 2 * r);
+            if (cov > c) c = cov;
+            if (cov > 0 && r - d > best) {
+              best = r - d;
+              kb = k;
+            }
+          }
+        }
+      } else {
+        const di = u - fu < 0.5 ? 0 : 1,
+          dj = v - fv < 0.5 ? 0 : 1;
+        const k = ka + dj * ni + di;
+        const r = rad[k];
+        if (r) {
+          const du = u - fu - di,
+            dv = v - fv - dj;
+          const d = Math.sqrt(du * du + dv * dv) * cell;
+          c = clamp01(r - d + 0.5) * Math.min(1, 2 * r);
+          if (c > 0) kb = k;
+        }
+      }
+      const a = src[p + 3];
+      if (kb < 0) {
+        halftoneInk(out, p, 0, 0, 0, 0, a, white, alphaLock);
+        continue;
+      }
+      halftoneInk(
+        out,
+        p,
+        black ? 0 : Math.round(cr[kb]),
+        black ? 0 : Math.round(cg[kb]),
+        black ? 0 : Math.round(cb[kb]),
+        c,
+        a,
+        white,
+        alphaLock,
+      );
+    }
+  }
 }
 
 /** How far (px) round a pixel the smooth cut reads the field. A slow blend in 8 bits holds runs of
@@ -1272,6 +1462,10 @@ export function applyFilter(
         sin = Math.sin(rad);
       const white = spec.paper === "white",
         black = spec.ink === "black";
+      if (spec.shape === "dots") {
+        halftoneDots(src, out, w, h, ox, oy, cell, cos, sin, black, white, alphaLock);
+        return;
+      }
       for (let y = 0, p = 0; y < h; y++) {
         for (let x = 0; x < w; x++, p += 4) {
           const a = src[p + 3];
@@ -1283,29 +1477,11 @@ export function applyFilter(
             g = src[p + 1],
             b = src[p + 2];
           // The tone as the pixel looks on white: darkness × alpha, so soft or see-through
-          // shading (airbrush, a low-opacity stroke) becomes smaller dots, not faint ones. The
-          // dots themselves are solid.
+          // shading (airbrush, a low-opacity stroke) becomes thinner lines, not faint ones. The
+          // lines themselves are solid.
           const tone = (1 - luma(r, g, b) / 255) * (a / 255);
-          let c = halftoneCoverage(ox + x, oy + y, tone, cell, cos, sin, spec.shape);
-          const ir = black ? 0 : r,
-            ig = black ? 0 : g,
-            ib = black ? 0 : b;
-          if (white) {
-            // Solid ink over white paper at the layer's own alpha.
-            const pa = a / 255;
-            if (alphaLock) c = Math.min(c, pa);
-            const oa = c + pa * (1 - c);
-            const k = (1 - c) * pa * 255;
-            out[p] = Math.round((ir * c + k) / oa);
-            out[p + 1] = Math.round((ig * c + k) / oa);
-            out[p + 2] = Math.round((ib * c + k) / oa);
-            out[p + 3] = Math.round(oa * 255);
-          } else {
-            out[p] = ir;
-            out[p + 1] = ig;
-            out[p + 2] = ib;
-            out[p + 3] = Math.round((alphaLock ? Math.min(c, a / 255) : c) * 255);
-          }
+          const c = halftoneCoverage(ox + x, oy + y, tone, cell, cos, sin, "lines");
+          halftoneInk(out, p, black ? 0 : r, black ? 0 : g, black ? 0 : b, c, a, white, alphaLock);
         }
       }
       return;

@@ -196,16 +196,45 @@ describe("halftone", () => {
     expect(halftoneCoverage(3, 3, 0, 8, 1, 0, "dots")).toBe(0);
     expect(halftoneCoverage(3, 3, 1, 8, 1, 0, "dots")).toBe(1);
   });
-  it("turns a grey fill into black dots on transparent, cut to the shape", () => {
+  it("turns a grey fill into black dots on transparent; dots reach a cell past it at most", () => {
     const w = 64,
       h = 64;
     const src = solid(w, h, [128, 128, 128, 255]);
-    for (let p = 0; p < 64 * 4 * 8; p += 4) src[p + 3] = 0; // the top 8 rows are empty
+    const EMPTY = 16; // the top rows are empty
+    for (let p = 0; p < w * 4 * EMPTY; p += 4) src[p + 3] = 0;
     const out = run(src, w, h, { ...FILTER_DEFAULTS.halftone, cell: 6 });
-    for (let p = 0; p < 64 * 4 * 8; p += 4) expect(out[p + 3]).toBe(0);
+    for (let p = 0; p < w * 4 * (EMPTY - 7); p += 4) expect(out[p + 3]).toBe(0);
     expect(mean(out, 0)).toBe(0);
-    const painted = out.subarray(64 * 4 * 8);
+    const painted = out.subarray(w * 4 * (EMPTY + 8));
     expect(mean(painted, 3) / 255).toBeCloseTo(1 - 128 / 255, 1);
+  });
+  it("draws each dot round and in one colour, even over a change of tone and colour", () => {
+    // Left of x = 34 a dark red, right of it a light blue: the step runs through the dots of the
+    // column of cells round x = 32 (angle 0, cell 8: dot centres at multiples of 8).
+    const w = 64,
+      h = 64,
+      cell = 8;
+    const src = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++)
+        src.set(x < 34 ? [150, 20, 20, 255] : [120, 170, 240, 255], (y * w + x) * 4);
+    const spec = { ...FILTER_DEFAULTS.halftone, cell, angle: 0, ink: "colour" } as const;
+    const out = run(src, w, h, spec);
+    const at = (x: number, y: number) =>
+      Array.from(out.subarray((y * w + x) * 4, (y * w + x) * 4 + 4));
+    const cx = 32,
+      cy = 32; // a dot centre, between pixels 31 and 32
+    for (let d = 0; d < 4; d++) {
+      // round: the same coverage either side of the centre, across and along the step
+      expect(at(cx + d, cy)[3]).toBe(at(cx - 1 - d, cy)[3]);
+      expect(at(cx, cy + d)[3]).toBe(at(cx, cy - 1 - d)[3]);
+    }
+    // flat: every solid pixel of that dot has the same colour
+    const colours = new Set<string>();
+    for (let y = cy - 3; y < cy + 3; y++)
+      for (let x = cx - 3; x < cx + 3; x++)
+        if (at(x, y)[3] === 255) colours.add(at(x, y).slice(0, 3).join());
+    expect(colours.size).toBe(1);
   });
   it("white paper keeps alpha and mixes ink with white", () => {
     const src = solid(32, 32, [128, 128, 128, 255]);
@@ -398,11 +427,13 @@ describe("Gaussian blur", () => {
     expect(blurPlan(0.1).kind).toBe("none");
     expect(filterReach({ kind: "blur", radius: 0.1 })).toBe(0);
   });
-  it("reaches as far as its kernel or boxes do, at the layer's density; other filters reach nothing", () => {
+  it("reaches as far as its kernel or boxes do, at the layer's density; others little or nothing", () => {
     expect(filterReach({ kind: "blur", radius: 2 })).toBe(6);
     expect(filterReach({ kind: "blur", radius: 1 }, 2)).toBe(6);
     expect(filterReach({ kind: "blur", radius: 10 })).toBeGreaterThanOrEqual(28);
-    expect(filterReach(FILTER_DEFAULTS.halftone)).toBe(0);
+    expect(filterReach(FILTER_DEFAULTS.halftone)).toBe(10); // dots: a cell (8) + 2
+    expect(filterReach({ ...FILTER_DEFAULTS.halftone, shape: "lines" })).toBe(0);
+    expect(filterReach(FILTER_DEFAULTS.levels)).toBe(0);
   });
   it("blurs paint into transparency without darkening its colour", () => {
     const w = 40,

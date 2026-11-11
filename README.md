@@ -75,7 +75,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   **Threshold…** (pure black ink; the rest transparent or white; Edges: Smooth or Hard), **Halftone…** (screentone:
   dots or lines, cell size and angle, black or the layer's own colour, on transparent or white —
   darker parts get bigger dots — see-through shading counts as lighter, so a soft airbrush
-  fades into smaller dots — and the screen lines up across layers),
+  fades into smaller dots — each dot round and in one colour, and the screen lines up across
+  layers),
   **Gaussian blur…** (radius 0.2–64 px; it spreads into transparent parts too)
 - **Colour to alpha…** makes a colour transparent — white by default, so a scanned or photographed
   sketch's paper goes and its grey lines become see-through black, soft edges kept (alpha-locked
