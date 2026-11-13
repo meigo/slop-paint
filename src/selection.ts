@@ -788,6 +788,16 @@ export class Selection {
    * Coords are CSS pixels — caller's ctx must already have its dpr transform set.
    * Only meaningful in 'selected' state; returns true if a clip was applied.
    */
+  /** The marquee's shape as a path (doc units), to clip by later whatever happens to the marquee
+   *  meanwhile; null with no marquee. */
+  clipPath(): Path2D | null {
+    if (this.state !== "selected" || !this.rect) return null;
+    if (this.lassoPath) return new Path2D(this.lassoPath);
+    const p = new Path2D();
+    p.rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+    return p;
+  }
+
   applyClip(ctx: CanvasRenderingContext2D): boolean {
     if (this.state !== "selected" || !this.rect) return false;
     if (this.lassoPath) {

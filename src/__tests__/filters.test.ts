@@ -12,6 +12,13 @@ import {
   shadowOffset,
   filterMaxReach,
   fieldShare,
+  filterRect,
+  sameRect,
+  BLUR_MAX,
+  SHARPEN_MAX,
+  SHADOW_BLUR_MAX,
+  SHADOW_DISTANCE_MAX,
+  HALFTONE_CELL_MAX,
   edgeBand,
   dotRadius,
   halftoneCoverage,
@@ -690,5 +697,75 @@ describe("smooth edges (Threshold, Posterize)", () => {
     expect(between.length).toBeGreaterThan(0);
     expect(between.length).toBeLessThanOrEqual(2);
     for (let x = 26; x < w; x++) expect(a[x]).toBe(0);
+  });
+});
+
+describe("filterRect / filterMaxReach (the region App snapshots)", () => {
+  const ink = { x: 10, y: 20, w: 30, h: 40 };
+
+  it("grows the ink's bounds by the reach, inside the layer", () => {
+    expect(filterRect(ink, null, 100, 100, 5)).toEqual({ x: 5, y: 15, w: 40, h: 50 });
+    expect(filterRect(ink, null, 42, 62, 5)).toEqual({ x: 5, y: 15, w: 37, h: 47 });
+    expect(filterRect(ink, null, 100, 100, 50)).toEqual({ x: 0, y: 0, w: 90, h: 100 });
+  });
+
+  it("cuts to the marquee grown by the reach too", () => {
+    const marquee = { x: 30, y: 0, w: 5, h: 100 };
+    expect(filterRect(ink, marquee, 100, 100, 0)).toEqual({ x: 30, y: 20, w: 5, h: 40 });
+    expect(filterRect(ink, marquee, 100, 100, 3)).toEqual({ x: 27, y: 17, w: 11, h: 46 });
+  });
+
+  it("is null when the marquee misses the ink by more than the reach", () => {
+    const marquee = { x: 60, y: 0, w: 5, h: 100 };
+    expect(filterRect(ink, marquee, 100, 100, 10)).toBeNull();
+    expect(filterRect(ink, marquee, 100, 100, 21)).not.toBeNull();
+  });
+
+  it("sameRect compares by value", () => {
+    expect(sameRect({ x: 1, y: 2, w: 3, h: 4 }, { x: 1, y: 2, w: 3, h: 4 })).toBe(true);
+    expect(sameRect({ x: 1, y: 2, w: 3, h: 4 }, { x: 1, y: 2, w: 3, h: 5 })).toBe(false);
+    expect(sameRect(null, null)).toBe(true);
+    expect(sameRect(null, { x: 0, y: 0, w: 1, h: 1 })).toBe(false);
+  });
+
+  // Every setting the dialog offers stays within the max reach, so the work area never leaves the
+  // snapshot taken at open (a reach past it read and restored the wrong pixels, silently).
+  it("no setting reaches past filterMaxReach", () => {
+    const steps = (lo: number, hi: number, n = 60) =>
+      Array.from({ length: n + 1 }, (_, i) => lo + ((hi - lo) * i) / n);
+    for (const dpr of [1, 2]) {
+      const max = (k: FilterSpec["kind"]) => filterMaxReach(k, dpr);
+      for (const radius of steps(0.2, BLUR_MAX))
+        expect(filterReach({ kind: "blur", radius }, dpr)).toBeLessThanOrEqual(max("blur"));
+      for (const radius of steps(0.3, SHARPEN_MAX))
+        expect(filterReach({ ...FILTER_DEFAULTS.sharpen, radius }, dpr)).toBeLessThanOrEqual(
+          max("sharpen"),
+        );
+      for (const size of steps(0, SHADOW_BLUR_MAX))
+        expect(filterReach({ ...FILTER_DEFAULTS.glow, size }, dpr)).toBeLessThanOrEqual(
+          max("glow"),
+        );
+      for (const blur of steps(0, SHADOW_BLUR_MAX, 16))
+        for (const distance of steps(0, SHADOW_DISTANCE_MAX, 16))
+          for (const angle of steps(-180, 180, 24))
+            expect(
+              filterReach({ ...FILTER_DEFAULTS.shadow, blur, distance, angle }, dpr),
+            ).toBeLessThanOrEqual(max("shadow"));
+      for (const cell of steps(2, HALFTONE_CELL_MAX))
+        for (const shape of ["dots", "lines"] as const)
+          expect(
+            filterReach({ ...FILTER_DEFAULTS.halftone, cell, shape }, dpr),
+          ).toBeLessThanOrEqual(max("halftone"));
+      for (const smooth of [true, false]) {
+        expect(filterReach({ ...FILTER_DEFAULTS.threshold, smooth }, dpr)).toBeLessThanOrEqual(
+          max("threshold"),
+        );
+        expect(filterReach({ ...FILTER_DEFAULTS.posterize, smooth }, dpr)).toBeLessThanOrEqual(
+          max("posterize"),
+        );
+      }
+      for (const k of ["levels", "hueSat", "colourToAlpha"] as const)
+        expect(filterReach(FILTER_DEFAULTS[k], dpr)).toBe(max(k));
+    }
   });
 });

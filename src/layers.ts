@@ -2,7 +2,7 @@ import { deviceRect, type Box, type PxRect } from "./dirty-rect";
 import { isParallelogram, matrixFromCorners, type Corners } from "./ref-placement";
 import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
-import { drawTinted } from "./tint";
+import { drawTinted, fillTint } from "./tint";
 import { halvingSteps } from "./resize";
 
 /** Whether `c` got its memory: an iPad refuses a canvas over its limit WITHOUT an error, and it
@@ -1318,13 +1318,7 @@ export class LayerManager {
             ps.height = rh;
             const pc = ps.getContext("2d")!;
             pc.putImageData(node.ctx.getImageData(x, y, rw, rh), 0, 0);
-            if (node.tint) {
-              pc.save();
-              pc.globalCompositeOperation = "source-in";
-              pc.fillStyle = node.tint;
-              pc.fillRect(0, 0, rw, rh);
-              pc.restore();
-            }
+            if (node.tint) fillTint(pc, rw, rh, node.tint);
             ctx.drawImage(ps, x, y);
             continue;
           }

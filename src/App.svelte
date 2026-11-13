@@ -62,8 +62,10 @@
     applyFilter,
     filterMaxReach,
     filterReach,
+    filterRect,
     filterShared,
     lumaHistogram,
+    sameRect,
     releaseFilterBuffers,
     type FilterKind,
     type FilterSpec,
@@ -80,6 +82,7 @@
   import { clampGap } from "./fill-holes";
   import {
     alphaBounds,
+    stripBounds,
     bleedColor,
     buildNoisePlanes,
     localDepth,
@@ -355,7 +358,7 @@
       layers.setLiveLayer(null);
       layers.composite();
     } else {
-      layers.composite(strokeArea); // while it is still the live layer: its part is read, not copied
+      layers.composite(strokeArea); // a part: each layer's part is read, tinted or not
       layers.setLiveLayer(null);
     }
   }
@@ -782,10 +785,9 @@
     if (layer.ref) return false;
     if (layers.isLocked(layer)) return (flashStatus("Layer is locked"), false);
     if (layers.isHidden(layer)) return (flashStatus("Layer is hidden"), false);
-    const { width, height } = layer.canvas;
-    const b = alphaBounds(layer.ctx.getImageData(0, 0, width, height).data, width, height);
+    const b = inkBounds(layer);
     if (!b) return (flashStatus("The layer is empty — nothing to transform"), false);
-    const s = width / app.docWidth; // layer px per doc unit (the pixel ratio)
+    const s = layer.canvas.width / app.docWidth; // layer px per doc unit (the pixel ratio)
     const x = Math.floor(b.x / s);
     const y = Math.floor(b.y / s);
     selection.selectRect({
@@ -1190,13 +1192,17 @@
       // `readPsd` parses the whole file before `loadPsd` touches the layers, so a damaged file
       // fails here with the open document unchanged.
       endGesture(); // a press still down finishes on the old document, not the new one
-      // A dialog opened while the file was read or decoded works on the layers this replaces.
-      if (filterDialog) cancelFilter();
-      if (textDialog) cancelText();
+      // A dialog opened while the file was read or decoded works on the layers this replaces: it
+      // is cancelled once the file has loaded, just before the swap — a file that fails to load
+      // leaves the dialog and its work alone.
+      const closeDialogs = () => {
+        if (filterDialog) cancelFilter();
+        if (textDialog) cancelText();
+      };
       try {
         size = image
-          ? loadImageDocument(image, layers)
-          : loadPsd(buffer, layers, docDpr(), bumpLayerVersion, refDecodeFailed);
+          ? loadImageDocument(image, layers, closeDialogs)
+          : loadPsd(buffer, layers, docDpr(), bumpLayerVersion, refDecodeFailed, closeDialogs);
       } catch (e) {
         failed(e);
         return;
@@ -1326,8 +1332,7 @@
     for (const id of moveTargets().ids) {
       const layer = layers.findLayer(id);
       if (!layer) continue;
-      const { width: w, height: h } = layer.canvas;
-      const b = alphaBounds(layer.ctx.getImageData(0, 0, w, h).data, w, h);
+      const b = inkBounds(layer);
       if (!b) continue;
       x0 = Math.min(x0, b.x);
       y0 = Math.min(y0, b.y);
@@ -2688,7 +2693,8 @@
     if (!autosaveReady || !autosaveDirty || !layers) return;
     // The text dialog previews into its layer with no undo step until OK, and an empty text
     // previews an empty layer: the guard took that for a blanking (its dialog opened under the
-    // text one). Saved once it closes — OK and Cancel both re-draw, which schedules the save.
+    // text one). Saved once it closes — the text dialog's OK and Cancel bump the layer version,
+    // which schedules the save; the filter dialog's close re-arms it (`endFilter`).
     if (textDialog || filterDialog) return; // (the filter dialog previews the same way)
     // Paused over blank layers (the dialog closed without a choice): say so again at each save it
     // skips — a later status message had wiped the first notice, and work went unsaved silently.
@@ -3135,9 +3141,17 @@
     deleteSelection();
   }
 
+  /** The Filter and text dialogs preview INTO the layers with no undo step until OK. A paste or
+   *  import is async (a fetched image URL, a decode) and can land while one is open: its snapshot
+   *  would hold the preview (a cancelled filter came back with the paste's Cancel) and it cleared
+   *  the marquee the filter clips to. It is dropped instead, with this message. */
+  const previewDialogOpen = () => !!(filterDialog || textDialog);
+  const PASTE_IN_DIALOG = "Not pasted — close the dialog first, then paste again";
+
   /** Float `pixels` at `rect` on the active layer with transform handles; Enter/Esc resolves it. */
   function startPasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect): boolean {
     if (!selection || !layers) return false;
+    if (previewDialogOpen()) return (flashStatus(PASTE_IN_DIALOG), false);
     const why = paintBlock(layers.active);
     if (why) return (flashStatus(why), false);
     if (layers.active.ref) {
@@ -3219,6 +3233,7 @@
    */
   function importReference(src: RefSource, fileName?: string) {
     if (!layers || !selection) return;
+    if (previewDialogOpen()) return flashStatus(PASTE_IN_DIALOG);
     if (outlineActive()) cancelOutline();
     if (selection.hasFloating) selection.commit(); // a float belongs to the layer it came from
     const rect = placeExternalImage(src.width, src.height, app.docWidth, app.docHeight);
@@ -3264,6 +3279,8 @@
   let filterRun: {
     parts: FilterPart[];
     marquee: PxRect | null; // the marquee's box, device px
+    clip: Path2D | null; // the marquee's shape (doc units), taken at open like `marquee`
+    shown: string; // the spec the layers show now (JSON), so OK needn't run the same one again
     out: Uint8ClampedArray<ArrayBuffer>; // the filter's output, shared by the parts (grown as needed)
     scratch: HTMLCanvasElement | null; // for a marquee's clipped write (putImageData ignores clips)
   } | null = null;
@@ -3337,8 +3354,7 @@
     for (const layer of targets.layers) {
       const cw = layer.canvas.width,
         ch = layer.canvas.height;
-      // The ink's bounds from strips (a whole-layer read per layer piled up gigabytes on a big
-      // group before the collector caught up — 2026-11-11 review), then only the region is read.
+      // The ink's bounds from strips, then only the region is read.
       const ink = inkBounds(layer);
       if (!ink) continue;
       inked++;
@@ -3352,7 +3368,7 @@
         base,
         before,
         rect,
-        src: rect ? cropImage(before, base, rect) : null,
+        src: rect && cutFrom(before, base, rect),
       });
     }
     if (parts.length === 0 || !parts.some((p) => p.rect)) {
@@ -3363,7 +3379,14 @@
           : `Nothing to apply ${title} to — ${what} empty`,
       );
     }
-    filterRun = { parts, marquee, out: new Uint8ClampedArray(0), scratch: null };
+    filterRun = {
+      parts,
+      marquee,
+      clip: marquee ? selection!.clipPath() : null,
+      shown: "",
+      out: new Uint8ClampedArray(0),
+      scratch: null,
+    };
     filterSpec = initial;
     let histogram: Float64Array | null = null;
     if (kind === "levels") {
@@ -3381,58 +3404,26 @@
     filterDialog = { initial, histogram, scope };
   }
 
-  /** Where a filter reaching `reach` px can change anything: the ink's bounds grown by the reach,
-   *  inside the layer, and with a marquee its box grown by the reach too (the blur reads paint just
-   *  outside the marquee; the write is clipped to it). Null when that is empty. */
-  function filterRect(
-    ink: PxRect,
-    marquee: PxRect | null,
-    cw: number,
-    ch: number,
-    reach: number,
-  ): PxRect | null {
-    let x0 = Math.max(0, ink.x - reach),
-      y0 = Math.max(0, ink.y - reach),
-      x1 = Math.min(cw, ink.x + ink.w + reach),
-      y1 = Math.min(ch, ink.y + ink.h + reach);
-    if (marquee) {
-      x0 = Math.max(x0, marquee.x - reach);
-      y0 = Math.max(y0, marquee.y - reach);
-      x1 = Math.min(x1, marquee.x + marquee.w + reach);
-      y1 = Math.min(y1, marquee.y + marquee.h + reach);
-    }
-    return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
-  }
-
   /** `r` (layer px) cut out of `img`, whose top left lies at `at` on the layer. */
   function cropImage(img: ImageData, at: { x: number; y: number }, r: PxRect): ImageData {
     const local = { x: r.x - at.x, y: r.y - at.y, w: r.w, h: r.h };
     return new ImageData(cropPixels(img.data, img.width, local), r.w, r.h);
   }
 
-  /** A layer's painted bounds (canvas px), read in strips of rows, never whole. */
-  function inkBounds(layer: Layer): PxRect | null {
-    const w = layer.canvas.width,
-      h = layer.canvas.height;
-    const STRIP = 256;
-    let x0 = Infinity,
-      y0 = Infinity,
-      x1 = -Infinity,
-      y1 = -Infinity;
-    for (let y = 0; y < h; y += STRIP) {
-      const sh = Math.min(STRIP, h - y);
-      const b = alphaBounds(layer.ctx.getImageData(0, y, w, sh).data, w, sh);
-      if (!b) continue;
-      x0 = Math.min(x0, b.x);
-      x1 = Math.max(x1, b.x + b.w);
-      y0 = Math.min(y0, y + b.y);
-      y1 = Math.max(y1, y + b.y + b.h);
-    }
-    return x0 < x1 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
-  }
+  /** `before` (whose top left is `base`) cut to `rect`, or `before` itself when they are the same
+   *  area — always so for a filter of a fixed reach — rather than a second copy of it (only read). */
+  const cutFrom = (before: ImageData, base: PxRect, rect: PxRect) =>
+    sameRect(base, rect) ? before : cropImage(before, base, rect);
 
-  const sameRect = (a: PxRect | null, b: PxRect | null) =>
-    a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+  /** A layer's painted bounds (canvas px), read in strips of rows, never whole (`stripBounds`). */
+  function inkBounds(layer: Layer): PxRect | null {
+    const w = layer.canvas.width;
+    return stripBounds(
+      (y, rows) => layer.ctx.getImageData(0, y, w, rows).data,
+      w,
+      layer.canvas.height,
+    );
+  }
 
   /** Coalesced to one animation frame: a slider fires an input per pointer event. */
   function scheduleFilterPreview() {
@@ -3475,8 +3466,9 @@
         touch(was);
       }
       part.rect = want;
-      part.src = want ? cropImage(part.before, part.base, want) : null;
+      part.src = want && cutFrom(part.before, part.base, want);
     }
+    run.shown = JSON.stringify(spec);
     const live = run.parts.filter((p) => p.rect && p.src);
     const shared = filterShared(
       spec,
@@ -3490,7 +3482,9 @@
       const out = new ImageData(new Uint8ClampedArray(run.out.buffer, 0, n), r.w, r.h);
       applyFilter(src.data, out.data, r.w, r.h, r.x, r.y, spec, dpr, part.layer.alphaLock, shared);
       const ctx = part.layer.ctx;
-      if (selection?.state === "selected") {
+      // The marquee as it was at open (`run.clip`), like the areas worked out from it: the live
+      // one could have gone or changed since, and a write without the clip spread past it.
+      if (run.clip) {
         // As Outline: outside the marquee nothing changes, inside the result REPLACES the art in
         // one `copy` (the region holds all the ink there, so what `copy` clears beyond it was
         // empty).
@@ -3503,7 +3497,7 @@
         sc.getContext("2d")!.putImageData(out, 0, 0);
         ctx.save();
         try {
-          selection.applyClip(ctx);
+          ctx.clip(run.clip);
           ctx.globalCompositeOperation = "copy";
           ctx.drawImage(sc, r.x / dpr, r.y / dpr, r.w / dpr, r.h / dpr);
         } finally {
@@ -3534,13 +3528,21 @@
     filterRun = null;
     filterSpec = null;
     releaseFilterBuffers();
+    // A save skipped while the dialog was open isn't owed to any version bump: Cancel and an OK
+    // that changed nothing bump none, and the skipped change went unsaved until the next edit.
+    if (autosaveDirty) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(autosaveWhenQuiet, 3000);
+    }
   }
 
   function confirmFilter(spec: FilterSpec) {
     const run = filterRun;
     if (!run || !layers) return endFilter();
     filterSpec = spec;
-    refreshFilterPreview(); // the last change may still be waiting for its frame
+    // The last change may still be waiting for its frame; a preview already showing this spec
+    // isn't run again (Sharpen on several large layers took seconds more for the same pixels).
+    if (filterRaf || run.shown !== JSON.stringify(spec)) refreshFilterPreview();
     lastFilterSpecs[spec.kind] = spec;
     endFilter();
     const parts = run.parts.map((p) => ({ layer: p.layer, rect: p.base, before: p.before }));

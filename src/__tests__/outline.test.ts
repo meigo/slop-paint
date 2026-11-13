@@ -8,6 +8,7 @@ import {
   localDepth,
   bleedColor,
   alphaBounds,
+  stripBounds,
   MAX_THICKNESS,
 } from "../outline";
 import { erodeMask } from "../mask-ops";
@@ -335,5 +336,22 @@ describe("alphaBounds", () => {
     rgba[(1 * w + 2) * 4 + 3] = 255;
     rgba[(3 * w + 4) * 4 + 3] = 1;
     expect(alphaBounds(rgba, w, h)).toEqual({ x: 2, y: 1, w: 3, h: 3 });
+  });
+});
+
+describe("stripBounds", () => {
+  it("matches alphaBounds of the whole image, read a few rows at a time", () => {
+    const w = 7,
+      h = 11;
+    const img = new Uint8ClampedArray(w * h * 4);
+    const ink = (x: number, y: number) => (img[(y * w + x) * 4 + 3] = 9);
+    const read = (y: number, rows: number) => img.subarray(y * w * 4, (y + rows) * w * 4);
+    expect(stripBounds(read, w, h, 3)).toBeNull();
+    ink(4, 2); // strip 0
+    ink(1, 7); // strip 2
+    ink(6, 10); // the last, short strip
+    for (const strip of [1, 3, 4, 256])
+      expect(stripBounds(read, w, h, strip)).toEqual(alphaBounds(img, w, h));
+    expect(stripBounds(read, w, h, 3)).toEqual({ x: 1, y: 2, w: 6, h: 9 });
   });
 });
