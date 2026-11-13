@@ -50,6 +50,7 @@
     fontKey,
     fontLabel,
     refitCorners,
+    refitToLayout,
     textLayerName,
     type TextSpec,
   } from "./text-layout";
@@ -3568,7 +3569,11 @@
   // lines to letter over. The dialog previews every change on the canvas; OK is one undo step
   // (adding: the new layer; editing: the placement swap, as a transform is), Cancel puts back what
   // was there.
-  let textDialog = $state<{ adding: boolean; initial: TextSpec } | null>(null);
+  // `pending`: not showing, but still the open dialog for everything that asks (the workspace is
+  // inert, shortcuts, pastes and autosave wait) — while a new text's first font loads, and while
+  // OK's last preview does. With it closed across those waits, an undo, an Open or a second edit
+  // got in between and the step was recorded over whatever they left.
+  let textDialog = $state<{ adding: boolean; initial: TextSpec; pending?: boolean } | null>(null);
   /** The layer being previewed, what to put back on Cancel (`beforeTree` when it is new). */
   let textEdit: {
     layer: Layer;
@@ -3590,7 +3595,7 @@
       const f = await addFontFile(file);
       refreshFontList();
       const face = { font: f.family, weight: f.weight, italic: f.italic };
-      const woke = await refreshTextFonts();
+      const woke = await refreshTextFonts(fontKey(face));
       flashStatus(
         `Added ${fontLabel(face)}` +
           (woke
@@ -3643,28 +3648,47 @@
   }
 
   /**
-   * Rebuild every text layer whose font was missing and now isn't (it was just added). Their
-   * sources are updated in place — duplicates share one, and undo holds the same object — and
-   * drawn from their settings again. Returns how many sources came back.
+   * Rebuild every text layer whose font was missing and now isn't (it was just added), and every
+   * one drawn in the face `added` (a file that replaced it in the library: the layer drew the new
+   * letters in the old one's box). Each gets a NEW source, shared by its duplicates as the old one
+   * was, at corners refitted to the new layout's box as an edit's are (`refitToLayout`): the old
+   * box was measured in a stand-in font or the replaced file, and the new layout was stretched
+   * into it. The old source isn't touched — a placement undo holds still draws as it did. The
+   * open dialog's Cancel placement is rebuilt too, or Cancel put the missing-font look back.
+   * Returns how many missing sources came back.
    */
-  async function refreshTextFonts(): Promise<number> {
+  async function refreshTextFonts(added?: string): Promise<number> {
     if (!layers) return 0;
-    const waiting = new Set<RefSource>();
-    for (const l of layers.flatLayers()) if (l.ref?.src.text?.fontMissing) waiting.add(l.ref.src);
+    const stale = new Set<RefSource>();
+    const check = (src: RefSource | undefined) => {
+      const text = src?.text;
+      if (text && (text.fontMissing || fontKey(text.spec) === added)) stale.add(src!);
+    };
+    for (const l of layers.flatLayers()) check(l.ref?.src);
+    check(textEdit?.before?.src);
+    const rebuilt = new Map<RefSource, RefSource>();
     let woke = 0;
-    for (const src of waiting) {
+    for (const src of stale) {
       const text = src.text!;
       if ((await fontSource(text.spec)) === "missing") continue;
-      const fresh = await buildTextSource(text.spec, src.id);
-      src.image = fresh.image;
-      src.text = fresh.text;
-      src.bytes = fresh.bytes;
-      src.width = fresh.width;
-      src.height = fresh.height;
-      woke++;
+      rebuilt.set(src, await buildTextSource(text.spec, src.id));
+      if (text.fontMissing) woke++;
     }
-    if (!woke) return 0;
-    for (const l of layers.flatLayers()) if (l.ref && waiting.has(l.ref.src)) layers.renderRef(l);
+    if (!rebuilt.size) return 0;
+    // The placements as they are NOW: a preview may have landed during the waits above.
+    const refreshed = (ref: RefPlacement | undefined): RefPlacement | undefined => {
+      const src = ref && rebuilt.get(ref.src);
+      if (!ref || !src) return undefined;
+      const { spec, layout } = src.text!;
+      return { src, corners: refitToLayout(ref.corners, ref.src.text!.layout, layout, spec.align) };
+    };
+    for (const l of layers.flatLayers()) {
+      const ref = refreshed(l.ref);
+      if (!ref) continue;
+      l.ref = ref;
+      layers.renderRef(l);
+    }
+    if (textEdit) textEdit.before = refreshed(textEdit.before) ?? textEdit.before;
     layers.composite();
     bumpLayerVersion();
     return woke;
@@ -3673,28 +3697,34 @@
   /** A new text starts with the last one's look (session only). */
   let lastTextSpec: TextSpec = { ...DEFAULT_TEXT_SPEC };
 
-  /** Set while the first font loads, so a second tap can't add a second layer. */
-  let textAdding = false;
-
   /** Add an empty text layer below the active one, centred on the page, and open the dialog. */
   async function addText() {
-    if (!layers || !selection || textDialog || textAdding) return;
+    if (!layers || !selection || textDialog) return;
     if (outlineActive()) cancelOutline();
     if (selection.hasFloating) selection.commit(); // a float belongs to the layer it came from
     const spec = { ...lastTextSpec, text: "" };
-    textAdding = true;
-    const src = await buildTextSource(spec).finally(() => (textAdding = false));
-    const { layout } = src.text!;
-    const beforeTree = layers.captureStructure();
-    const layer = layers.addLayerBelow(textLayerName(""));
-    layer.opacity = REFERENCE_OPACITY;
-    const rect = placeExternalImage(layout.width, layout.height, app.docWidth, app.docHeight);
-    layer.ref = { src, corners: cornersFromRect(rect) };
-    layers.renderRef(layer);
-    layers.composite();
-    bumpLayerVersion();
-    textEdit = { layer, before: undefined, beforeTree };
-    textDialog = { adding: true, initial: spec };
+    // The dialog counts as open while the first font loads (`pending`): a second tap can't add a
+    // second layer, and nothing else changes the document meanwhile.
+    const n = ++textSeq;
+    textDialog = { adding: true, initial: spec, pending: true };
+    try {
+      const src = await buildTextSource(spec);
+      if (n !== textSeq) return; // cancelled meanwhile (an opened file arrived)
+      const { layout } = src.text!;
+      const beforeTree = layers.captureStructure();
+      const layer = layers.addLayerBelow(textLayerName(""));
+      layer.opacity = REFERENCE_OPACITY;
+      const rect = placeExternalImage(layout.width, layout.height, app.docWidth, app.docHeight);
+      layer.ref = { src, corners: cornersFromRect(rect) };
+      layers.renderRef(layer);
+      layers.composite();
+      bumpLayerVersion();
+      textEdit = { layer, before: undefined, beforeTree };
+      textDialog = { adding: true, initial: spec };
+    } catch (e) {
+      if (n === textSeq) textDialog = null; // not left open, unseen, with the workspace inert
+      throw e;
+    }
   }
 
   /** Open the dialog on the active text layer. */
@@ -3739,12 +3769,22 @@
 
   async function confirmText(spec: TextSpec) {
     const edit = textEdit;
-    if (!edit || !textDialog) return;
+    if (!edit || !textDialog || textDialog.pending) return;
+    // The dialog goes, but counts as open (`pending`) until the step below is recorded.
+    textDialog = { ...textDialog, pending: true };
+    try {
+      await previewText(spec); // the last change may not be showing yet
+    } catch (e) {
+      // The step is recorded for what the layer shows, or the edit stayed half-open for good.
+      console.error("the text's last change could not be drawn", e);
+      flashStatus("Couldn't draw the text's last change — it stays as it was showing");
+    }
+    if (textEdit !== edit) return; // cancelled meanwhile (an opened file arrived)
     textDialog = null;
-    await previewText(spec); // the last change may not be showing yet
     textEdit = null;
-    lastTextSpec = { ...spec, text: "" };
     const { layer } = edit;
+    spec = layer.ref?.src.text?.spec ?? spec; // (what is showing, if that last draw failed)
+    lastTextSpec = { ...spec, text: "" };
     if (edit.beforeTree) {
       // One step that adds the finished layer: undo removes it, redo brings it back as it is now.
       layer.name = textLayerName(spec.text);
@@ -4599,7 +4639,7 @@
   />
 
   <TextDialog
-    open={!!textDialog}
+    open={!!textDialog && !textDialog.pending}
     adding={textDialog?.adding ?? false}
     initial={textDialog?.initial ?? DEFAULT_TEXT_SPEC}
     onChange={(spec) => void previewText(spec)}

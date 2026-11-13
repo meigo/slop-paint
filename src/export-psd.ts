@@ -12,6 +12,7 @@ import {
 import { refFromPlaced, smartObjectFor } from "./ref-placement";
 import { decodeRefSource } from "./ref-image";
 import { openTextSource, textPayloadFromPng } from "./text-ref";
+import { refitToLayout } from "./text-layout";
 import { layerBlendFromPsd } from "./blend";
 import { drawTinted, tintEffects, tintFromPsd } from "./tint";
 
@@ -247,7 +248,7 @@ export function loadPsd(
   const flat = manager.flatLayers();
   manager.activeId = flat[flat.length - 1].id;
 
-  decodeOpenedRefs(refSources.values(), onRefDecoded, onRefFailed);
+  decodeOpenedRefs(manager, refSources.values(), onRefDecoded, onRefFailed);
   return { width: w, height: h };
 }
 
@@ -292,6 +293,7 @@ export function loadImageDocument(
 /** Decode the originals of the references an opened PSD brought back, filling in each shared
  *  source's drawing copy. Until then a reference shows its saved pixels and can't be transformed. */
 function decodeOpenedRefs(
+  manager: LayerManager,
   sources: Iterable<RefSource>,
   onDecoded?: () => void,
   onFailed?: (name: string) => void,
@@ -299,9 +301,8 @@ function decodeOpenedRefs(
   for (const src of sources) {
     // A text reference's PNG carries its settings: rebuild it as text, once its font has loaded
     // (the saved bytes stay). Same fonts, same layout, so the raster copy comes out the size it was
-    // saved at and the placement still fits it; a browser that measures differently just scales
-    // the text to the saved box. A font this device lacks keeps the saved picture instead
-    // (`openTextSource`).
+    // saved at and the placement still fits it. A font this device lacks keeps the saved picture
+    // instead (`openTextSource`).
     const payload = textPayloadFromPng(src.bytes);
     const decoding = payload
       ? openTextSource(src, payload)
@@ -312,6 +313,29 @@ function decodeOpenedRefs(
         src.text = decoded.text;
         if (!src.width) src.width = decoded.width;
         if (!src.height) src.height = decoded.height;
+        // A layout that came out another size than the saved box — saved where the font was
+        // missing (laid out in the stand-in), or a browser that measures differently: the
+        // placement holds the saved box, and the text was stretched into it. Each layer is refitted
+        // as an edit is and drawn again, and the source takes the new PNG, whose box matches.
+        const text = decoded.text;
+        if (payload?.box && text && !text.savedOnly) {
+          const was = { width: payload.box[0], height: payload.box[1], margin: payload.margin };
+          let refitted = false;
+          for (const l of manager.flatLayers()) {
+            if (l.ref?.src !== src) continue;
+            const corners = refitToLayout(l.ref.corners, was, text.layout, text.spec.align);
+            if (corners === l.ref.corners) continue;
+            l.ref = { src, corners };
+            manager.renderRef(l);
+            refitted = true;
+          }
+          if (refitted) {
+            src.bytes = decoded.bytes;
+            src.width = decoded.width;
+            src.height = decoded.height;
+            manager.composite();
+          }
+        }
         onDecoded?.();
       },
       (e) => {
