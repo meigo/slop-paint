@@ -66,6 +66,38 @@ describe("signedDistanceField", () => {
   });
 });
 
+describe("light art (2026-11-13)", () => {
+  // A 20×20 square at alpha 100 (a 40% brush): under a fixed half-alpha threshold it had no
+  // inside, the outline was empty and Apply erased the layer.
+  const w = 40;
+  const light = new Uint8Array(w * w);
+  for (let y = 10; y < 30; y++) for (let x = 10; x < 30; x++) light[y * w + x] = 100;
+
+  it("has an inside when it never reaches half alpha", () => {
+    const d = signedDistanceField(light, w, w);
+    expect(d[20 * w + 20]).toBeGreaterThan(5);
+    expect(d[5 * w + 5]).toBeLessThan(0);
+    // the same field as the same shape drawn opaque
+    const solid = light.map((a) => (a ? 255 : 0));
+    expect(Array.from(d)).toEqual(Array.from(signedDistanceField(solid, w, w)));
+  });
+
+  it("is outlined, not erased", () => {
+    const m = outlineMask(light, w, w, { thickness: 3, wobble: 0, variation: 0, seed: 1 });
+    expect(m[10 * w + 20]).toBe(255); // the ring
+    expect(m[20 * w + 20]).toBe(0); // hollow
+    expect(m.reduce((n, v) => n + (v ? 1 : 0), 0)).toBeGreaterThan(150);
+  });
+
+  it("reads art that reaches full alpha exactly as before: half of 255", () => {
+    const a = Uint8Array.from([255, 128, 127, 0]);
+    const d = signedDistanceField(a, 4, 1);
+    expect(d[1]).toBeGreaterThan(0);
+    expect(d[2]).toBeLessThan(0);
+    expect(d[1]).toBeCloseTo(Math.abs(128 / 255 - 0.5), 6);
+  });
+});
+
 describe("valueNoise", () => {
   it("is deterministic for the same (x, y, seed)", () => {
     expect(valueNoise(1.25, 3.5, 7)).toBe(valueNoise(1.25, 3.5, 7));

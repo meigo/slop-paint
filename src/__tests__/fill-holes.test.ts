@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fillEnclosed, clampGap, MAX_GAP, enclosedRegion } from "../fill-holes";
+import { dilateMask, erodeMask } from "../mask-ops";
 
 /**
  * A 15×15 square ring (1 px stroke, inset 2) with a `gap`-wide break in its top edge — the
@@ -270,5 +271,70 @@ describe("enclosedRegion", () => {
     const a = enclosedRegion(ring(5), 15, 15, { gap: 50 });
     const b = enclosedRegion(ring(5), 15, 15, { gap: MAX_GAP });
     expect(a.area).toBe(b.area);
+  });
+});
+
+describe("fillEnclosed — the closing by distance (2026-11-13)", () => {
+  /** The shape as it was worked out: dilate the ink, flood the outside, erode what's left —
+   *  with `dilateMask` / `erodeMask`, O(pixels × r²). */
+  function closingMask(rgba: Uint8ClampedArray, w: number, h: number, gap: number): Uint8Array {
+    const p = gap + 1;
+    const W = w + 2 * p;
+    const H = h + 2 * p;
+    const ink = new Uint8Array(W * H);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) if (rgba[(y * w + x) * 4 + 3] > 10) ink[(y + p) * W + x + p] = 1;
+    const grown = dilateMask(ink, W, H, gap);
+    const outside = new Uint8Array(W * H);
+    const stack = [0];
+    outside[0] = 1; // the padding's corner: always clear
+    while (stack.length) {
+      const i = stack.pop()!;
+      const x = i % W;
+      for (const n of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
+        if (n < 0 || n >= W * H || outside[n] || grown[n]) continue;
+        outside[n] = 1;
+        stack.push(n);
+      }
+    }
+    const filled = erodeMask(
+      outside.map((v) => (v ? 0 : 1)),
+      W,
+      H,
+      gap,
+    );
+    const mask = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = (y + p) * W + x + p;
+        mask[y * w + x] = filled[i] || ink[i] ? 1 : 0;
+      }
+    return mask;
+  }
+
+  it("gives the same shape as the round dilate and erode, on random scribbles", () => {
+    const w = 60;
+    const h = 44;
+    for (let seed = 1; seed <= 12; seed++) {
+      // a few random straight strokes, some touching the edges
+      const rgba = new Uint8ClampedArray(w * h * 4);
+      let a = seed * 7919;
+      const rnd = () => (a = (Math.imul(a, 1664525) + 1013904223) >>> 0) / 4294967296;
+      for (let k = 0; k < 6; k++) {
+        const x0 = rnd() * w;
+        const y0 = rnd() * h;
+        const x1 = rnd() * w;
+        const y1 = rnd() * h;
+        for (let t = 0; t <= 1; t += 0.004) {
+          const x = Math.floor(x0 + (x1 - x0) * t);
+          const y = Math.floor(y0 + (y1 - y0) * t);
+          if (x >= 0 && x < w && y >= 0 && y < h) rgba[(y * w + x) * 4 + 3] = 255;
+        }
+      }
+      for (const gap of [0, 1, 2, 3, 5, 8])
+        expect([...fillEnclosed(rgba, w, h, { gap }).mask]).toEqual([
+          ...closingMask(rgba, w, h, gap),
+        ]);
+    }
   });
 });

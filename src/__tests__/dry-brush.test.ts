@@ -172,3 +172,55 @@ describe("dry brush", () => {
     expect(bristleRuns(line(0), 30, 1, 50)).toEqual([]);
   });
 });
+
+describe("dry brush: taps and short strokes (2026-11-13)", () => {
+  const tap = (travel: number, pressure = 0.8): InputPoint[] => [
+    { x: 100, y: 50, pressure, timestamp: 1 },
+    { x: 100 + travel, y: 50, pressure, timestamp: 2 },
+  ];
+  const runCount = (hairs: { runs: number[][] }[]) => hairs.reduce((n, h) => n + h.runs.length, 0);
+
+  it("a finished tap is a dab: the touching hairs, each a short mark across the tap", () => {
+    for (const travel of [0, 0.4, 2]) {
+      const hairs = bristleRuns(tap(travel), 30, 1, 20, true);
+      expect(runCount(hairs)).toBeGreaterThan(hairs.length / 2);
+      for (const h of hairs)
+        for (const r of h.runs) {
+          expect(r).toHaveLength(4);
+          const len = Math.hypot(r[2] - r[0], r[3] - r[1]);
+          // 0.6 of the width, less each hair's lag and tail
+          expect(len).toBeGreaterThan(4);
+          expect(len).toBeLessThanOrEqual(18);
+          // about the tap, within half a width
+          expect(Math.abs(r[0] - 100)).toBeLessThanOrEqual(9 + travel);
+          expect(Math.abs(r[1] - 50)).toBeLessThanOrEqual(15.001);
+        }
+    }
+  });
+
+  it("is the same dab every time, and none while the pen is still down", () => {
+    expect(bristleRuns(tap(1), 30, 1, 20, true)).toEqual(bristleRuns(tap(1), 30, 1, 20, true));
+    expect(runCount(bristleRuns(tap(0), 30, 1, 20))).toBe(0);
+  });
+
+  it("a light tap at Press 3 touches fewer hairs than a hard one", () => {
+    const light = runCount(bristleRuns(tap(1, 0.1), 20, 3, 20, true));
+    const hard = runCount(bristleRuns(tap(1, 1), 20, 3, 20, true));
+    expect(light).toBeGreaterThan(0);
+    expect(hard).toBeGreaterThan(light);
+  });
+
+  it("a finished short tick paints more than it did live", () => {
+    // 32 px long, 30 wide: the hairs' lag and tail (up to ¾ of a width each) ate into it.
+    const live = painted(bristleRuns(line(32), 30, 1, 20));
+    const done = painted(bristleRuns(line(32), 30, 1, 20, true));
+    expect(done).toBeGreaterThan(live * 1.1);
+    // and a stroke just under its width (a dab) isn't far more than one just over
+    expect(painted(bristleRuns(line(28), 30, 1, 20, true))).toBeLessThan(done * 1.5);
+  });
+
+  it("leaves a finished stroke of 2.5 widths or more exactly as it was", () => {
+    for (const len of [76, 200, 600])
+      expect(bristleRuns(line(len), 30, 1, 50, true)).toEqual(bristleRuns(line(len), 30, 1, 50));
+  });
+});

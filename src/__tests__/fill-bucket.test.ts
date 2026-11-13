@@ -40,11 +40,15 @@ describe("floodFill: the same-colour check", () => {
     expect(at(d, 3, 3)).toEqual([0, 0, 0, 20]);
   });
 
-  it("still skips a painted area already within tolerance of the colour", () => {
+  it("skips a painted area that is exactly the colour, but fills one only near it", () => {
+    const same = new Uint8ClampedArray(W * W * 4);
+    for (let i = 0; i < W * W; i++) same.set([0, 0, 255, 255], i * 4);
+    expect(floodFill(fakeCtx(W, W, same), 3, 3, BLUE, HARD)).toBe(false);
+    // Within the tolerance it was refused as "already this colour" (2026-11-13).
     const d = new Uint8ClampedArray(W * W * 4);
     for (let i = 0; i < W * W; i++) d.set([10, 0, 250, 255], i * 4);
-    floodFill(fakeCtx(W, W, d), 3, 3, BLUE, HARD);
-    expect(at(d, 3, 3)).toEqual([10, 0, 250, 255]);
+    expect(floodFill(fakeCtx(W, W, d), 3, 3, BLUE, HARD)).toBe(true);
+    expect(at(d, 3, 3)).toEqual([0, 0, 255, 255]);
   });
 });
 

@@ -187,6 +187,8 @@ export class Selection {
   /** Handles without a float: the pixels stay in their layer, which the caller re-draws as the
    *  matrix changes (a reference layer). Nothing is pending, so `hasFloating` is false. */
   handlesOnly = false;
+  /** The float was lifted out of its layer (`liftPixels`), not pasted in: see `liftUntouched`. */
+  private lifted = false;
 
   /** Lasso path points (CSS coords) */
   private lassoPoints: { x: number; y: number }[] = [];
@@ -442,7 +444,28 @@ export class Selection {
     const cvs = this.copyPixels(srcCtx, dpr);
     if (!cvs) return null;
     this.clearRegion(srcCtx, dpr);
+    this.lifted = true;
     return cvs;
+  }
+
+  /**
+   * The float is a lift still lying exactly where it was lifted from (never moved, or moved back;
+   * a warp with every point at its start). Applying it must change nothing, so the caller puts the
+   * layer back as it was before the lift instead of drawing the float (2026-11-13): a lasso's copy
+   * and its hole are both cut through the outline's antialiased clip, and the copy drawn back over
+   * the hole gives a − c(1 − c)a² along it — the art faded to ~75% alpha where the lasso crossed
+   * it. A moved float is drawn as before: both edges are then real, antialiased cuts.
+   */
+  get liftUntouched(): boolean {
+    if (!this.lifted || !this.rect || !this.hasFloating) return false;
+    if (this.state === "warping") {
+      return gridUntouched(
+        this.warpGrid,
+        sampleGrid(this.rect, IDENTITY, this.warpRows, this.warpCols),
+      );
+    }
+    const m = this.matrix;
+    return m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.e === 0 && m.f === 0;
   }
 
   /** Enter the transforming state with the lifted pixels. */
@@ -467,6 +490,7 @@ export class Selection {
    *  reference floats its full-size original under the matrix that puts it where it sits. */
   pasteFloat(pixels: HTMLCanvasElement, rect: SelectionRect, matrix?: Mat, handlesOnly = false) {
     this.handlesOnly = handlesOnly;
+    this.lifted = false;
     this.isCreating = false; // the rest of a held marquee press would rewrite the float's rect
     this.rect = { ...rect };
     this.mode = "rect";
@@ -759,14 +783,20 @@ export class Selection {
     if (warped) this.onStateChange?.();
   }
 
-  /** While warping: no grid point has moved from where the warp (or its last density change)
-   *  put them — so fewer points would lose nothing. */
+  /** While warping: the grid is unbent — every point lies where its four corners alone put it —
+   *  so fewer points would lose nothing. Measured against the grid's OWN corners (2026-11-13), not
+   *  where the warp began: dragging the whole mesh moves every point but not the matrix, and an
+   *  unbent mesh that had been moved was refused − / W as "would lose the bends". */
   get warpUntouched(): boolean {
     if (this.state !== "warping" || !this.rect) return false;
-    return gridUntouched(
-      this.warpGrid,
-      sampleGrid(this.rect, this.matrix, this.warpRows, this.warpCols),
-    );
+    const g = this.warpGrid;
+    const rows = this.warpRows;
+    const cols = this.warpCols;
+    const corners = [
+      [g[0][0], g[0][cols - 1]],
+      [g[rows - 1][0], g[rows - 1][cols - 1]],
+    ];
+    return gridUntouched(g, resampleGrid(corners, 2, 2, rows, cols));
   }
 
   commit() {
@@ -836,6 +866,7 @@ export class Selection {
     this.rect = null;
     this.floatingPixels = null;
     this.handlesOnly = false;
+    this.lifted = false;
     this.lassoPoints = [];
     this.lassoPath = null;
     this.matrix = identity();

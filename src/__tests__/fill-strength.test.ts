@@ -42,16 +42,28 @@ describe("bucketStrength (the line strength Soft reads)", () => {
     expect(outside).toBe(0);
   });
 
-  it("a faint pixel whose colour drifted (walled off by the flood) still gets fill behind it", () => {
+  it("a faint pixel whose colour drifted still gets the fill", () => {
     // empty region on the left, then a faint grey pixel (46,46,46,11) as WebKit reads a Pencil
-    // line's faintest edge, then a LIGHT line (alpha 40, as a 4H pencil)
+    // line's faintest edge, then a LIGHT line (alpha 40, as a 4H pencil). Its colour barely shows
+    // at alpha 11, so since 2026-11-13 the flood takes it as it takes a black one (it was walled
+    // off, and filled behind).
     const w = 40;
     const d = image(w, 10, (x) =>
       x === 20 ? [46, 46, 46, 11] : x >= 21 && x < 25 ? [30, 30, 30, 40] : null,
     );
     const { region, cover } = coverAt(d, w, 10, 5, 5);
-    expect(region[5 * w + 20]).toBe(0); // the flood walls it off
-    expect(cover[5 * w + 20]).toBeGreaterThan(0); // but the fill goes behind it
+    expect(region[5 * w + 20]).toBe(1);
+    expect(cover[5 * w + 20]).toBe(255);
+    expect(region[5 * w + 21]).toBe(0); // the line itself is still a wall
+  });
+
+  it("from a painted tap, a pixel the flood walls off is never read as empty", () => {
+    // tapped: opaque red; beside it a faint blue pixel (alpha 20) — a wall (its alpha is far from
+    // the tap's), and at least `tol` strong so the fill goes behind it
+    const d = Uint8ClampedArray.from([255, 0, 0, 255, 0, 0, 255, 20]);
+    const region = fillMask(d, 2, 1, 0, 0, 32)!;
+    expect([...region]).toEqual([1, 0]);
+    expect(bucketStrength(d, 2, 1, { r: 255, g: 0, b: 0, a: 255 }, 32)[1]).toBe(32);
   });
 
   it("is the alpha alone from an empty tap, and never more than the pixel's alpha", () => {

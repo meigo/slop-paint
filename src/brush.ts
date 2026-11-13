@@ -204,12 +204,15 @@ export function outlineOfPath(
   // We map pressure → size ourselves and tell pf thinning=1 so it uses our mapped pressure directly.
   const { min: minSize, max: maxSize } = widthRange(size, sizeRange);
   let minStrokeWidth = Infinity;
+  let maxStrokeWidth = 0;
   const inputPoints = path.map((p) => {
     const desiredSize = minSize + p.pressure * (maxSize - minSize);
     if (desiredSize < minStrokeWidth) minStrokeWidth = desiredSize;
+    if (desiredSize > maxStrokeWidth) maxStrokeWidth = desiredSize;
     const mappedPressure = maxSize > 0 ? desiredSize / maxSize : 1;
     return [p.x, p.y, mappedPressure];
   });
+  const taperLength = taper ? taperFor(path, maxSize, maxStrokeWidth, done) : 0;
 
   // perfect-freehand's `size` is a RADIUS basis (diameter = 2 * size * pressure), so pass half:
   // the rendered diameter then equals desiredSize, matching the stamp engine and the size cursor.
@@ -227,14 +230,31 @@ export function outlineOfPath(
     // A fixed length, not `true`: perfect-freehand reads `true` as the WHOLE stroke's length, so
     // every stroke was a spindle that never reached its full width (~80% at the middle), and the
     // start thinned again as the stroke grew.
-    start: { taper: taper ? TAPER_WIDTHS * maxSize : 0, cap: !taper },
-    end: { taper: taper ? TAPER_WIDTHS * maxSize : 0, cap: !taper },
+    start: { taper: taperLength, cap: taperLength === 0 },
+    end: { taper: taperLength, cap: taperLength === 0 },
     last: done,
     // Always use our supplied (mapped) pressure. perfect-freehand's simulatePressure
     // is velocity-based and would override our size mapping, leaving the cursor
     // (which reflects the envelope) out of sync with the rendered stroke.
     simulatePressure: false,
   });
+}
+
+/**
+ * How long each end's taper is, px. `TAPER_WIDTHS` × the widest width, but for a FINISHED stroke
+ * (2026-11-13) never more than half its length — a short tick tapered over 4 widths an end never
+ * got wider than a hair — and none at all for one shorter than its own width: a tap is a dot (a
+ * Pencil tap travels 0.3–2 px and drew almost nothing). Only once finished, so the drawn start
+ * never changes as a live stroke grows; a stroke of 8 widths or more is as it was.
+ */
+function taperFor(path: InputPoint[], maxSize: number, widest: number, done: boolean): number {
+  const full = TAPER_WIDTHS * maxSize;
+  if (!done) return full;
+  let length = 0;
+  for (let i = 1; i < path.length && length < 2 * full; i++)
+    length += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  if (length < widest) return 0;
+  return Math.min(full, length / 2);
 }
 
 /** The stroke's centre line as [x, y, half-width] — the widths `outlineOfPath` draws at — for

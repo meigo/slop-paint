@@ -17,12 +17,16 @@ const FAR = 1e9;
  * Distance in px from each pixel centre to the shape's edge: POSITIVE inside, NEGATIVE outside.
  *
  * Two-pass chamfer (orthogonal 1, diagonal √2 — about 4% high on long diagonals, under 1px at the
- * tool's maximum thickness). Boundary pixels are seeded at `|alpha/255 - 0.5|` rather than 0, so a
+ * tool's maximum thickness). Boundary pixels are seeded at `|alpha/peak - 0.5|` rather than 0, so a
  * hard edge lands half a pixel outside the last opaque pixel (geometrically right) and an
  * anti-aliased edge keeps its sub-pixel position — which is what stops outlined text going blocky.
  *
  * Off-canvas counts as OUTSIDE, matching `erodeMask`'s documented convention, so a shape running
  * off the edge of the canvas is outlined along that edge.
+ *
+ * "Inside" is half the art's PEAK alpha or more (2026-11-13): at a fixed 128, art that never got
+ * that opaque (a light Pencil sketch, a 40% brush) had no inside at all, so the outline was empty
+ * and Apply erased the layer. Art that reaches full alpha anywhere is read exactly as before.
  */
 export function signedDistanceField(
   alpha: Uint8Array | Uint8ClampedArray,
@@ -32,8 +36,11 @@ export function signedDistanceField(
   const n = w * h;
   const inside = new Uint8Array(n);
   const d = new Float32Array(n);
+  let peak = 0;
+  for (let i = 0; i < n; i++) if (alpha[i] > peak) peak = alpha[i];
+  const full = peak || 255;
   for (let i = 0; i < n; i++) {
-    inside[i] = alpha[i] >= 128 ? 1 : 0;
+    inside[i] = alpha[i] * 2 >= full ? 1 : 0;
     d[i] = FAR;
   }
   // Seed every pixel that has a differently-classified 4-neighbour (off-grid = outside).
@@ -46,7 +53,7 @@ export function signedDistanceField(
       const up = y > 0 ? inside[i - w] : 0;
       const down = y < h - 1 ? inside[i + w] : 0;
       if (left !== me || right !== me || up !== me || down !== me) {
-        d[i] = Math.abs(alpha[i] / 255 - 0.5);
+        d[i] = Math.abs(alpha[i] / full - 0.5);
       }
     }
   }

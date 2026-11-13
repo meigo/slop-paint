@@ -3,7 +3,7 @@
  * Operates on raw ImageData for performance.
  */
 
-import { dilateMask, distanceToMask } from "./mask-ops";
+import { distanceToMask } from "./mask-ops";
 import { clampGap, enclosedRegion } from "./fill-holes";
 
 export interface FillOptions {
@@ -33,10 +33,29 @@ export function softStepIndex(soft: number): number {
   return best;
 }
 
+type Rgba = { r: number; g: number; b: number; a: number };
+
 /**
- * Each pixel's distance from the tapped colour, 0–255: the largest channel difference, or the
- * alpha alone when the tap was on an empty pixel (an empty pixel's colour means nothing). What
- * `softCoverage` climbs. Pure.
+ * Whether the pixel at `p` is within `tol` of the tapped colour: its alpha, and its colour as far
+ * as it shows — PREMULTIPLIED (2026-11-13). Compared straight, the colour of a pixel you can't see
+ * counted in full: white residue at alpha 2 on an empty layer was a wall to the flood. Opaque
+ * pixels compare as before; from an empty tap it comes to the alpha alone, as `colourDistance`.
+ */
+function withinTolerance(data: Uint8ClampedArray, p: number, seed: Rgba, tol: number): boolean {
+  const a = data[p + 3];
+  const t = tol * 255;
+  return (
+    Math.abs(a - seed.a) <= tol &&
+    Math.abs(data[p] * a - seed.r * seed.a) <= t &&
+    Math.abs(data[p + 1] * a - seed.g * seed.a) <= t &&
+    Math.abs(data[p + 2] * a - seed.b * seed.a) <= t
+  );
+}
+
+/**
+ * Each pixel's distance from the tapped colour, 0–255: the largest channel difference, the colours
+ * premultiplied (see `withinTolerance`) — so the alpha alone when the tap was on an empty pixel
+ * (an empty pixel's colour means nothing). What `softCoverage` climbs. Pure.
  */
 export function colourDistance(
   data: Uint8ClampedArray,
@@ -47,14 +66,15 @@ export function colourDistance(
   const out = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) {
     const p = i * 4;
-    const da = Math.abs(data[p + 3] - seed.a);
+    const a = data[p + 3];
+    const da = Math.abs(a - seed.a);
     out[i] =
       seed.a === 0
         ? da
         : Math.max(
-            Math.abs(data[p] - seed.r),
-            Math.abs(data[p + 1] - seed.g),
-            Math.abs(data[p + 2] - seed.b),
+            Math.round(Math.abs(data[p] * a - seed.r * seed.a) / 255),
+            Math.round(Math.abs(data[p + 1] * a - seed.g * seed.a) / 255),
+            Math.round(Math.abs(data[p + 2] * a - seed.b * seed.a) / 255),
             da,
           );
   }
@@ -67,7 +87,7 @@ export function colourDistance(
  * - never above the pixel's own alpha: from a PAINTED tap (recolouring) the transparent space round
  *   the art was full-strength "line", so the fill ran up to 32 px out into it — a solid ring on a
  *   transparent layer;
- * - at least `tol` wherever the flood walls the pixel off (`fillMask` compares all four channels)
+ * - at least `tol` wherever the flood walls the pixel off (`fillMask`, the same `withinTolerance`)
  *   and it has any alpha: WebKit reads a Pencil line's faintest pixels with drifted colour, e.g.
  *   (46,46,46,11) — a wall to the flood, but "empty" to an alpha-only strength, so they got no fill
  *   and showed as paper at the region's edge.
@@ -85,16 +105,7 @@ export function bucketStrength(
     const p = i * 4;
     const a = data[p + 3];
     let v = Math.min(out[i], a);
-    if (
-      a > 0 &&
-      v < tol &&
-      (Math.abs(data[p] - seed.r) > tol ||
-        Math.abs(data[p + 1] - seed.g) > tol ||
-        Math.abs(data[p + 2] - seed.b) > tol ||
-        Math.abs(a - seed.a) > tol)
-    ) {
-      v = tol;
-    }
+    if (a > 0 && v < tol && !withinTolerance(data, p, seed, tol)) v = tol;
     out[i] = v;
   }
   return out;
@@ -106,25 +117,30 @@ export function bucketStrength(
  * read as the empty space beyond it (`ridgeCoverage`). Pure.
  */
 function smoothDistance(dist: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  const tmp = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let sum = 0;
-      let n = 0;
-      for (let k = Math.max(0, x - r); k <= Math.min(w - 1, x + r); k++) {
-        sum += dist[y * w + k];
-        n++;
-      }
-      tmp[y * w + x] = sum / n;
-    }
-  }
+  // The row means are kept only for the 2r + 1 rows the column pass is reading (a ring), not as a
+  // whole Float32 plane: 144 MB of the ~1.26 GB a fill across a 6000×6000 layer took.
+  const m = 2 * r + 1;
+  const ring = new Float32Array(m * w);
+  let done = 0; // rows whose means are in the ring so far
   const out = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
+    for (; done <= Math.min(h - 1, y + r); done++) {
+      const row = (done % m) * w;
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        let n = 0;
+        for (let k = Math.max(0, x - r); k <= Math.min(w - 1, x + r); k++) {
+          sum += dist[done * w + k];
+          n++;
+        }
+        ring[row + x] = sum / n;
+      }
+    }
     for (let x = 0; x < w; x++) {
       let sum = 0;
       let n = 0;
       for (let k = Math.max(0, y - r); k <= Math.min(h - 1, y + r); k++) {
-        sum += tmp[k * w + x];
+        sum += ring[(k % m) * w + x];
         n++;
       }
       out[y * w + x] = Math.max(dist[y * w + x], Math.round(sum / n));
@@ -133,9 +149,16 @@ function smoothDistance(dist: Uint8Array, w: number, h: number, r: number): Uint
   return out;
 }
 
-/** Each pixel's largest value within a (2r+1)² box (separable). Pure. */
-function maxFilter(a: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  const tmp = new Uint8Array(w * h);
+/** Each pixel's largest value within a (2r+1)² box (separable). Pure. `tmp` and `out`: arrays of
+ *  w × h to work in and return, every value overwritten (the caller's spent ones). */
+function maxFilter(
+  a: Uint8Array,
+  w: number,
+  h: number,
+  r: number,
+  tmp = new Uint8Array(w * h),
+  out = new Uint8Array(w * h),
+): Uint8Array {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let m = 0;
@@ -144,7 +167,6 @@ function maxFilter(a: Uint8Array, w: number, h: number, r: number): Uint8Array {
       tmp[y * w + x] = m;
     }
   }
-  const out = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let m = 0;
@@ -170,6 +192,8 @@ export const UNDER_LINE_MAX_PX = 32;
 /** Where the middle is out of reach, the fill fades out over at least this many px before the
  *  reach ends, instead of stopping dead. */
 const REACH_FADE_PX = 8;
+/** A line pixel this near the region touches it (a diagonal neighbour is √2 away). */
+const TOUCHING_PX = 1.5;
 
 /**
  * The fill's coverage, 0–255, run under the surrounding lines to their MIDDLE (2026-10-04, the
@@ -178,7 +202,10 @@ const REACH_FADE_PX = 8;
  * line's strength, which a grainy Pencil or Charcoal line stopped 1–3 px in, leaving its inner half
  * blotchy with paper. On the inner half the fill fades from full to 1 − the line's strongest value
  * nearby (so a light line isn't darkened much, and a solid one hides it), and ends at the middle
- * over max(1, 2 × Soft) px, antialiased. Nothing beyond the middle. Where the middle is out of
+ * over max(1, 2 × Soft) px, antialiased. Nothing beyond the middle. A pixel that TOUCHES the
+ * region (within 1.5 px) isn't faded (2026-11-13): it is the line's own antialiased edge, half
+ * see-through, and the 7×7 peak read it as solid — a seam of alpha 192–234 between an opaque fill
+ * and an opaque line. Where the middle is out of
  * reach (`UNDER_LINE_MAX_PX`) it fades out over the reach's last max(8, 2 × Soft) px instead.
  * Drawn BEHIND the line. Soft 0:
  * the region alone, the hard edge. `dist` is each pixel's distance from the tapped colour
@@ -225,12 +252,16 @@ export function ridgeCoverage(
   const n = ww * wh;
   const d = new Uint8Array(n);
   const reg = new Uint8Array(n);
+  let lines = false;
   for (let y = 0; y < wh; y++) {
     for (let x = 0; x < ww; x++) {
       d[y * ww + x] = dist[(y + wy) * w + x + wx];
       reg[y * ww + x] = region[(y + wy) * w + x + wx];
+      if (!reg[y * ww + x]) lines = true;
     }
   }
+  // The region is all there is (a tap on an empty layer): no line to run under.
+  if (!lines) return out;
   const smooth = smoothDistance(d, ww, wh, 2);
   // The empty space beyond the lines: not filled, and empty even with the grain smoothed over —
   // and every empty pixel joined to that. The smoothing alone also raised the paper just beyond a
@@ -265,34 +296,52 @@ export function ridgeCoverage(
     if (i >= ww) visit(i - ww);
     if (i + ww < n) visit(i + ww);
   }
-  const dIn = distanceToMask(reg, ww, wh);
-  const dOut = distanceToMask(outside, ww, wh);
-  const peak = maxFilter(smooth, ww, wh, 3);
+  // Memory (2026-11-13): this took ~35 bytes a window pixel, 1.26 GB when the window spans a
+  // 6000×6000 layer; now ~12. The two distance transforms share their work arrays — only the line
+  // pixels within reach (the band) keep their distance from the region — and the peak filter works
+  // in the two arrays spent by then. The same values, in less room.
+  const buf = { grid: new Int32Array(n), out: new Float32Array(n) };
+  const toRegion = distanceToMask(reg, ww, wh, buf);
+  let count = 0;
+  for (let i = 0; i < n; i++)
+    if (!reg[i] && !outside[i] && toRegion[i] <= UNDER_LINE_MAX_PX) count++;
+  if (!count) return out;
+  const band = new Int32Array(count);
+  const bandIn = new Float32Array(count);
+  for (let i = 0, j = 0; i < n; i++) {
+    if (reg[i] || outside[i] || toRegion[i] > UNDER_LINE_MAX_PX) continue;
+    band[j] = i;
+    bandIn[j++] = toRegion[i];
+  }
+  const dOut = distanceToMask(outside, ww, wh, buf); // overwrites `toRegion`
+  const peak = maxFilter(smooth, ww, wh, 3, d, reg);
   const feather = Math.max(1, 2 * soft);
   const reachFade = Math.max(REACH_FADE_PX, feather);
-  for (let y = 0; y < wh; y++) {
-    for (let x = 0; x < ww; x++) {
-      const i = y * ww + x;
-      if (reg[i] || outside[i] || dIn[i] > UNDER_LINE_MAX_PX) continue;
-      // No empty space beyond within reach (a line inside the region, or a wide solid one): fill
-      // all of it within reach — it's behind the line.
-      const span = Number.isFinite(dOut[i]) ? dIn[i] + dOut[i] : Infinity;
-      const t = Number.isFinite(span) ? dIn[i] / span : 0; // 0 at the region, ½ at the middle
-      const edge = Number.isFinite(span)
-        ? Math.max(0, Math.min(1, ((0.5 - t) * span) / feather + 0.5))
+  for (let j = 0; j < count; j++) {
+    const i = band[j];
+    const dIn = bandIn[j];
+    // No empty space beyond within reach (a line inside the region, or a wide solid one): fill
+    // all of it within reach — it's behind the line.
+    const span = Number.isFinite(dOut[i]) ? dIn + dOut[i] : Infinity;
+    const t = Number.isFinite(span) ? dIn / span : 0; // 0 at the region, ½ at the middle
+    const edge = Number.isFinite(span)
+      ? Math.max(0, Math.min(1, ((0.5 - t) * span) / feather + 0.5))
+      : 1;
+    if (edge <= 0) continue;
+    // The middle out of reach (no empty space beyond, or a line over twice the reach wide): fade
+    // out over the reach's last px. It stopped dead at the reach, a hard edge that showed through
+    // translucent flat paint. Not where the middle is in reach: that end is the Soft cut above.
+    const reach =
+      !Number.isFinite(span) || span / 2 > UNDER_LINE_MAX_PX
+        ? Math.min(1, (UNDER_LINE_MAX_PX - dIn) / reachFade)
         : 1;
-      if (edge <= 0) continue;
-      // The middle out of reach (no empty space beyond, or a line over twice the reach wide): fade
-      // out over the reach's last px. It stopped dead at the reach, a hard edge that showed through
-      // translucent flat paint. Not where the middle is in reach: that end is the Soft cut above.
-      const reach =
-        !Number.isFinite(span) || span / 2 > UNDER_LINE_MAX_PX
-          ? Math.min(1, (UNDER_LINE_MAX_PX - dIn[i]) / reachFade)
-          : 1;
-      const end = 1 - peak[i] / 255;
-      const along = Math.min(1, t / 0.5);
-      out[(y + wy) * w + x + wx] = Math.round(255 * edge * reach * (1 + (end - 1) * along));
-    }
+    const end = 1 - peak[i] / 255;
+    // Touching the region (a diagonal neighbour too): the line's antialiased edge, not faded.
+    const along = dIn <= TOUCHING_PX ? 0 : Math.min(1, t / 0.5);
+    const x = i % ww;
+    out[((i - x) / ww + wy) * w + x + wx] = Math.round(
+      255 * edge * reach * (1 + (end - 1) * along),
+    );
   }
   return out;
 }
@@ -331,7 +380,7 @@ export function expandedCoverage(
 
 /**
  * The pixels a bucket tap at (sx, sy) fills: 1 = fill. Pixels within `tolerance` of the tapped
- * one (all four channels) are fillable; the rest are walls. `null` for a tap off the canvas.
+ * one (`withinTolerance`) are fillable; the rest are walls. `null` for a tap off the canvas.
  *
  * `gap` (clamped to MAX_GAP, as Fill enclosed's Bridge) closes breaks in the walls of up to about
  * 2×gap px: the walls are thickened by `gap`, the flood runs in what's left, and the region is
@@ -352,25 +401,22 @@ export function fillMask(
 ): Uint8Array | null {
   if (sx < 0 || sx >= w || sy < 0 || sy >= h) return null;
   const s = (sy * w + sx) * 4;
+  const seed = { r: data[s], g: data[s + 1], b: data[s + 2], a: data[s + 3] };
   const fillable = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    const p = i * 4;
-    fillable[i] =
-      Math.abs(data[p] - data[s]) <= tolerance &&
-      Math.abs(data[p + 1] - data[s + 1]) <= tolerance &&
-      Math.abs(data[p + 2] - data[s + 2]) <= tolerance &&
-      Math.abs(data[p + 3] - data[s + 3]) <= tolerance
-        ? 1
-        : 0;
-  }
+  for (let i = 0; i < w * h; i++)
+    fillable[i] = withinTolerance(data, i * 4, seed, tolerance) ? 1 : 0;
   const r = clampGap(gap);
-  if (r > 0) {
+  // With no wall at all there is nothing to bridge (and nothing to measure a distance to).
+  if (r > 0 && fillable.includes(0)) {
     const walls = new Uint8Array(w * h);
     for (let i = 0; i < w * h; i++) walls[i] = fillable[i] ? 0 : 1;
-    const thick = dilateMask(walls, w, h, r);
+    // The walls thickened by `r`, by distance: the same pixels as `dilateMask(walls, r)` in linear
+    // time. The dilation is O(walls × r²) — a recolour tap on a 4000×6000 layer (everything else a
+    // wall) took 52 s at Bridge 8 (2026-11-13).
+    const toWall = distanceToMask(walls, w, h);
     const start = sy * w + sx;
     const open = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) open[i] = thick[i] ? 0 : 1;
+    for (let i = 0; i < w * h; i++) open[i] = toWall[i] <= r ? 0 : 1;
     // A tap inside the thickened walls — within `gap` px of a line, or of a stray speck — starts
     // from the nearest open pixel it can reach: it fell back to the unbridged flood, which leaked
     // through the very break Bridge was set for (26–80% of the taps inside a wide box).
@@ -498,15 +544,17 @@ export function floodFill(
 
   // Don't fill if clicking on the same color. An empty pixel's colour means nothing: it is the
   // same only as a fill that paints nothing (comparing its RGB, black at 1–12% opacity on an
-  // empty area did nothing).
+  // empty area did nothing). EXACTLY the same (2026-11-13): within the tolerance, #909090 on
+  // #808080 or the same colour at 90% opacity was refused. A fill that then changes no pixel is
+  // the caller's to report (`pushPixelEdit` pushes nothing).
   const startIdx = (sy * w + sx) * 4;
   if (data[startIdx + 3] === 0) {
     if (fillColor.a === 0) return false;
   } else if (
-    Math.abs(data[startIdx] - fillColor.r) <= tolerance &&
-    Math.abs(data[startIdx + 1] - fillColor.g) <= tolerance &&
-    Math.abs(data[startIdx + 2] - fillColor.b) <= tolerance &&
-    Math.abs(data[startIdx + 3] - fillColor.a) <= tolerance
+    data[startIdx] === fillColor.r &&
+    data[startIdx + 1] === fillColor.g &&
+    data[startIdx + 2] === fillColor.b &&
+    data[startIdx + 3] === fillColor.a
   ) {
     return false;
   }
@@ -542,7 +590,11 @@ export function floodFill(
   // there (the line stays on top: no halo over it). Expand used to draw the WHOLE fill
   // destination-over, the region too, so a tap on a painted area recoloured nothing yet ringed it
   // and pushed an undo step. From a painted tap nothing lands on an EMPTY pixel beyond the region:
-  // the transparent space round the art is no line to tuck under (Expand drew a ring there).
+  // the transparent space round the art is no line to tuck under (Expand drew a ring there). And
+  // nothing there gets more OPAQUE (2026-11-13): the pixels round a painted area are mostly its
+  // own soft edge, and filling behind them raised their alpha — the edge of a red shape recoloured
+  // blue went from (255,0,0,24) to (24,0,231,255), a hard fringe. They take the colour the fill
+  // behind them would give and keep their alpha.
   const painted = seed.a > 0;
   for (let i = 0; i < w * h; i++) {
     const c = cover[i];
@@ -563,7 +615,7 @@ export function floodFill(
     data[pi] = Math.round((data[pi] * da + fillColor.r * sa * (1 - da)) / oa);
     data[pi + 1] = Math.round((data[pi + 1] * da + fillColor.g * sa * (1 - da)) / oa);
     data[pi + 2] = Math.round((data[pi + 2] * da + fillColor.b * sa * (1 - da)) / oa);
-    data[pi + 3] = Math.round(oa * 255);
+    if (!painted) data[pi + 3] = Math.round(oa * 255);
   }
   ctx.putImageData(imageData, 0, 0);
   return true;
