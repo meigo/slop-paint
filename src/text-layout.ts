@@ -456,13 +456,44 @@ export function refitCorners(
   return [at(dx, dy), at(dx + newW, dy), at(dx + newW, dy + newH), at(dx, dy + newH)];
 }
 
-/** Name for a text layer: `[ignore]` so Spine's PSD import skips it, "text" and its first words. */
+/**
+ * `corners` for a text whose layout was rebuilt with the same settings — its font arrived, or was
+ * replaced, so the box it was measured into changed: refitted as an edit is (`refitCorners`), or
+ * `corners` themselves when the box is the same. Drawn into the old corners, the new layout came
+ * out stretched.
+ */
+export function refitToLayout(
+  corners: Corners,
+  was: Pick<TextLayout, "width" | "height" | "margin">,
+  now: Pick<TextLayout, "width" | "height" | "margin">,
+  align: TextAlign,
+): Corners {
+  const same =
+    was.width === now.width &&
+    was.height === now.height &&
+    (["left", "top", "right", "bottom"] as const).every((k) => was.margin[k] === now.margin[k]);
+  if (same) return corners;
+  return refitCorners(
+    corners,
+    was.width,
+    was.height,
+    now.width,
+    now.height,
+    align,
+    was.margin,
+    now.margin,
+  );
+}
+
+/** Name for a text layer: `[ignore]` so Spine's PSD import skips it, "text" and its first words
+ *  (cut between characters as read: by UTF-16 unit it could end on half an emoji). */
 export function textLayerName(text: string): string {
   const first =
     text
       .split("\n")
       .find((l) => l.trim())
       ?.trim() ?? "";
-  const words = first.length > 24 ? `${first.slice(0, 24).trimEnd()}…` : first;
+  const chars = graphemes(first);
+  const words = chars.length > 24 ? `${chars.slice(0, 24).join("").trimEnd()}…` : first;
   return buildName(words ? `text ${words}` : "text", ["ignore"]);
 }

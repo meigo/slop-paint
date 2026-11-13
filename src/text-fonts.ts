@@ -61,23 +61,51 @@ async function register(f: LibraryFont) {
 /** The library, loaded from storage and registered with the page — once; every font lookup waits
  *  for it, so an opened document never calls a library font missing because it wasn't loaded yet. */
 export function fontLibraryReady(): Promise<void> {
-  ready ??= (async () => {
-    try {
-      const saved = await idbDo<LibraryFont[] | undefined>(KV_STORE, "readonly", (s) => s.get(KEY));
-      for (const f of saved ?? []) {
-        try {
-          await register(f);
-          library.push(f);
-        } catch (e) {
-          console.error(`font "${f.family}" in the library could not be loaded`, e);
-        }
-      }
-    } catch (e) {
-      console.error("the font library could not be read", e);
-    }
-  })();
+  ready ??= load();
   return ready;
 }
+
+/** The stored list couldn't be read: `library` is empty though the store may not be, so nothing
+ *  may be written over it until a read succeeds (`readyToWrite`). */
+let loadFailed = false;
+/** Stored fonts the browser wouldn't register this time: not offered, but kept in the stored list
+ *  (they were dropped from it at the next add or remove). */
+let unusable: LibraryFont[] = [];
+
+async function load() {
+  let saved: LibraryFont[] | undefined;
+  try {
+    saved = await idbDo<LibraryFont[] | undefined>(KV_STORE, "readonly", (s) => s.get(KEY));
+  } catch (e) {
+    loadFailed = true;
+    console.error("the font library could not be read", e);
+    return;
+  }
+  loadFailed = false;
+  for (const f of saved ?? []) {
+    try {
+      await register(f);
+      library.push(f);
+    } catch (e) {
+      unusable.push(f);
+      console.error(`font "${f.family}" in the library could not be loaded`, e);
+    }
+  }
+}
+
+/** Before the stored list is replaced: a startup read that failed is tried again, and the write
+ *  refused if it fails again — it would store this session's (empty) list over every saved font. */
+async function readyToWrite() {
+  await fontLibraryReady();
+  if (!loadFailed) return;
+  ready = load();
+  await ready;
+  if (loadFailed) {
+    throw new Error("The font library couldn't be read — reload the page and try again");
+  }
+}
+
+const store = () => idbDo(KV_STORE, "readwrite", (s) => s.put([...unusable, ...library], KEY));
 
 export function libraryFonts(): readonly LibraryFont[] {
   return library;
@@ -99,7 +127,7 @@ async function inflate(b: Uint8Array, t: TableEntry | undefined): Promise<Uint8A
  * with a readable message when the file isn't a font the browser can use.
  */
 export async function addFontFile(file: File): Promise<LibraryFont> {
-  await fontLibraryReady();
+  await readyToWrite();
   const buffer = await file.arrayBuffer();
   const b = new Uint8Array(buffer);
   const format = fontFormat(b);
@@ -125,19 +153,20 @@ export async function addFontFile(file: File): Promise<LibraryFont> {
   }
   const key = faceKey(entry);
   library = [...library.filter((f) => faceKey(f) !== key), entry];
-  await idbDo(KV_STORE, "readwrite", (s) => s.put(library, KEY));
+  unusable = unusable.filter((f) => faceKey(f) !== key); // this file takes its place
+  await store();
   return entry;
 }
 
 /** Take a face out of the library and off the page. Text layers using it are the caller's to
  *  update (App keeps their current look). */
 export async function removeLibraryFont(key: string): Promise<void> {
-  await fontLibraryReady();
+  await readyToWrite();
   const face = faces.get(key);
   if (face) document.fonts.delete(face);
   faces.delete(key);
   library = library.filter((f) => faceKey(f) !== key);
-  await idbDo(KV_STORE, "readwrite", (s) => s.put(library, KEY));
+  await store();
 }
 
 /** Whether `family` (at a weight/style) is installed and visible to the page: text in it measures
