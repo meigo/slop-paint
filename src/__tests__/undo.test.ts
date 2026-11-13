@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { history, pushLayersEdit, pushPixelEdit, pushStrokeEdit, StrokeBackup } from "../undo";
+import {
+  history,
+  pushLayersEdit,
+  pushPixelEdit,
+  pushStrokeEdit,
+  setOnHistoryApplied,
+  shiftLoss,
+  StrokeBackup,
+  type PixelChange,
+} from "../undo";
 import { cropPixels } from "../history";
 import type { Layer, LayerManager, RefPlacement } from "../layers";
 
@@ -141,6 +150,88 @@ describe("StrokeBackup / pushStrokeEdit", () => {
   });
 });
 
+/** A layer holding `img`'s pixels, counting what is read from it (`reads`: "x,y wxh"). */
+function readOnlyLayer(img: ImageData) {
+  const reads: string[] = [];
+  const layer = {
+    canvas: { width: img.width, height: img.height },
+    ctx: {
+      getImageData: (x: number, y: number, w: number, h: number) => {
+        reads.push(`${x},${y} ${w}x${h}`);
+        return new ImageData(cropPixels(img.data, img.width, { x, y, w, h }), w, h);
+      },
+    },
+  } as unknown as Layer;
+  return { layer, reads };
+}
+
+/** What a shift by (`dx`, `dy`) carries off a layer holding `before`. */
+const lossOf = (before: ImageData, dx: number, dy: number) =>
+  shiftLoss(readOnlyLayer(before).layer, dx, dy);
+
+describe("the undo hook", () => {
+  it("is told which layer a tile step changed, and where; a Move tells nothing", () => {
+    const seen: (PixelChange[] | undefined)[] = [];
+    setOnHistoryApplied((changed) => seen.push(changed));
+    try {
+      const { layer, layers, paint } = bufferLayer();
+      const backup = new StrokeBackup(layer);
+      backup.keep({ x: 0, y: 0, w: W, h: H });
+      paint(5, 5);
+      paint(100, 50); // the next tile along
+      pushStrokeEdit(layers, backup);
+      history.undo();
+      history.redo();
+      const box = [{ layer, rect: { x: 0, y: 0, w: 128, h: 64 } }];
+      expect(seen).toEqual([box, box]);
+
+      seen.length = 0;
+      const all = image(new Uint8ClampedArray(W * H * 4).fill(255));
+      const moved = { shiftPixels() {}, restoreTo() {} } as unknown as LayerManager;
+      pushLayersEdit(moved, [{ layer, lost: lossOf(all, 4, 0) }], 4, 0);
+      history.undo();
+      expect(seen).toEqual([undefined]);
+    } finally {
+      setOnHistoryApplied(() => {});
+    }
+  });
+});
+
+describe("shiftLoss", () => {
+  // The Move's release read every layer whole and held them all (~1.9 GB for 20 large layers).
+  it("reads only the strip that leaves, then looks for paint a band at a time", () => {
+    const tall = { data: new Uint8ClampedArray(W * 600 * 4), width: W, height: 600 } as ImageData;
+    tall.data[(300 * W + 7) * 4 + 3] = 255; // paint in the second band, staying on the canvas
+    const { layer, reads } = readOnlyLayer(tall);
+    const lost = shiftLoss(layer, 0, 5);
+    expect(lost).toEqual({ inked: true, tiles: [] });
+    // The bottom 5 rows; then bands of 256 rows until one holds paint (the third isn't read).
+    expect(reads).toEqual(["0,595 128x5", "0,0 128x256", "0,256 128x256"]);
+  });
+
+  it("an empty layer is not inked", () => {
+    const { layer } = readOnlyLayer(image());
+    expect(shiftLoss(layer, 3, 3)).toEqual({ inked: false, tiles: [] });
+  });
+
+  it("keeps the same tiles whether a strip is read in one band or several", () => {
+    const tall = {
+      data: new Uint8ClampedArray(W * 600 * 4).fill(255),
+      width: W,
+      height: 600,
+    } as ImageData;
+    const { layer, reads } = readOnlyLayer(tall);
+    const lost = shiftLoss(layer, 10, 0);
+    // The right 10 columns, full height, in three bands; paint found there, so no further read.
+    expect(reads).toEqual(["118,0 10x256", "118,256 10x256", "118,512 10x88"]);
+    expect(lost.tiles.map((t) => `${t.x},${t.y} ${t.data.width}x${t.data.height}`)).toEqual(
+      [0, 64, 128, 192, 256, 320, 384, 448, 512, 576].map(
+        (y) => `118,${y} 10x${y === 576 ? 24 : 64}`,
+      ),
+    );
+  });
+});
+
 describe("pushLayersEdit", () => {
   it("pushes nothing when no layer changed", () => {
     const { layer, layers } = rig(image());
@@ -148,8 +239,8 @@ describe("pushLayersEdit", () => {
     pushLayersEdit(
       layers,
       [
-        { layer, before: image() },
-        { layer, before: image() },
+        { layer, lost: lossOf(image(), 5, 0) },
+        { layer, lost: lossOf(image(), 5, 0) },
       ],
       5,
       0,
@@ -165,8 +256,8 @@ describe("pushLayersEdit", () => {
     pushLayersEdit(
       layers,
       [
-        { layer, before: image() },
-        { layer, before: changed },
+        { layer, lost: lossOf(image(), 5, 0) },
+        { layer, lost: lossOf(changed, 5, 0) },
       ],
       5,
       0,
@@ -190,7 +281,7 @@ describe("pushLayersEdit", () => {
     const push = history.push.bind(history);
     history.push = (c) => ((bytes = c.bytes ?? 0), push(c));
     try {
-      pushLayersEdit(layers, [{ layer, before }], 10, 3);
+      pushLayersEdit(layers, [{ layer, lost: lossOf(before, 10, 3) }], 10, 3);
     } finally {
       history.push = push;
     }
@@ -217,7 +308,7 @@ describe("pushLayersEdit", () => {
     const push = history.push.bind(history);
     history.push = (c) => ((bytes = c.bytes ?? 0), push(c));
     try {
-      pushLayersEdit(layers, [{ layer, before }], 20, 0);
+      pushLayersEdit(layers, [{ layer, lost: lossOf(before, 20, 0) }], 20, 0);
     } finally {
       history.push = push;
     }

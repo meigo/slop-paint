@@ -4,11 +4,15 @@ import { drawTextLayout, type TextLayout, type TextSpec } from "./text-layout";
 import { canvasOp } from "./blend";
 import { drawTinted, fillTint } from "./tint";
 import { halvingSteps } from "./resize";
+import { touchThumb } from "./lib/thumb-stamp";
+
+/** How long the tint scratch may sit unused before it is let go (`LayerManager.tinted`). */
+const SCRATCH_IDLE_MS = 2000;
 
 /** Whether `c` got its memory: an iPad refuses a canvas over its limit WITHOUT an error, and it
  *  then draws nothing (see `unbackedLayerCount`). A pixel at the far corner is written and read
  *  back, then cleared. */
-function canvasBacked(c: HTMLCanvasElement): boolean {
+export function canvasBacked(c: HTMLCanvasElement): boolean {
   const ctx = c.getContext("2d");
   if (!ctx) return false;
   try {
@@ -496,12 +500,17 @@ export class LayerManager {
    *  document units, their pixels untouched until the release. Screen only: `composite` hands it
    *  to `drawTree`, the exports don't, so a drag left open can't shift a saved file. */
   moveOffset: { ids: Set<number>; dx: number; dy: number } | null = null;
-  /** The float's layer, combined with the float each frame (reused, resized as needed). */
+  /** The float's layer, combined with the float each frame (reused, resized as needed); let go
+   *  by the first ordinary redraw without a float (`composite`). */
   private floatScratch: HTMLCanvasElement | null = null;
   /** A layer's part being redrawn (`drawTree` with a rect), at that part's size. */
   private partScratch: HTMLCanvasElement | null = null;
-  /** A tinted layer as drawn, each frame (reused, resized as needed). */
+  /** A tinted layer as drawn, each frame (reused, resized as needed); let go once unused for
+   *  `SCRATCH_IDLE_MS` — not after each redraw: a drag redraws every frame and would allocate a
+   *  document-sized canvas each time. Both scratches were kept for the session, outside the
+   *  layer-memory figure (2026-11-13). */
   private tintScratch: HTMLCanvasElement | null = null;
+  private tintIdle: ReturnType<typeof setTimeout> | undefined;
   /** The layer a brush stroke is drawing on, while it is open (App sets and clears it): the only
    *  layer whose pixels change until it ends, so every OTHER tinted layer is tinted once and reused
    *  (`tintCache`). Tinting each one afresh every frame cost ~1.4 ms a layer at 1× in WebKit and
@@ -705,9 +714,10 @@ export class LayerManager {
       layer.ctx.drawImage(old, 0, 0, pxW, pxH);
       layer.ctx.imageSmoothingEnabled = true;
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      old.width = 0; // WebKit holds a canvas's pixels until it is collected
       if (layer.ref) this.renderRef(layer);
     }
-    this.floatScratch = null;
+    this.releaseFloatScratch();
   }
 
   /**
@@ -737,6 +747,7 @@ export class LayerManager {
       layer.ctx.resetTransform();
       layer.ctx.drawImage(tmp, offsetX, offsetY);
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      tmp.width = 0; // WebKit holds a canvas's pixels until it is collected
       // A reference moves with its pixels, and is re-drawn whole (the resize may have cut it).
       if (layer.ref) {
         const dx = offsetX / dpr;
@@ -779,6 +790,7 @@ export class LayerManager {
         const nctx = next.getContext("2d")!;
         nctx.imageSmoothingQuality = "high";
         nctx.drawImage(src, 0, 0, step.w, step.h);
+        src.width = 0; // WebKit holds a canvas's pixels until it is collected
         src = next;
       }
       layer.canvas.width = pxW;
@@ -787,6 +799,7 @@ export class LayerManager {
       layer.ctx.imageSmoothingQuality = "high";
       layer.ctx.drawImage(src, 0, 0, pxW, pxH);
       layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      src.width = 0;
       if (layer.ref) {
         layer.ref = {
           src: layer.ref.src,
@@ -1030,6 +1043,7 @@ export class LayerManager {
     below.ctx.globalCompositeOperation = canvasOp(src.blend);
     below.ctx.drawImage(src.tint ? this.tinted(src.canvas, src.tint) : src.canvas, 0, 0);
     below.ctx.restore();
+    touchThumb(below.id); // its pixels changed: the panel redraws its thumbnail
 
     // Remove the source layer
     loc.parent.splice(loc.index, 1);
@@ -1180,6 +1194,8 @@ export class LayerManager {
     const docPxH = Math.round(this.docHeight * dpr);
     const rect = box ? deviceRect(box, dpr, docPxW, docPxH) : null;
     if (box && !rect) return; // all of it off the page
+    const float = this.floatPreview?.() ?? null;
+    if (!float) this.releaseFloatScratch();
     ctx.save();
     ctx.resetTransform();
     if (rect) {
@@ -1190,9 +1206,14 @@ export class LayerManager {
     } else {
       ctx.clearRect(0, 0, docPxW, docPxH);
     }
-    this.drawTree(ctx, docPxW, docPxH, this.floatPreview?.() ?? null, this.moveOffset, rect);
+    this.drawTree(ctx, docPxW, docPxH, float, this.moveOffset, rect);
     ctx.restore();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  private releaseFloatScratch() {
+    if (this.floatScratch) this.floatScratch.width = 0; // WebKit frees it sooner
+    this.floatScratch = null;
   }
 
   /** `layer` with the float drawn onto it, on the reused scratch canvas. */
@@ -1253,6 +1274,11 @@ export class LayerManager {
       s.height = source.height;
     }
     drawTinted(s.getContext("2d")!, source, s.width, s.height, tint);
+    clearTimeout(this.tintIdle);
+    this.tintIdle = setTimeout(() => {
+      if (this.tintScratch) this.tintScratch.width = 0; // WebKit frees it sooner
+      this.tintScratch = null;
+    }, SCRATCH_IDLE_MS);
     return s;
   }
 
@@ -1361,6 +1387,9 @@ export class LayerManager {
     layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     layer.ctx.drawImage(tmp, dx, dy);
     layer.ctx.restore();
+    // A document-sized copy per layer, per Move and per undo of one: WebKit holds a canvas's
+    // pixels until it is collected, and a Move of many layers piled them up.
+    tmp.width = 0;
   }
 
   /** Put pixels back on one layer, at (`x`, `y`) in canvas pixels for a partial snapshot.

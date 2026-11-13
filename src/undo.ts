@@ -9,6 +9,7 @@ import {
   changedTiles,
   cropPixels,
   offCanvasRects,
+  rectsBounds,
   tileRect,
   tileSpan,
   type PixelRect,
@@ -28,10 +29,16 @@ export const history = new History();
  *  in an `export let` the setter reassigns: the production minifier treated that binding as never
  *  changing, inlined its initial no-op and dropped every call — undo restored the pixels but never
  *  redrew the screen (until the next stroke did), in every browser, while `npm run dev` was fine. */
-const hooks = { onHistoryApplied: () => {} };
-export function setOnHistoryApplied(fn: () => void) {
+const hooks: { onHistoryApplied: (changed?: PixelChange[]) => void } = {
+  onHistoryApplied: () => {},
+};
+/** `changed`: given by a step that only put TILES back (a stroke, a fill, a filter) — the layers
+ *  it wrote to, each with the box of its tiles (canvas px) — so the app redraws that part of the
+ *  screen and those thumbnails alone. Every other step gives none: redraw everything. */
+export function setOnHistoryApplied(fn: (changed?: PixelChange[]) => void) {
   hooks.onHistoryApplied = fn;
 }
+export type PixelChange = { layer: Layer; rect: PixelRect };
 
 /** Record a pixel change already made to `layer`, given its pixels from before the change. Only
  *  the tiles that changed are kept (both sides), so a stroke costs roughly the area it touched,
@@ -47,9 +54,10 @@ type Tile = { r: PixelRect; was: ImageData; now: ImageData };
  *  step would wipe redo. Its own function, so the step's closures hold the tiles alone. */
 function pushTiles(layers: LayerManager, layer: Layer, tiles: Tile[]): boolean {
   if (tiles.length === 0) return false;
+  const changed = [{ layer, rect: rectsBounds(tiles.map((t) => t.r)) }];
   const put = (side: "was" | "now") => {
     for (const t of tiles) layers.restoreTo(layer, t[side], t.r.x, t.r.y);
-    hooks.onHistoryApplied();
+    hooks.onHistoryApplied(changed);
   };
   history.push({ undo: () => put("was"), redo: () => put("now"), bytes: tilesBytes(tiles) });
   return true;
@@ -85,10 +93,14 @@ export function pushRegionsEdit(
     .map((p) => ({ layer: p.layer, tiles: regionTiles(p.layer, p.rect, p.before) }))
     .filter((p) => p.tiles.length > 0);
   if (changed.length === 0) return false;
+  const where = changed.map((p) => ({
+    layer: p.layer,
+    rect: rectsBounds(p.tiles.map((t) => t.r)),
+  }));
   const put = (side: "was" | "now") => {
     for (const p of changed)
       for (const t of p.tiles) layers.restoreTo(p.layer, t[side], t.r.x, t.r.y);
-    hooks.onHistoryApplied();
+    hooks.onHistoryApplied(where);
   };
   const bytes = changed.reduce((sum, p) => sum + tilesBytes(p.tiles), 0);
   history.push({
@@ -174,18 +186,18 @@ export function pushStrokeEdit(layers: LayerManager, backup: StrokeBackup): bool
  *  the release made. Kept as changed tiles, a Move of a few full layers took both sides of every
  *  tile it touched: past the 256 MB budget it cleared all older history, and the next stroke then
  *  evicted the Move itself. A reference re-drawn from its original (`redrawn`) keeps no pixels at
- *  all: undo puts its placement back and draws it again, as `pushRefEdit` does. `before` is each
- *  layer's pixels from before the shift (only read here, not kept). */
+ *  all: undo puts its placement back and draws it again, as `pushRefEdit` does. `lost` is each
+ *  shifted layer's `shiftLoss`, read before its shift. */
 export function pushLayersEdit(
   layers: LayerManager,
-  edits: { layer: Layer; before?: ImageData; refBefore?: RefPlacement; redrawn?: boolean }[],
+  edits: { layer: Layer; lost?: ShiftLoss; refBefore?: RefPlacement; redrawn?: boolean }[],
   dx: number,
   dy: number,
 ) {
   const parts = edits
     .map((e) => ({
       layer: e.layer,
-      lost: e.redrawn || !e.before ? null : lostTiles(e.before, dx, dy),
+      lost: e.redrawn || !e.lost ? null : e.lost,
       refBefore: e.refBefore,
       refAfter: e.layer.ref,
     }))
@@ -214,22 +226,45 @@ export function pushLayersEdit(
   history.push({ undo: () => put("was"), redo: () => put("now"), bytes, layers: parts.length });
 }
 
-/** What a shift by (`dx`, `dy`) carries off the canvas, as the tiles of it holding any paint, and
- *  whether the layer held any paint at all. Its own function, so no closure keeps `before`. */
-function lostTiles(before: ImageData, dx: number, dy: number) {
-  const { width: w, height: h, data } = before;
-  const px = new Uint32Array(data.buffer, data.byteOffset, w * h);
-  const inked = px.some((v) => v !== 0);
-  const tiles: { x: number; y: number; data: ImageData }[] = [];
-  if (!inked) return { inked, tiles };
+/** What a shift by (`dx`, `dy`) will carry off `layer`'s canvas, as the tiles of it holding any
+ *  paint, and whether the layer holds any paint at all. */
+export type ShiftLoss = { inked: boolean; tiles: { x: number; y: number; data: ImageData }[] };
+
+/** Rows read at a time by `shiftLoss`: a multiple of the tile, so the tiles are those of the whole
+ *  strip. */
+const LOSS_ROWS = 4 * UNDO_TILE;
+
+/** `layer`'s `ShiftLoss` for a shift by (`dx`, `dy`) — call it BEFORE the shift. Only the strips
+ *  that leave the canvas are read, a band of rows at a time (2026-11-13): the Move's release took
+ *  a whole snapshot of every layer and held them all until the step was pushed, ~1.9 GB for 20
+ *  layers at 4000×6000. */
+export function shiftLoss(layer: Layer, dx: number, dy: number): ShiftLoss {
+  const { width: w, height: h } = layer.canvas;
+  const tiles: ShiftLoss["tiles"] = [];
   for (const r of offCanvasRects(w, h, dx, dy)) {
-    const strip = cropPixels(data, w, r);
-    for (const t of changedTiles(strip, new Uint8ClampedArray(strip.length), r.w, r.h)) {
-      const at = { x: r.x + t.x, y: r.y + t.y, w: t.w, h: t.h };
-      tiles.push({ x: at.x, y: at.y, data: new ImageData(cropPixels(data, w, at), t.w, t.h) });
+    const empty = new Uint8ClampedArray(r.w * Math.min(LOSS_ROWS, r.h) * 4);
+    for (let y = r.y; y < r.y + r.h; y += LOSS_ROWS) {
+      const rows = Math.min(LOSS_ROWS, r.y + r.h - y);
+      const band = layer.ctx.getImageData(r.x, y, r.w, rows).data;
+      for (const t of changedTiles(band, empty, r.w, rows)) {
+        const data = new ImageData(cropPixels(band, r.w, t), t.w, t.h);
+        tiles.push({ x: r.x + t.x, y: y + t.y, data });
+      }
     }
   }
-  return { inked, tiles };
+  return { inked: tiles.length > 0 || anyInk(layer), tiles };
+}
+
+/** Whether `layer` holds any paint: read a band of rows at a time, stopping at the first with
+ *  some. */
+function anyInk(layer: Layer): boolean {
+  const { width: w, height: h } = layer.canvas;
+  for (let y = 0; y < h; y += LOSS_ROWS) {
+    const rows = Math.min(LOSS_ROWS, h - y);
+    const d = layer.ctx.getImageData(0, y, w, rows).data;
+    if (new Uint32Array(d.buffer, d.byteOffset, w * rows).some((v) => v !== 0)) return true;
+  }
+  return false;
 }
 
 /**
