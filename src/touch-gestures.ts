@@ -86,6 +86,9 @@ export function setupTouchGestures(
   let maxSimultaneousTouches = 0;
   let lastTouchEndTime = 0;
   let lastSingleTapTime = 0;
+  // The view when the first finger landed: a tap puts it back. The pan and pinch follow the
+  // fingers from the first move, and a tap's few px of jitter left an undo tap's zoom at 101%.
+  let startView = { zoom: 1, panX: 0, panY: 0, rotation: 0 };
 
   function onPointerDown(e: PointerEvent) {
     if (e.pointerType !== "touch") return;
@@ -110,6 +113,12 @@ export function setupTouchGestures(
     if (starting) {
       gestureDidMove = false;
       maxSimultaneousTouches = 1;
+      startView = {
+        zoom: viewport.zoom,
+        panX: viewport.panX,
+        panY: viewport.panY,
+        rotation: viewport.rotation,
+      };
     } else {
       maxSimultaneousTouches = Math.max(maxSimultaneousTouches, touches.size);
     }
@@ -186,6 +195,8 @@ export function setupTouchGestures(
     if (touches.size === 0 && !gestureDidMove) {
       const duration = e.timeStamp - t.startTime;
       if (duration < TAP_MAX_DURATION) {
+        restoreStartView();
+        pinchActive = false; // put back, nothing to snap
         checkTapGesture();
       }
     }
@@ -323,6 +334,24 @@ export function setupTouchGestures(
   }
 
   // --- Tap detection ---
+
+  /** A tap moves nothing: undo what its jitter did to the view. */
+  function restoreStartView() {
+    const v = startView;
+    if (
+      viewport.zoom === v.zoom &&
+      viewport.panX === v.panX &&
+      viewport.panY === v.panY &&
+      viewport.rotation === v.rotation
+    )
+      return;
+    viewport.zoom = v.zoom;
+    viewport.panX = v.panX;
+    viewport.panY = v.panY;
+    viewport.rotation = v.rotation;
+    viewport.applyTransformPublic();
+    callbacks.onViewportChange();
+  }
 
   function checkTapGesture() {
     const count = maxSimultaneousTouches;
