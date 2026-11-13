@@ -54,6 +54,25 @@ export function looksBlanked(
   return emptied > 0 && emptied > historySteps;
 }
 
+/**
+ * The blank-layers probe while a lifted selection floats on layer `pendingId`: that layer counts
+ * as it did at the last save (`before`), whatever the probe read. Until the float is applied (an
+ * undo step) or cancelled (none), what its layer holds isn't settled: a paste floating on an empty
+ * layer read as inked, and Esc then looked like a blanking; a layer's whole content lifted and
+ * dragged off the page read as emptied.
+ */
+export function carryPendingLayer(
+  inked: ReadonlySet<number>,
+  before: ReadonlySet<number>,
+  pendingId: number | null,
+): Set<number> {
+  const out = new Set(inked);
+  if (pendingId === null) return out;
+  if (before.has(pendingId)) out.add(pendingId);
+  else out.delete(pendingId);
+  return out;
+}
+
 /** Image memory the layers take: 4 bytes a pixel, at the canvas's device resolution. */
 export function layerMemoryBytes(layers: number, w: number, h: number, dpr: number): number {
   return layers * Math.round(w * dpr) * Math.round(h * dpr) * 4;

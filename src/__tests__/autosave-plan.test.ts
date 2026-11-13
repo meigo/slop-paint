@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { History } from "../history";
 import {
+  carryPendingLayer,
   formatBytes,
   layerMemoryBytes,
   looksBlanked,
@@ -37,6 +38,48 @@ describe("planCheckpoint", () => {
       ["autosave-cp-2", 10],
       ["autosave-cp-0", 15],
     ]);
+  });
+});
+
+describe("planCheckpoint, forced (the document is being replaced)", () => {
+  it("makes a checkpoint however new the newest is, on the oldest's key", () => {
+    const list: AutosaveEntry[] = [
+      { ...meta(10 * MIN), key: "autosave-cp-2" },
+      { ...meta(0), key: "autosave-cp-0" },
+      { ...meta(5 * MIN), key: "autosave-cp-1" },
+    ];
+    const p = planCheckpoint(list, meta(10 * MIN + 1), -Infinity, 3);
+    expect(p.write).toBe("autosave-cp-0");
+    expect(p.list.map((e) => e.key)).toEqual(["autosave-cp-1", "autosave-cp-2", "autosave-cp-0"]);
+    // A latest saved before metas existed (time 0) still gets one.
+    expect(planCheckpoint(list.slice(0, 1), meta(0), -Infinity, 3).write).toBe("autosave-cp-0");
+  });
+});
+
+describe("carryPendingLayer (a float is lifted while the guard probes)", () => {
+  const ids = (...n: number[]) => new Set(n);
+
+  it("changes nothing with no float", () => {
+    expect(carryPendingLayer(ids(1, 2), ids(1), null)).toEqual(ids(1, 2));
+  });
+
+  it("a paste floating on an empty layer doesn't make it inked: Esc is no blanking", () => {
+    const all = ids(1, 2);
+    const saved = carryPendingLayer(ids(1, 2), ids(1), 2); // probed with the float drawn in
+    expect(saved).toEqual(ids(1));
+    expect(looksBlanked(saved, ids(1), all, 0)).toBe(false); // cancelled: layer 2 empty again
+  });
+
+  it("a layer's content floating off the page doesn't read as emptied", () => {
+    const all = ids(1, 2);
+    const now = carryPendingLayer(ids(1), ids(1, 2), 2);
+    expect(now).toEqual(ids(1, 2));
+    expect(looksBlanked(ids(1, 2), now, all, 0)).toBe(false);
+  });
+
+  it("the other layers going blank is still caught", () => {
+    const now = carryPendingLayer(ids(), ids(1, 2, 3), 2);
+    expect(looksBlanked(ids(1, 2, 3), now, ids(1, 2, 3), 0)).toBe(true);
   });
 });
 

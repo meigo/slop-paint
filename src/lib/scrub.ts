@@ -50,3 +50,18 @@ export function scrubbedValue({
   const rounded = Number(snapped.toFixed(stepDecimals(step)));
   return Math.max(min, Math.min(max, rounded));
 }
+
+/**
+ * What the text typed into a `NumberField` means. `shown` is the field's CURRENT value as text:
+ * the same text is nothing new (null) — compared with the text at focus instead, typing a value
+ * back (1920 → 192 → 1920) sent nothing, while the 192 on the way had been sent live, so the field
+ * showed 1920 and its dialog held 192. An emptied or non-numeric draft is nothing (null) where the
+ * field clamps; with `clamp` off it is NaN, so the caller refuses it with its reason — sending
+ * nothing left the last digit standing (Width 1920 emptied: the dialog held 1, a 1-px document).
+ */
+export function typedNumber(draft: string, shown: string, clamp: boolean): number | null {
+  if (draft === shown) return null;
+  const v = Number(draft);
+  if (draft.trim() === "" || !Number.isFinite(v)) return clamp ? null : NaN;
+  return v;
+}

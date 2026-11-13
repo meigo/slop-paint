@@ -6,7 +6,7 @@
   // confirmed the old value), and clamped on Enter or blur. From
   // slop-vector-editor's `NumberField` (2026-10-21), without its label column, mixed value and
   // undo bracket: here it only sits in dialogs, whose OK is the one undo step.
-  import { SCRUB_THRESHOLD_PX, scrubbedValue } from "./scrub";
+  import { SCRUB_THRESHOLD_PX, scrubbedValue, typedNumber } from "./scrub";
 
   let {
     value,
@@ -38,17 +38,15 @@
 
   let editing = $state(false);
   let draft = $state("");
-  let initial = "";
   /** The value shown while dragging — the field owns its text then, as it does while typing. */
   let dragging = $state<number | null>(null);
-  const fmt = (v: number) => String(Math.round(v * 100) / 100);
+  // An emptied field (NaN, with `clamp` off) shows empty.
+  const fmt = (v: number) => (Number.isFinite(v) ? String(Math.round(v * 100) / 100) : "");
   const shown = $derived(dragging !== null ? fmt(dragging) : editing ? draft : fmt(value));
 
-  /** The typed number, unclamped; null when nothing new (or nothing numeric) was typed. */
+  /** The typed number, unclamped; null when nothing new was typed (see `typedNumber`). */
   function typedRaw(): number | null {
-    if (draft === initial) return null;
-    const v = Number(draft);
-    return draft.trim() === "" || !Number.isFinite(v) ? null : v;
+    return typedNumber(draft, fmt(value), clamp);
   }
 
   /** The typed value as committed: clamped unless `clamp` is off. */
@@ -58,7 +56,7 @@
   }
 
   function send(v: number | null) {
-    if (v !== null && v !== value) onchange(v);
+    if (v !== null && !Object.is(v, value)) onchange(v);
   }
 
   function onTyped(e: Event & { currentTarget: HTMLInputElement }) {
@@ -86,7 +84,9 @@
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 || scrub) return;
     // A value outside the range (typed with `clamp` off) drags from the nearest end.
-    const start = Math.min(max, Math.max(min, value));
+    // An emptied one (NaN) from the low end.
+    const from = Number.isFinite(value) ? value : Number.isFinite(min) ? min : 0;
+    const start = Math.min(max, Math.max(min, from));
     scrub = { id: e.pointerId, startX: e.clientX, startValue: start, moved: false, last: value };
     // No preventDefault: a press that never travels still focuses the field for typing.
     window.addEventListener("pointermove", onpointermove);
@@ -107,7 +107,7 @@
       if (editing) {
         const typed = typedValue();
         editing = false;
-        if (typed !== null) {
+        if (typed !== null && Number.isFinite(typed)) {
           send(typed);
           scrub.startValue = Math.min(max, Math.max(min, typed));
           scrub.last = typed;
@@ -175,7 +175,6 @@
     // the drag's start value was left showing as the draft once it ended.
     if (dragging !== null) return e.currentTarget.blur();
     draft = e.currentTarget.value;
-    initial = draft;
     editing = true;
   }}
   oninput={onTyped}
