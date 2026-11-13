@@ -70,6 +70,16 @@ export function drawTinted(
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "copy";
   ctx.drawImage(source, 0, 0, w, h);
+  ctx.restore();
+  fillTint(ctx, w, h, tint);
+}
+
+/** Tint what `ctx` already holds over `w` × `h` (transform reset): every pixel takes `tint` and
+ *  keeps its alpha. The one place a tint's look is defined (`drawTinted`, and the partial redraw's
+ *  parts in `drawTree`). */
+export function fillTint(ctx: CanvasRenderingContext2D, w: number, h: number, tint: string) {
+  ctx.save();
+  ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-in";
   ctx.fillStyle = tint;
   ctx.fillRect(0, 0, w, h);

@@ -27,7 +27,7 @@ export const UNDO_TILE = 64;
  *  `height`) differ, in row order; empty when they are identical. Compares whole pixels 32 bits at
  *  a time — this runs on whole-layer snapshots (fills, Merge down). Tiles, not one bounding box: a
  *  thin line across the page has a bounding box as big as the page. Strokes keep their tiles as
- *  they go instead (`tilesIn`, `StrokeBackup` in undo.ts). */
+ *  they go instead (`tileSpan`, `StrokeBackup` in undo.ts). */
 export function changedTiles(
   a: Uint8ClampedArray,
   b: Uint8ClampedArray,
@@ -57,35 +57,51 @@ export function changedTiles(
   return out;
 }
 
-/** The `tile`-px tiles (on the same grid as `changedTiles`, clipped at the edges) that `r` touches
- *  on a `width` × `height` canvas, in row order, each with its index on the grid (`key`); none
- *  when `r` is empty or off the canvas. */
+/** The grid tiles `r` touches on a `width` × `height` canvas (`changedTiles`' grid): columns
+ *  `tx0`…`tx1 − 1`, rows `ty0`…`ty1 − 1`, `across` tiles a row (a tile's key is `ty × across + tx`);
+ *  null when `r` is empty or off the canvas. No object per tile: `StrokeBackup` runs this every
+ *  frame of a stroke. */
+export function tileSpan(
+  r: PixelRect,
+  width: number,
+  height: number,
+  tile = UNDO_TILE,
+): { tx0: number; ty0: number; tx1: number; ty1: number; across: number } | null {
+  if (r.w <= 0 || r.h <= 0) return null;
+  const across = Math.ceil(width / tile);
+  const tx0 = Math.max(0, Math.floor(r.x / tile));
+  const ty0 = Math.max(0, Math.floor(r.y / tile));
+  const tx1 = Math.min(across, Math.ceil((r.x + r.w) / tile));
+  const ty1 = Math.min(Math.ceil(height / tile), Math.ceil((r.y + r.h) / tile));
+  return tx1 > tx0 && ty1 > ty0 ? { tx0, ty0, tx1, ty1, across } : null;
+}
+
+/** Grid tile (`tx`, `ty`) as a rect, clipped at the canvas edges. */
+export function tileRect(
+  tx: number,
+  ty: number,
+  width: number,
+  height: number,
+  tile = UNDO_TILE,
+): PixelRect {
+  const x = tx * tile,
+    y = ty * tile;
+  return { x, y, w: Math.min(tile, width - x), h: Math.min(tile, height - y) };
+}
+
+/** The tiles of `tileSpan` as rects, in row order, each with its key. */
 export function tilesIn(
   r: PixelRect,
   width: number,
   height: number,
   tile = UNDO_TILE,
 ): (PixelRect & { key: number })[] {
-  if (r.w <= 0 || r.h <= 0) return [];
-  const x0 = Math.max(0, Math.floor(r.x / tile));
-  const y0 = Math.max(0, Math.floor(r.y / tile));
-  const x1 = Math.min(Math.ceil(width / tile), Math.ceil((r.x + r.w) / tile));
-  const y1 = Math.min(Math.ceil(height / tile), Math.ceil((r.y + r.h) / tile));
-  const across = Math.ceil(width / tile);
+  const span = tileSpan(r, width, height, tile);
   const out: (PixelRect & { key: number })[] = [];
-  for (let ty = y0; ty < y1; ty++) {
-    for (let tx = x0; tx < x1; tx++) {
-      const x = tx * tile;
-      const y = ty * tile;
-      out.push({
-        x,
-        y,
-        w: Math.min(tile, width - x),
-        h: Math.min(tile, height - y),
-        key: ty * across + tx,
-      });
-    }
-  }
+  if (!span) return out;
+  for (let ty = span.ty0; ty < span.ty1; ty++)
+    for (let tx = span.tx0; tx < span.tx1; tx++)
+      out.push({ ...tileRect(tx, ty, width, height, tile), key: ty * span.across + tx });
   return out;
 }
 

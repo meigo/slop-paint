@@ -126,6 +126,8 @@ export function loadPsd(
   onRefDecoded?: () => void,
   /** Called with a reference's name when its original can't be decoded. */
   onRefFailed?: (name: string) => void,
+  /** Called once the new tree is built, just before it replaces the open one (not on a failure). */
+  beforeSwap?: () => void,
 ): { width: number; height: number } {
   // No thumbnail (unused), and no composite when the file has layers (ag-psd still reads it for a
   // flat file, which needs it): each was another decoded image held through the open.
@@ -239,6 +241,7 @@ export function loadPsd(
   // needs an active layer — without one every tool and the layer strip threw.
   if (layersLeftAfter(tree, []) === 0) tree.push(fileSizedLayer("Layer 1"));
 
+  beforeSwap?.();
   manager.tree = tree;
   // Set active to the topmost layer
   const flat = manager.flatLayers();
@@ -260,6 +263,8 @@ export function isPsdBuffer(buffer: ArrayBuffer): boolean {
 export function loadImageDocument(
   image: ImageBitmap,
   manager: LayerManager,
+  /** As `loadPsd`'s: just before the new layers replace the open ones. */
+  beforeSwap?: () => void,
 ): { width: number; height: number } {
   const w = image.width;
   const h = image.height;
@@ -278,6 +283,7 @@ export function loadImageDocument(
     manager.docWidth = oldW; // the caller sets the size for good
     manager.docHeight = oldH;
   }
+  beforeSwap?.();
   manager.tree = [bg, top];
   manager.activeId = top.id;
   return { width: w, height: h };

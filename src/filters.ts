@@ -159,13 +159,15 @@ const SRGB_TO_LINEAR = (() => {
   return t;
 })();
 
+/** Linear light of an sRGB value (0–255, may be fractional), interpolated in the table. */
+function lin(v: number): number {
+  const i = Math.floor(v);
+  const f = v - i;
+  return i >= 255 ? SRGB_TO_LINEAR[255] : SRGB_TO_LINEAR[i] * (1 - f) + SRGB_TO_LINEAR[i + 1] * f;
+}
+
 /** OKLab of an sRGB colour (0–255 each, may be fractional) into `out` at `o`. */
 function oklab(r: number, g: number, b: number, out: Float64Array, o: number) {
-  const lin = (v: number) => {
-    const i = Math.floor(v);
-    const f = v - i;
-    return i >= 255 ? SRGB_TO_LINEAR[255] : SRGB_TO_LINEAR[i] * (1 - f) + SRGB_TO_LINEAR[i + 1] * f;
-  };
   const R = lin(r),
     G = lin(g),
     B = lin(b);
@@ -428,26 +430,58 @@ export function filterReach(spec: FilterSpec, dpr = 1): number {
   }
 }
 
+/** Each kind's settings at its furthest reach (the dialog's slider maxima; the shadow at 0°, where
+ *  its offset is the whole distance along one axis). `filterMaxReach` is `filterReach` of these, so
+ *  the two can't drift apart: a reach past the max reads outside the snapshot App keeps. */
+const MAX_REACH_SPECS: Partial<Record<FilterKind, FilterSpec>> = {
+  blur: { ...FILTER_DEFAULTS.blur, radius: BLUR_MAX },
+  sharpen: { ...FILTER_DEFAULTS.sharpen, radius: SHARPEN_MAX },
+  glow: { ...FILTER_DEFAULTS.glow, size: SHADOW_BLUR_MAX },
+  shadow: {
+    ...FILTER_DEFAULTS.shadow,
+    blur: SHADOW_BLUR_MAX,
+    distance: SHADOW_DISTANCE_MAX,
+    angle: 0,
+  },
+  threshold: { ...FILTER_DEFAULTS.threshold, smooth: true },
+  posterize: { ...FILTER_DEFAULTS.posterize, smooth: true },
+  halftone: { ...FILTER_DEFAULTS.halftone, shape: "dots", cell: HALFTONE_CELL_MAX },
+};
+
 /** The most `filterReach` can be for `kind` at any setting: App keeps that much round the ink. */
 export function filterMaxReach(kind: FilterKind, dpr = 1): number {
-  switch (kind) {
-    case "blur":
-      return blurPlan(BLUR_MAX * dpr).reach;
-    case "sharpen":
-      return blurPlan(SHARPEN_MAX * dpr).reach;
-    case "glow":
-      return blurPlan(SHADOW_BLUR_MAX * dpr).reach;
-    case "shadow":
-      return blurPlan(SHADOW_BLUR_MAX * dpr).reach + Math.ceil(SHADOW_DISTANCE_MAX * dpr);
-    case "threshold":
-    case "posterize":
-      return EDGE_R + 1;
-    case "halftone":
-      return Math.ceil(1.5 * HALFTONE_CELL_MAX * dpr) + 2;
-    default:
-      return 0;
-  }
+  const spec = MAX_REACH_SPECS[kind];
+  return spec ? filterReach(spec, dpr) : 0;
 }
+
+/** A rectangle in whole canvas (device) pixels. */
+type PxRect = { x: number; y: number; w: number; h: number };
+
+/** Where a filter reaching `reach` px can change anything: the ink's bounds grown by the reach,
+ *  inside the layer (`cw` × `ch`), and with a marquee its box grown by the reach too (the blur reads
+ *  paint just outside the marquee; the write is clipped to it). Null when that is empty. */
+export function filterRect(
+  ink: PxRect,
+  marquee: PxRect | null,
+  cw: number,
+  ch: number,
+  reach: number,
+): PxRect | null {
+  let x0 = Math.max(0, ink.x - reach),
+    y0 = Math.max(0, ink.y - reach),
+    x1 = Math.min(cw, ink.x + ink.w + reach),
+    y1 = Math.min(ch, ink.y + ink.h + reach);
+  if (marquee) {
+    x0 = Math.max(x0, marquee.x - reach);
+    y0 = Math.max(y0, marquee.y - reach);
+    x1 = Math.min(x1, marquee.x + marquee.w + reach);
+    y1 = Math.min(y1, marquee.y + marquee.h + reach);
+  }
+  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+
+export const sameRect = (a: PxRect | null, b: PxRect | null) =>
+  a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
 
 /** Where a drop shadow falls, in whole device px: away from the light (y down). */
 export function shadowOffset(s: ShadowSpec, dpr = 1): { dx: number; dy: number } {
@@ -475,13 +509,14 @@ export function colourToAlphaPixel(
   key: readonly [number, number, number],
   out: number[],
 ) {
-  const c = [r / 255, g / 255, b / 255];
-  let alpha = 0;
-  for (let i = 0; i < 3; i++) {
-    const k = key[i] / 255;
-    const v = c[i] > k ? (c[i] - k) / (1 - k) : c[i] < k ? (k - c[i]) / k : 0;
-    if (v > alpha) alpha = v;
-  }
+  // Plain locals, no array: this runs per pixel on every preview frame.
+  const cr = r / 255,
+    cg = g / 255,
+    cb = b / 255;
+  const kr = key[0] / 255,
+    kg = key[1] / 255,
+    kb = key[2] / 255;
+  const alpha = Math.max(channelAlpha(cr, kr), channelAlpha(cg, kg), channelAlpha(cb, kb));
   if (alpha < 1e-6) {
     out[0] = r;
     out[1] = g;
@@ -489,11 +524,15 @@ export function colourToAlphaPixel(
     out[3] = 0;
     return;
   }
-  for (let i = 0; i < 3; i++) {
-    const k = key[i] / 255;
-    out[i] = Math.round(((c[i] - k) / alpha + k) * 255);
-  }
+  out[0] = Math.round(((cr - kr) / alpha + kr) * 255);
+  out[1] = Math.round(((cg - kg) / alpha + kg) * 255);
+  out[2] = Math.round(((cb - kb) / alpha + kb) * 255);
   out[3] = alpha;
+}
+
+/** The least alpha (0–1) that, over key value `k`, gives value `c` (both 0–1). */
+function channelAlpha(c: number, k: number): number {
+  return c > k ? (c - k) / (1 - k) : c < k ? (k - c) / k : 0;
 }
 
 /** A horizontal pass over `w`×`h` floats, the edge value repeated past either end — at the canvas
@@ -615,8 +654,11 @@ function blurBuffers(n: number): Float32Array[] {
     blurBufs = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
   return blurBufs.map((b) => b.subarray(0, n));
 }
+/** Halftone dots' per-cell planes (`halftoneDots`). */
+let dotBufs = new Float32Array(0);
 export function releaseFilterBuffers() {
   blurBufs = [];
+  dotBufs = new Float32Array(0);
 }
 
 /** Luma histogram of the painted pixels, each counted by its alpha (a faint edge counts little). */
@@ -638,7 +680,14 @@ function oklabToRgb(L: number, a: number, b: number, out: Float64Array): boolean
   out[1] = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
   out[2] = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
   const E = 1e-7;
-  return out.every((v) => v >= -E && v <= 1 + E);
+  return (
+    out[0] >= -E &&
+    out[0] <= 1 + E &&
+    out[1] >= -E &&
+    out[1] <= 1 + E &&
+    out[2] >= -E &&
+    out[2] <= 1 + E
+  );
 }
 
 /** Linear light (0–1) to an sRGB byte. */
@@ -864,13 +913,18 @@ function halftoneDots(
   const ni = i1 - i0 + 1,
     nj = j1 - j0 + 1;
   const nc = ni * nj;
-  // Per cell: pixel count, tone sum, alpha sum, and alpha-weighted colour sums.
-  const cnt = new Float32Array(nc),
-    tone = new Float32Array(nc),
-    al = new Float32Array(nc),
-    cr = new Float32Array(nc),
-    cg = new Float32Array(nc),
-    cb = new Float32Array(nc);
+  // Per cell: pixel count, tone sum, alpha sum, and alpha-weighted colour sums; then the dot's
+  // radius and whether it passes half a cell. Kept between previews (`dotBufs`, as the blur's): new
+  // arrays every frame were ~160 MB a slider tick at a small cell on a full 4000×6000 layer.
+  if (dotBufs.length < nc * 8) dotBufs = new Float32Array(nc * 8);
+  dotBufs.fill(0, 0, nc * 8);
+  const plane = (i: number) => dotBufs.subarray(i * nc, (i + 1) * nc);
+  const cnt = plane(0),
+    tone = plane(1),
+    al = plane(2),
+    cr = plane(3),
+    cg = plane(4),
+    cb = plane(5);
   for (let y = 0, p = 0; y < h; y++) {
     const py = oy + y + 0.5;
     for (let x = 0; x < w; x++, p += 4) {
@@ -892,8 +946,8 @@ function halftoneDots(
     }
   }
   // Each cell's dot radius and colour, and whether the dot passes half a cell (overlaps).
-  const rad = new Float32Array(nc);
-  const big = new Uint8Array(nc);
+  const rad = plane(6);
+  const big = plane(7); // 0 or 1
   for (let k = 0; k < nc; k++) {
     if (!cnt[k] || !al[k]) continue;
     rad[k] = dotRadius(tone[k] / cnt[k], cell);
@@ -1391,7 +1445,7 @@ export function applyFilter(
     }
     case "hueSat": {
       // Art repeats colours (flat fills, a gradient's few hundred): a direct-mapped table of the
-      // colours already converted, so most pixels skip the HSL round trip.
+      // colours already converted, so most pixels skip the OKLCH round trip.
       const keys = new Int32Array(HUE_CACHE).fill(-1);
       const vals = new Uint8ClampedArray(HUE_CACHE * 3);
       for (let p = 0; p < n; p += 4) {
@@ -1416,7 +1470,7 @@ export function applyFilter(
     }
     case "threshold": {
       // Judged as the pixel looks on white, so a faint grey edge counts as light. Smooth: each
-      // pixel's share of ink comes from how far the level lies from it (`cutCoverage` over the
+      // pixel's share of ink comes from how far the level lies from it (`fieldShare` over the
       // "seen" plane), so the cut through a soft shape is antialiased instead of stair-stepped.
       const white = spec.paper === "white";
       const m = w * h;

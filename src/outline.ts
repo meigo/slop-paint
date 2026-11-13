@@ -365,3 +365,28 @@ export function alphaBounds(
   }
   return maxX < 0 ? null : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
+
+/** `alphaBounds` of a w × h image read `strip` rows at a time (`read(y, rows)` gives those rows'
+ *  RGBA), never whole: a whole-layer read per layer piled up gigabytes on a big group before the
+ *  collector caught up (2026-11-11 review). */
+export function stripBounds(
+  read: (y: number, rows: number) => Uint8ClampedArray,
+  w: number,
+  h: number,
+  strip = 256,
+): { x: number; y: number; w: number; h: number } | null {
+  let x0 = Infinity,
+    y0 = Infinity,
+    x1 = -Infinity,
+    y1 = -Infinity;
+  for (let y = 0; y < h; y += strip) {
+    const rows = Math.min(strip, h - y);
+    const b = alphaBounds(read(y, rows), w, rows);
+    if (!b) continue;
+    x0 = Math.min(x0, b.x);
+    x1 = Math.max(x1, b.x + b.w);
+    y0 = Math.min(y0, y + b.y);
+    y1 = Math.max(y1, y + b.y + b.h);
+  }
+  return x0 < x1 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
