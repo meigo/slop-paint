@@ -323,3 +323,94 @@ describe("a paste while a marquee press is held", () => {
     expect(sel.rect).toEqual({ x: 100, y: 100, w: 2, h: 2 });
   });
 });
+
+describe("a mesh that was moved but not bent", () => {
+  it("still counts as unbent, so it may go coarser", () => {
+    sel.pixelRatio = () => 1;
+    sel.pasteFloat(fakeCanvas(100, 100).canvas, { x: 0, y: 0, w: 100, h: 100 });
+    sel.beginWarp(4, 4);
+    expect(sel.warpUntouched).toBe(true);
+    // Dragging the whole mesh moves every point but not the matrix: it read as bent, and − / W
+    // were refused as "would lose the bends".
+    sel.startDrag("move", 50, 50);
+    sel.updateDrag(73.5, 61.25);
+    sel.endDrag();
+    expect(sel.warpGrid[0][0]).toEqual({ x: 23.5, y: 11.25 });
+    expect(sel.warpUntouched).toBe(true);
+    sel.densifyWarp(3, 3);
+    expect(sel.warpUntouched).toBe(true);
+  });
+
+  it("a dragged inner point is a bend; a dragged corner of a Distort is not", () => {
+    sel.pasteFloat(fakeCanvas(100, 100).canvas, { x: 0, y: 0, w: 100, h: 100 });
+    sel.beginWarp(3, 3);
+    sel.startDrag(sel.hitTest(50, 50), 50, 50);
+    sel.updateDrag(60, 55);
+    sel.endDrag();
+    expect(sel.warpGrid[1][1]).toEqual({ x: 60, y: 55 });
+    expect(sel.warpUntouched).toBe(false);
+
+    sel.pasteFloat(fakeCanvas(100, 100).canvas, { x: 0, y: 0, w: 100, h: 100 });
+    sel.beginWarp(2, 2);
+    sel.startDrag(sel.hitTest(100, 100), 100, 100);
+    sel.updateDrag(120, 130);
+    sel.endDrag();
+    expect(sel.warpUntouched).toBe(true); // four corners hold no bend to lose
+    sel.densifyWarp(3, 3);
+    expect(sel.warpGrid[1][1]).toEqual({ x: 55, y: 57.5 });
+    expect(sel.warpUntouched).toBe(true);
+  });
+});
+
+describe("a lift lying where it was lifted (Apply puts the layer back as it was)", () => {
+  function liftLasso() {
+    sel.pixelRatio = () => 1;
+    lasso([
+      { x: 10.6, y: 20.2 },
+      { x: 60.2, y: 20.2 },
+      { x: 60.2, y: 70.7 },
+      { x: 10.6, y: 70.7 },
+    ]);
+    sel.beginTransform(sel.liftPixels(layerCtx(1).ctx, 1)!);
+  }
+
+  it("is untouched until it moves, and again when it is moved back", () => {
+    liftLasso();
+    expect(sel.liftUntouched).toBe(true);
+    sel.startDrag("move", 30, 30);
+    sel.updateDrag(42, 30);
+    sel.endDrag();
+    expect(sel.liftUntouched).toBe(false);
+    sel.startDrag("move", 42, 30);
+    sel.updateDrag(30, 30);
+    sel.endDrag();
+    expect(sel.liftUntouched).toBe(true);
+  });
+
+  it("a flip, a scale or a bent warp is a change; an untouched warp is not", () => {
+    liftLasso();
+    sel.flip("h");
+    expect(sel.liftUntouched).toBe(false);
+    sel.flip("h");
+    expect(sel.liftUntouched).toBe(true);
+    sel.beginWarp(3, 3);
+    expect(sel.liftUntouched).toBe(true);
+    sel.startDrag("move", 30, 40);
+    sel.updateDrag(35, 40);
+    sel.endDrag();
+    expect(sel.liftUntouched).toBe(false);
+  });
+
+  it("a paste is never one: it has to be drawn", () => {
+    sel.pasteFloat(fakeCanvas(20, 20).canvas, { x: 5, y: 5, w: 20, h: 20 });
+    expect(sel.liftUntouched).toBe(false);
+    // nor a paste that follows a lift
+    liftLasso();
+    sel.commit();
+    sel.pasteFloat(fakeCanvas(20, 20).canvas, { x: 5, y: 5, w: 20, h: 20 });
+    expect(sel.liftUntouched).toBe(false);
+    // nor a plain marquee
+    sel.selectRect({ x: 0, y: 0, w: 10, h: 10 });
+    expect(sel.liftUntouched).toBe(false);
+  });
+});

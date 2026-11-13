@@ -4305,7 +4305,10 @@
       const before = preSelectionSnapshot;
       preSelectionSnapshot = null;
       floatLayer = null;
-      selection.renderFloatingTo(layer.ctx);
+      // A lift lying where it was lifted goes back exactly as it was: drawn back, a lasso's copy
+      // faded the art along its outline (`liftUntouched`).
+      if (before && selection.liftUntouched) layers.restoreTo(layer, before);
+      else selection.renderFloatingTo(layer.ctx);
       // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
       // landed made the next undo appear to do nothing).
       if (before) pushPixelEdit(layers, layer, before);

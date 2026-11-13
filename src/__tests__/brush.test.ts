@@ -95,6 +95,38 @@ describe("taper", () => {
     expect(widthAt(o, 150)).toBeCloseTo(8, 0);
   });
 
+  /** Height of an outline: the widest the stroke gets across a horizontal path. */
+  const height = (o: number[][]) =>
+    Math.max(...o.map((p) => p[1])) - Math.min(...o.map((p) => p[1]));
+
+  it("draws a finished tap as a dot, not a taper to nothing", () => {
+    // A Pencil tap travels 0.3–2 px: tapered over 4 widths an end, it drew a speck.
+    const tap = [0, 0.4, 0.9, 1.3].map((x, i) => ({ x, y: 0, pressure: 1, timestamp: i }));
+    const o = strokeOutline(tap, 8, 0, 1, true, true);
+    expect(height(o)).toBeCloseTo(8, 0);
+    expect(o).toEqual(strokeOutline(tap, 8, 0, 1, true, false));
+  });
+
+  it("tapers a finished short tick over half its length, so it reaches near full width", () => {
+    // 24 px long, 8 wide: 4 widths an end would be 32 px, more than the whole tick.
+    const o = strokeOutline(line(24), 8, 0, 1, true, true);
+    expect(widthAt(o, 12)).toBeGreaterThan(6);
+    expect(widthAt(o, 2)).toBeLessThan(widthAt(o, 12) / 2); // still tapered at its ends
+  });
+
+  it("leaves a finished stroke of 8 widths or more, and every live stroke, as they were", () => {
+    // 200 px is 25 widths of 8: the full 4-width taper, the same one a live stroke gets.
+    const done = strokeOutline(line(200), 8, 0, 1, true, true);
+    expect(widthAt(done, 100)).toBeCloseTo(8, 0);
+    expect(widthAt(done, 10)).toBeCloseTo(
+      widthAt(strokeOutline(line(200), 8, 0, 1, false, true), 10),
+      1,
+    );
+    expect(widthAt(done, 10)).toBeLessThan(6);
+    // live: the 24-px tick is still drawn with the full taper (no change while drawing)
+    expect(widthAt(strokeOutline(line(24), 8, 0, 1, false, true), 12)).toBeLessThan(6);
+  });
+
   it("keeps the drawn start as the live stroke grows", () => {
     const short = widthAt(strokeOutline(line(200), 8, 0, 1, false, true), 10);
     const long = widthAt(strokeOutline(line(1600), 8, 0, 1, false, true), 10);

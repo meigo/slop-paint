@@ -58,6 +58,79 @@ describe("erodeMask", () => {
   });
 });
 
+describe("dilating and eroding by distance", () => {
+  // What Bridge does since 2026-11-13 (fillMask, fillEnclosed): the round morphology in linear time.
+  const random = (w: number, h: number, seed: number, density: number) => {
+    const m = new Uint8Array(w * h);
+    let a = seed;
+    for (let i = 0; i < w * h; i++) {
+      a = (Math.imul(a, 1664525) + 1013904223) >>> 0;
+      m[i] = a / 4294967296 < density ? 1 : 0;
+    }
+    return m;
+  };
+
+  it("`distance to the mask ≤ r` is dilateMask", () => {
+    for (const r of [1, 2, 3, 5, 8]) {
+      for (let seed = 1; seed <= 4; seed++) {
+        const m = random(37, 29, seed, 0.02 * seed);
+        const d = distanceToMask(m, 37, 29);
+        expect(Array.from(d, (v) => (v <= r ? 1 : 0))).toEqual([...dilateMask(m, 37, 29, r)]);
+      }
+    }
+  });
+
+  it("`distance to the clear pixels > r` is erodeMask, given a clear border", () => {
+    for (const r of [1, 2, 3, 5, 8]) {
+      for (let seed = 1; seed <= 4; seed++) {
+        const w = 41;
+        const h = 33;
+        // mostly set, with holes; the border ring clear (as fillEnclosed's padding guarantees)
+        const m = random(w, h, seed, 1 - 0.01 * seed);
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++)
+            if (x === 0 || y === 0 || x === w - 1 || y === h - 1) m[y * w + x] = 0;
+        const clear = m.map((v) => (v ? 0 : 1));
+        const d = distanceToMask(clear, w, h);
+        expect(Array.from(d, (v) => (v > r ? 1 : 0))).toEqual([...erodeMask(m, w, h, r)]);
+      }
+    }
+  });
+
+  it("works the same in an Int32 grid as in a Float64 one", () => {
+    const m = random(50, 40, 9, 0.01);
+    const a = distanceToMask(m, 50, 40, {
+      grid: new Int32Array(2000),
+      out: new Float32Array(2000),
+    });
+    const b = distanceToMask(m, 50, 40, {
+      grid: new Float64Array(2000),
+      out: new Float32Array(2000),
+    });
+    expect(Array.from(a)).toEqual(Array.from(b));
+    // a column with nothing in it, and an empty mask
+    const col = new Uint8Array(12);
+    col[0] = 1;
+    expect(Array.from(distanceToMask(col, 4, 3))).toEqual(
+      [
+        0,
+        1,
+        2,
+        3,
+        1,
+        Math.SQRT2,
+        Math.sqrt(5),
+        Math.sqrt(10),
+        2,
+        Math.sqrt(5),
+        Math.sqrt(8),
+        Math.sqrt(13),
+      ].map(Math.fround),
+    );
+    expect(distanceToMask(new Uint8Array(12), 4, 3).every((v) => v === Infinity)).toBe(true);
+  });
+});
+
 describe("distanceToMask with work arrays", () => {
   it("gives the same distances in reused arrays, and returns a view of them", () => {
     const w = 7;

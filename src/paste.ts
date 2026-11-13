@@ -6,7 +6,8 @@ export const PASTE_OFFSET = 8;
 
 /**
  * Where an external image lands: 1 image px = 1 document px, centred, scaled down (keeping aspect)
- * if it's larger than the document. Never scaled up.
+ * if it's larger than the document. Never scaled up. On whole document px: centring an odd size
+ * put it on a half pixel (101×51 on 1920×1080 at x 909.5), so the image was drawn resampled.
  */
 export function placeExternalImage(
   imgW: number,
@@ -17,7 +18,7 @@ export function placeExternalImage(
   const scale = Math.min(1, docW / imgW, docH / imgH);
   const w = imgW * scale;
   const h = imgH * scale;
-  return { x: (docW - w) / 2, y: (docH - h) / 2, w, h };
+  return { x: Math.round((docW - w) / 2), y: Math.round((docH - h) / 2), w, h };
 }
 
 /** Where an internal copy lands: its original spot, nudged by PASTE_OFFSET but kept on the page. */

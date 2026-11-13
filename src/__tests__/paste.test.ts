@@ -18,6 +18,12 @@ describe("placeExternalImage", () => {
     expect(r).toEqual({ x: 0, y: 250, w: 2000, h: 500 });
   });
 
+  it("lands on whole pixels when an odd size can't be centred exactly", () => {
+    // 101×51 on 1920×1080 was centred at x 909.5, y 514.5: drawn between pixels, so resampled.
+    const r = placeExternalImage(101, 51, 1920, 1080);
+    expect(r).toEqual({ x: 910, y: 515, w: 101, h: 51 });
+  });
+
   it("never scales up", () => {
     expect(placeExternalImage(10, 10, 1000, 1000).w).toBe(10);
   });

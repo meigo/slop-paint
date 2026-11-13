@@ -101,7 +101,8 @@ function lattice(key: number, n: number): number {
 /** Whether hair `b` leaves paint at arc length `s` (px) with `pressure` 0–1. `width` is the
  *  stroke's widest, `dryness` 0–100, `edgeNow` how near the hair is to the stroke's CURRENT edge
  *  (0 the middle, 1 the edge; light pressure narrows the stroke, so a hair near the middle can be
- *  at its edge). Pure, so it can be tested and is the same every frame. */
+ *  at its edge). `lagPx`: how far along the hair touches down (a short finished stroke's is
+ *  shorter, see `bristleRuns`). Pure, so it can be tested and is the same every frame. */
 export function hairPaints(
   b: Bristle,
   s: number,
@@ -109,9 +110,10 @@ export function hairPaints(
   width: number,
   dryness: number,
   edgeNow: number = Math.abs(b.offset),
+  lagPx: number = b.lag * width,
 ): boolean {
   const dry = Math.max(0, Math.min(100, dryness)) / 100;
-  if (s < b.lag * width) return false;
+  if (s < lagPx) return false;
   // A narrow stroke has few hairs, nearly all of them "edge": thin the edge only as it widens
   // (a 4 px stroke came out hollow and faint at Press 1).
   const edge = edgeNow * Math.min(1, width / 16);
@@ -200,23 +202,47 @@ export function resample(
  *  (more than ~120°) inside it: cos(turn / 2) for a single corner. */
 const SCRUB_STRAIGHTNESS = 0.5;
 
-/** Each hair's painted runs as polylines (x, y pairs), and its thickness in px. Pure. */
+/** The most of a finished stroke's length a hair's lag, and its tail, may take (`bristleRuns`). */
+const SHORT_STROKE_SHARE = 0.3;
+
+/**
+ * Each hair's painted runs as polylines (x, y pairs), and its thickness in px. Pure.
+ *
+ * `done` — the finished stroke (2026-11-13): the hairs' lag and tail are lengths in widths of the
+ * stroke, up to ¾ of one each, so a tick shorter than that drew a few hairs or none, and a tap
+ * nothing at all. Finished, each takes at most `SHORT_STROKE_SHARE` of the stroke's length (a
+ * stroke of 2.5 widths or more is as it was), and a stroke shorter than its own width is a DAB
+ * (`dabRuns`). Only once finished: while it is drawn, what is down never changes as it grows.
+ */
 export function bristleRuns(
   points: readonly InputPoint[],
   size: number,
   sizeRange: number,
   dryness: number,
+  done = false,
 ): { width: number; tone: number; runs: number[][] }[] {
   if (points.length < 2) return [];
   const { min, max } = widthRange(size, sizeRange);
   const count = bristleCount(max);
   const bristles = makeBristles(count, strokeSeed(points[0]));
   const step = Math.max(0.75, Math.min(4, max / 10));
-  const samples = resample(points, step);
   const spacing = max / count;
-  const end = samples.length ? samples[samples.length - 1].s : 0;
   // A mouse has no pressure (it reads 0): touch as a medium press, not the lightest.
   const mouse = points[0].hasPressure === false;
+  if (done) {
+    let length = 0;
+    let press = 0;
+    for (let i = 0; i < points.length; i++) {
+      if (i) length += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      press = Math.max(press, points[i].pressure);
+    }
+    const widest = min + press * (max - min);
+    if (length < widest)
+      return dabRuns(points, bristles, length, widest, max, spacing, mouse ? 0.6 : press, dryness);
+  }
+  const samples = resample(points, step);
+  const end = samples.length ? samples[samples.length - 1].s : 0;
+  const most = done ? SHORT_STROKE_SHARE * end : Infinity;
   return bristles.map((b) => {
     const runs: number[][] = [];
     let run: number[] | null = null;
@@ -235,8 +261,8 @@ export function bristleRuns(
       const o = b.offset * (max / 2) + wander * half;
       if (
         touching &&
-        p.s <= end - b.tail * max &&
-        hairPaints(b, p.s, pressure, max, dryness, edgeNow)
+        p.s <= end - Math.min(b.tail * max, most) &&
+        hairPaints(b, p.s, pressure, max, dryness, edgeNow, Math.min(b.lag * max, most))
       ) {
         if (!run) runs.push((run = []));
         run.push(p.x + p.nx * o, p.y + p.ny * o);
@@ -250,6 +276,51 @@ export function bristleRuns(
       tone: b.tone,
       runs: runs.filter((r) => r.length >= 2),
     };
+  });
+}
+
+/** A tap's dab is this long, in widths of the stroke at the tap's pressure (`dabRuns`). */
+const DAB_LENGTH = 0.6;
+
+/**
+ * A tap, or a stroke shorter than its own width (`length` < `widest`, the width at the tap's
+ * pressure): the hairs that touch, each a short mark across the tap — `DAB_LENGTH` widths long, or
+ * the stroke's length if that is more — along its travel, or along x when it didn't move. The
+ * outer hairs are shorter (their lag and tail), so it is a ragged dab and not a bar. Which hairs
+ * leave paint is `hairPaints` at the stroke's start, as a stroke's first sample.
+ */
+function dabRuns(
+  points: readonly InputPoint[],
+  bristles: Bristle[],
+  length: number,
+  widest: number,
+  max: number,
+  spacing: number,
+  pressure: number,
+  dryness: number,
+): { width: number; tone: number; runs: number[][] }[] {
+  const a = points[0];
+  const z = points[points.length - 1];
+  const travel = Math.hypot(z.x - a.x, z.y - a.y);
+  const ux = travel > 0 ? (z.x - a.x) / travel : 1;
+  const uy = travel > 0 ? (z.y - a.y) / travel : 0;
+  const cx = (a.x + z.x) / 2;
+  const cy = (a.y + z.y) / 2;
+  const half = widest / 2;
+  const reach = Math.max(length, DAB_LENGTH * widest) / 2;
+  return bristles.map((b) => {
+    const across = Math.abs(b.offset) * (max / 2);
+    const edgeNow = Math.min(1, across / Math.max(half, spacing));
+    const runs: number[][] = [];
+    if (across <= half + spacing / 2 && hairPaints(b, 0, pressure, max, dryness, edgeNow, 0)) {
+      const o = b.offset * (max / 2);
+      const x = cx - uy * o;
+      const y = cy + ux * o;
+      const back = reach * (1 - b.lag);
+      const fore = reach * (1 - b.tail);
+      runs.push([x - ux * back, y - uy * back, x + ux * fore, y + uy * fore]);
+    }
+    return { width: Math.max(0.9, spacing * b.thickness), tone: b.tone, runs };
   });
 }
 
@@ -338,7 +409,7 @@ export function drawDryStroke(
   sizeRange: number = 1.0,
   done = false,
 ) {
-  paintDryStroke(ctx, points, settings, sizeRange);
+  paintDryStroke(ctx, points, settings, sizeRange, done);
   if (done) {
     releaseCanvas(scratch);
     scratch = null;
@@ -363,8 +434,9 @@ function paintDryStroke(
   points: InputPoint[],
   settings: BrushSettings,
   sizeRange: number,
+  done: boolean,
 ) {
-  const hairs = bristleRuns(points, settings.size, sizeRange, settings.dryness ?? 50);
+  const hairs = bristleRuns(points, settings.size, sizeRange, settings.dryness ?? 50, done);
   if (hairs.length === 0) return;
   const taperPx = dryTaperPx(widthRange(settings.size, sizeRange).max, settings.dryTaper ?? 10);
   const alpha = settings.opacity / 100;

@@ -90,7 +90,10 @@ describe("colourDistance", () => {
   it("uses alpha alone from an empty seed, every channel otherwise", () => {
     const data = Uint8ClampedArray.from([255, 0, 0, 100, 0, 0, 0, 0]);
     expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 0 })]).toEqual([100, 0]);
-    expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 255 })]).toEqual([255, 255]);
+    // Colours count as far as they show (premultiplied): red at alpha 100 is 100 of red.
+    expect([...colourDistance(data, 2, 1, { r: 0, g: 0, b: 0, a: 255 })]).toEqual([155, 255]);
+    const opaque = Uint8ClampedArray.from([255, 0, 0, 255, 10, 20, 90, 255]);
+    expect([...colourDistance(opaque, 2, 1, { r: 0, g: 0, b: 0, a: 255 })]).toEqual([255, 90]);
   });
 });
 
