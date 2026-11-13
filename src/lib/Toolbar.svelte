@@ -358,6 +358,16 @@
   const valueCls = "w-10 shrink-0 text-right text-[11px] text-text-muted";
 </script>
 
+<!-- Esc closes the brush settings and colour popovers, as a menu (`data-popover`: App leaves Esc
+     to them). -->
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key !== "Escape") return;
+    settingsOpen = false;
+    colorOpen = false;
+  }}
+/>
+
 <!-- Row 1: tools, history, zoom readout, menus. Fixed height. -->
 <!-- grid-area: App.svelte lays the two rows out in its grid (row 1 always full width). -->
 <div
@@ -874,6 +884,7 @@
       {#if settingsOpen}
         <div
           class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
+          data-popover
         >
           {#if app.brushType === "smooth" || app.brushType === "watercolor"}
             <label
@@ -1274,6 +1285,7 @@
       {#if colorOpen}
         <div
           class="absolute top-full right-0 z-30 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-lg"
+          data-popover
         >
           <div class="grid grid-cols-8 gap-1.5">
             {#each swatches as { color, name }}

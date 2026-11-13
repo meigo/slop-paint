@@ -73,22 +73,24 @@ export function erodeMask(mask: Uint8Array, w: number, h: number, radius: number
  * transform, columns then rows. Used to grow a fill by a SMOOTH round offset with an antialiased
  * edge (`expandedCoverage` in fill.ts), where `dilateMask` grows it in whole pixels. Pure.
  * `buf`: arrays of at least w × h to work in and return a view of, for a caller that runs it every
- * frame (the Watercolour rim): fresh ones per call were most of its garbage.
+ * frame (the Watercolour rim): fresh ones per call were most of its garbage. The grid holds the
+ * column pass's squared distances — whole numbers, or `FAR` for none — so it is an Int32Array
+ * unless the caller's is a Float64Array: half the memory, the same values.
  */
 export function distanceToMask(
   mask: Uint8Array,
   w: number,
   h: number,
-  buf?: { grid: Float64Array; out: Float32Array },
+  buf?: { grid: Float64Array | Int32Array; out: Float32Array },
 ): Float32Array {
   const INF = 1e20;
+  const FAR = 0x7fffffff; // INF in the grid
   const f = new Float64Array(Math.max(w, h));
   const d = new Float64Array(Math.max(w, h));
   const v = new Int32Array(Math.max(w, h));
   const z = new Float64Array(Math.max(w, h) + 1);
   const n = w * h;
-  const grid = buf && buf.grid.length >= n ? buf.grid.subarray(0, n) : new Float64Array(n);
-  for (let i = 0; i < w * h; i++) grid[i] = mask[i] ? 0 : INF;
+  const grid = buf && buf.grid.length >= n ? buf.grid.subarray(0, n) : new Int32Array(n);
   // 1-D squared distance transform of f[0..n) into d.
   const pass = (n: number) => {
     let k = 0;
@@ -113,13 +115,13 @@ export function distanceToMask(
     }
   };
   for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) f[y] = grid[y * w + x];
+    for (let y = 0; y < h; y++) f[y] = mask[y * w + x] ? 0 : INF;
     pass(h);
-    for (let y = 0; y < h; y++) grid[y * w + x] = d[y];
+    for (let y = 0; y < h; y++) grid[y * w + x] = d[y] >= INF / 2 ? FAR : d[y];
   }
   const out = buf && buf.out.length >= n ? buf.out.subarray(0, n) : new Float32Array(n);
   for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) f[x] = grid[y * w + x];
+    for (let x = 0; x < w; x++) f[x] = grid[y * w + x] === FAR ? INF : grid[y * w + x];
     pass(w);
     for (let x = 0; x < w; x++) out[y * w + x] = d[x] >= INF / 2 ? Infinity : Math.sqrt(d[x]);
   }

@@ -19,7 +19,8 @@ export const GROUP_TAGS = [
 export const LAYER_TAGS = ["mesh", "ignore"] as const satisfies readonly SpineTag[];
 
 const KNOWN_TAGS = new Set<string>([...GROUP_TAGS, ...LAYER_TAGS]);
-const TAG_PATTERN = /^\[([a-zA-Z]+)\]/;
+/** One bracket group at the start of a name: "[slot]", "[slot:arm]", "[wip]". */
+const GROUP_PATTERN = /^\[[^[\]]*\]/;
 
 /** Canonical emit order — kept stable so toggling tags doesn't churn names. */
 const ORDER: Record<SpineTag, number> = {
@@ -31,18 +32,23 @@ const ORDER: Record<SpineTag, number> = {
   mesh: 5,
 };
 
+/**
+ * The plain known tags among the bracket groups a name starts with, and the name without them.
+ * A group that isn't one of them — a tag with a value ("[slot:arm]"), any other bracket — stays in
+ * `baseName`, in place, and the scan carries on past it: it stopped there, so "[slot:arm][ignore]head"
+ * showed no ignore chip and toggling gave "[ignore][slot:arm][ignore]head".
+ */
 export function parseTags(name: string): { tags: SpineTag[]; baseName: string } {
   const tags: SpineTag[] = [];
+  let kept = "";
   let rest = name;
-  while (true) {
-    const m = TAG_PATTERN.exec(rest);
-    if (!m) break;
-    const t = m[1].toLowerCase();
-    if (!KNOWN_TAGS.has(t)) break;
-    if (!tags.includes(t as SpineTag)) tags.push(t as SpineTag);
+  for (let m = GROUP_PATTERN.exec(rest); m; m = GROUP_PATTERN.exec(rest)) {
+    const t = m[0].slice(1, -1).toLowerCase();
+    if (!KNOWN_TAGS.has(t)) kept += m[0];
+    else if (!tags.includes(t as SpineTag)) tags.push(t as SpineTag);
     rest = rest.slice(m[0].length);
   }
-  return { tags, baseName: rest };
+  return { tags, baseName: kept + rest };
 }
 
 export function buildName(baseName: string, tags: SpineTag[]): string {

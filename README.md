@@ -197,7 +197,8 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   order); exports use document pixels, not the screen's
 - **Autosave** to the browser (IndexedDB) a few seconds after each change — waiting while you draw —
   and when the tab is hidden, restored on the next visit. It also keeps copies from up to 15
-  minutes back: **File ▸ Restore autosave…**
+  minutes back: **File ▸ Restore autosave…**. New, Open and restoring an older copy first save the
+  drawing you leave as one of those copies
 - If the layers ever come back **blank** (an iPad can reclaim the memory of an app left in the
   background), autosave stops before it overwrites the saved copy and offers to restore it. The
   Document menu shows how much memory the layers take, and warns on iPad when it's a lot

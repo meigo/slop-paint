@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { FINE_FACTOR, SCRUB_THRESHOLD_PX, scrubbedValue, stepDecimals } from "../lib/scrub";
+import {
+  FINE_FACTOR,
+  SCRUB_THRESHOLD_PX,
+  scrubbedValue,
+  stepDecimals,
+  typedNumber,
+} from "../lib/scrub";
 
 const base = { startValue: 10, step: 1, pxPerStep: 4, fine: false, min: 0, max: 100 };
 
@@ -51,5 +57,32 @@ describe("scrubbedValue (drag-adjustable number fields)", () => {
     expect(stepDecimals(0.5)).toBe(1);
     expect(stepDecimals(0.05)).toBe(2);
     expect(SCRUB_THRESHOLD_PX).toBe(3);
+  });
+});
+
+describe("typedNumber (what a typed draft sends)", () => {
+  it("is nothing new when the text is the current value's", () => {
+    expect(typedNumber("1920", "1920", false)).toBeNull();
+    expect(typedNumber("", "", false)).toBeNull(); // an emptied field, focused and left
+  });
+
+  it("sends a value typed back after a live change", () => {
+    // 1920 → 192 was sent, so the current value reads "192": typing the 0 back is new.
+    expect(typedNumber("192", "1920", false)).toBe(192);
+    expect(typedNumber("1920", "192", false)).toBe(1920);
+  });
+
+  it("keeps the number as typed, in or out of range", () => {
+    expect(typedNumber("0", "10", false)).toBe(0);
+    expect(typedNumber("9000", "10", true)).toBe(9000);
+    expect(typedNumber("1.5", "10", true)).toBe(1.5);
+  });
+
+  it("an emptied or non-numeric draft is NaN without clamp, nothing with it", () => {
+    expect(typedNumber("", "1", false)).toBeNaN();
+    expect(typedNumber("  ", "1", false)).toBeNaN();
+    expect(typedNumber("abc", "1", false)).toBeNaN();
+    expect(typedNumber("", "1", true)).toBeNull();
+    expect(typedNumber("abc", "1", true)).toBeNull();
   });
 });

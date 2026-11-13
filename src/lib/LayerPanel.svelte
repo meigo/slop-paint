@@ -21,6 +21,7 @@
   import { untrack } from "svelte";
   import { app, bumpLayerVersion, flashStatus, lastPixelArea } from "../appState.svelte.js";
   import type { PxRect } from "../dirty-rect";
+  import { thumbStamp, thumbState, type ThumbStamp } from "./thumb-stamp";
   import { pushNameEdit, pushNodeFieldEdit, structuralEdit } from "../undo";
   import {
     isWithin,
@@ -48,6 +49,7 @@
     onWidthChange,
     onAddText,
     onEditText,
+    endGesture,
     settlePending,
     beforeShut,
   }: {
@@ -58,8 +60,13 @@
     onAddText: () => void;
     /** Edit the selected text reference. */
     onEditText: () => void;
-    /** Before an action that copies or merges a layer's pixels: apply a lifted float and cancel an
-     *  Outline preview, or the copy took the float's hole / the unapplied preview. */
+    /** Before an action that removes a layer or changes what it is (Delete, Bake): finish a canvas
+     *  press still open, as its release would. A stroke went on drawing on the removed layer, with
+     *  a dead undo step; a reference drag's release undid the Bake. */
+    endGesture: () => void;
+    /** Before an action that copies or merges a layer's pixels: finish an open canvas press, apply
+     *  a lifted float and cancel an Outline preview, or the copy took half a stroke, the float's
+     *  hole / the unapplied preview. */
     settlePending: () => void;
     /** Before the node is locked or hidden: a float lifted from it (or from inside it) is applied
      *  while its layer still takes edits. */
@@ -226,6 +233,7 @@
     }
     if (layersLeftAfter(layers.tree, ids) < 1)
       return flashStatus("The document needs at least one layer");
+    endGesture();
     structuralEdit(layers, () => layers.removeSelected(ids));
     finishPicking();
     layers.composite();
@@ -241,6 +249,7 @@
       n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
     if (node && layers.flatLayers().length - members(node) < 1)
       return flashStatus("The document needs at least one layer");
+    endGesture();
     structuralEdit(layers, () => layers.removeNode(layers.activeId));
     layers.composite();
     bumpLayerVersion();
@@ -504,19 +513,66 @@
   /** Each shown thumbnail's redraw, by layer id (the floating drag row can show a second one). */
   const thumbDraws = new Map<number, Set<(area?: PxRect | null) => void>>();
 
-  /** Svelte action: draw a layer's pixels into its thumbnail canvas. */
+  /** Each layer's thumbnail, kept between rebuilds of the rows (2026-11-13): every rebuild — a row
+   *  tap, a rename, the eye — drew every thumbnail from its whole layer canvas, which Safari copies
+   *  whole each time. One is redrawn from its layer only when the layer's pixels changed
+   *  (`thumb-stamp.ts`) or its tint did; the rows' canvases are copies of these. */
+  const thumbCache = new Map<
+    number,
+    { canvas: HTMLCanvasElement; stamp: ThumbStamp; tint: string | undefined }
+  >();
+
+  /** `layer`'s kept thumbnail (`w` × `h`), brought up to date first — only over `area` (the
+   *  layer's canvas px) when that is the one edit since it was drawn. */
+  function cachedThumb(layer: AppLayer, area: PxRect | null, w: number, h: number) {
+    const now = thumbStamp(layer.id);
+    let kept = thumbCache.get(layer.id);
+    const state = kept && kept.tint === layer.tint ? thumbState(kept.stamp, now) : "stale";
+    if (kept && state === "current") return kept.canvas;
+    if (!kept) {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      kept = { canvas, stamp: now, tint: layer.tint };
+      thumbCache.set(layer.id, kept);
+    }
+    const ctx = kept.canvas.getContext("2d")!;
+    if (state === "part" && area && !layer.tint) drawThumbPart(ctx, kept.canvas, layer, area);
+    else {
+      ctx.clearRect(0, 0, w, h);
+      if (layer.tint) {
+        // The layer as it is drawn: in its tint (see `drawTree`).
+        drawTinted(ctx, layer.canvas, w, h, layer.tint);
+      } else {
+        ctx.drawImage(layer.canvas, 0, 0, w, h);
+      }
+    }
+    kept.stamp = now;
+    kept.tint = layer.tint;
+    return kept.canvas;
+  }
+
+  // Thumbnails of layers no longer in the document are let go.
+  $effect(() => {
+    void app.layerVersion;
+    untrack(() => {
+      const live = new Set(layers.flatLayers().map((l) => l.id));
+      for (const [id, kept] of thumbCache) {
+        if (live.has(id)) continue;
+        kept.canvas.width = 0;
+        thumbCache.delete(id);
+      }
+    });
+  });
+
+  /** Svelte action: draw a layer's thumbnail into its row's canvas. */
   function thumbnail(node: HTMLCanvasElement, layer: AppLayer) {
     const draw = (area: PxRect | null = null) => {
       const ctx = node.getContext("2d");
       if (!ctx) return;
-      if (area && !layer.tint) return drawThumbPart(ctx, node, layer, area);
+      const thumb = cachedThumb(layer, area, node.width, node.height);
       ctx.clearRect(0, 0, node.width, node.height);
-      if (layer.tint) {
-        // The layer as it is drawn: in its tint (see `drawTree`).
-        drawTinted(ctx, layer.canvas, node.width, node.height, layer.tint);
-      } else {
-        ctx.drawImage(layer.canvas, 0, 0, node.width, node.height);
-      }
+      ctx.drawImage(thumb, 0, 0);
     };
     draw();
     const id = layer.id;
@@ -856,6 +912,12 @@
         onclick={(e) => {
           e.stopPropagation();
           group.collapsed = !group.collapsed;
+          // Rows hidden by the collapse leave the pick: they stayed picked with no check to show
+          // it, and Group / Delete took them.
+          const kept = app.layerSelection.filter(
+            (id) => id === group.id || !isWithin(layers.tree, id, group.id),
+          );
+          if (group.collapsed && kept.length !== app.layerSelection.length) setPick(kept);
           bumpLayerVersion();
         }}
       >
@@ -1013,6 +1075,7 @@
     onSettingsChange={() => bumpLayerVersion()}
     onRename={startEdit}
     {onEditText}
+    {endGesture}
   />
 
   <div class="layer-list flex-1 overflow-y-auto" bind:this={listEl}>

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import v8 from "node:v8";
 // @ts-expect-error as above
 import vm from "node:vm";
-import { history, pushLayersEdit, pushPixelEdit, structuralEdit } from "../undo";
+import { history, pushLayersEdit, pushPixelEdit, shiftLoss, structuralEdit } from "../undo";
 import type { Layer, LayerManager } from "../layers";
 
 // A pixel undo step must keep only its changed tiles. It kept BOTH whole-layer snapshots alive
@@ -79,10 +79,25 @@ describe("pixel undo steps keep only their tiles", () => {
     const befores: WeakRef<object>[] = [];
     const move = () => {
       const edits = Array.from({ length: 3 }, () => {
-        const before = image(new Uint8ClampedArray(W * H * 4));
-        before.data[(W * H - 1) * 4 + 3] = 255; // paint the move carries off the canvas
+        const before = new Uint8ClampedArray(W * H * 4);
+        before[(W * H - 1) * 4 + 3] = 255; // paint the move carries off the canvas
         befores.push(new WeakRef(before));
-        return { layer, before };
+        // The layer being moved: every strip `shiftLoss` reads from it must be let go too.
+        const moved = {
+          canvas: { width: W, height: H },
+          ctx: {
+            getImageData(x: number, y: number, w: number, h: number) {
+              const d = new Uint8ClampedArray(w * h * 4);
+              for (let r = 0; r < h; r++) {
+                const from = ((y + r) * W + x) * 4;
+                d.set(before.subarray(from, from + w * 4), r * w * 4);
+              }
+              befores.push(new WeakRef(d));
+              return { data: d, width: w, height: h } as ImageData;
+            },
+          },
+        } as unknown as Layer;
+        return { layer, lost: shiftLoss(moved, 3, 2) };
       });
       pushLayersEdit(layers, edits, 3, 2);
     };

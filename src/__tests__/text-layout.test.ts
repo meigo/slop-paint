@@ -10,6 +10,7 @@ import {
   layoutText,
   normalizeTextSpec,
   refitCorners,
+  refitToLayout,
   textLayerName,
   textPadding,
   NO_MARGIN,
@@ -216,6 +217,36 @@ describe("refitCorners", () => {
   });
 });
 
+describe("refitToLayout", () => {
+  const box = cornersFromRect({ x: 100, y: 50, w: 200, h: 80 });
+  const g = { left: 10, top: 6, right: 4, bottom: 8 };
+
+  it("returns the same corners when the box didn't change", () => {
+    const was = { width: 200, height: 80, margin: g };
+    expect(refitToLayout(box, was, { ...was, margin: { ...g } }, "center")).toBe(box);
+  });
+
+  it("refits as an edit does when the font's box differs", () => {
+    // The stand-in font measured 200 wide; the real one 300: centred text grows from its middle
+    // at the same scale, instead of being squeezed into the old box.
+    const was = { width: 200, height: 80, margin: NO_MARGIN };
+    const now = { width: 300, height: 100, margin: NO_MARGIN };
+    expect(refitToLayout(box, was, now, "center")).toEqual(
+      cornersFromRect({ x: 50, y: 50, w: 300, h: 100 }),
+    );
+    expect(refitToLayout(box, was, now, "left")).toEqual(
+      refitCorners(box, 200, 80, 300, 100, "left"),
+    );
+  });
+
+  it("refits when only the margin differs", () => {
+    const was = { width: 200, height: 80, margin: NO_MARGIN };
+    expect(refitToLayout(box, was, { width: 214, height: 94, margin: g }, "left")).toEqual(
+      cornersFromRect({ x: 90, y: 44, w: 214, h: 94 }),
+    );
+  });
+});
+
 describe("normalizeTextSpec", () => {
   it("keeps a valid spec", () => {
     const s = spec({ text: "hi", align: "left", color: "#ff0000", guides: false });
@@ -358,5 +389,14 @@ describe("textLayerName", () => {
   it("shortens long text and handles empty", () => {
     expect(parseTags(textLayerName("x".repeat(40))).baseName).toBe(`text ${"x".repeat(24)}…`);
     expect(parseTags(textLayerName("")).baseName).toBe("text");
+  });
+
+  it("never cuts a character in half", () => {
+    // 23 letters then an emoji (two UTF-16 units): a cut at 24 units left a lone surrogate.
+    const n = parseTags(textLayerName(`${"x".repeat(23)}😀 and more`)).baseName;
+    expect(n).toBe(`text ${"x".repeat(23)}😀…`);
+    // 24 characters as read aren't shortened, however many units they take.
+    const faces = "😀".repeat(24);
+    expect(parseTags(textLayerName(faces)).baseName).toBe(`text ${faces}`);
   });
 });

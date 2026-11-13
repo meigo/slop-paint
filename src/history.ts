@@ -122,6 +122,21 @@ export function offCanvasRects(width: number, height: number, dx: number, dy: nu
   return out;
 }
 
+/** The smallest rect holding every one of `rects` (at least one). */
+export function rectsBounds(rects: PixelRect[]): PixelRect {
+  let x0 = Infinity,
+    y0 = Infinity,
+    x1 = -Infinity,
+    y1 = -Infinity;
+  for (const r of rects) {
+    x0 = Math.min(x0, r.x);
+    y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w);
+    y1 = Math.max(y1, r.y + r.h);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
 /** `r`'s pixels out of a `width`-wide RGBA buffer, as a tightly packed buffer. */
 export function cropPixels(
   data: Uint8ClampedArray,

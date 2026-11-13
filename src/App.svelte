@@ -5,7 +5,7 @@
   import NewDocDialog from "./lib/NewDocDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
-  import { setupInput, type InputPoint } from "./input";
+  import { interpolationSpacing, setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange, type BrushSettings } from "./brush";
   import { deviceRect, pointsBox, strokePad, unionBox, type Box, type PxRect } from "./dirty-rect";
   import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX, STILL_PX } from "./stroke-smoothing";
@@ -21,6 +21,7 @@
   import {
     LayerManager,
     adjacentRow,
+    canvasBacked,
     isWithin,
     layersToMove,
     topSelection,
@@ -50,6 +51,7 @@
     fontKey,
     fontLabel,
     refitCorners,
+    refitToLayout,
     textLayerName,
     type TextSpec,
   } from "./text-layout";
@@ -114,15 +116,16 @@
     psdBuffer,
   } from "./export-psd";
   import {
-    clearAutosave,
     keepLatestAutosave,
     LATEST_KEY,
     listAutosaves,
     loadAutosave,
     saveAutosave,
+    setLatestAside,
     type AutosaveEntry,
   } from "./persist/autosave";
   import {
+    carryPendingLayer,
     formatBytes,
     IPAD_MEMORY_WARN_BYTES,
     layerMemoryBytes,
@@ -137,9 +140,11 @@
     pushRegionsEdit,
     pushStrokeEdit,
     setOnHistoryApplied,
+    shiftLoss,
     StrokeBackup,
     structuralEdit,
   } from "./undo";
+  import { touchAllThumbs } from "./lib/thumb-stamp";
   import {
     canShareFile,
     isAppleTouch,
@@ -163,7 +168,7 @@
     pressureCurves,
     activePressureCurve,
     isStrokeTool,
-    bumpLayerVersion,
+    bumpLayerVersion as bumpRows,
     bumpPixelVersion,
     bumpSelectionVersion,
     flashStatus,
@@ -205,6 +210,14 @@
   let showNewDocDialog = $state(false);
   let showSettingsDialog = $state(false);
   let showResizeDialog = $state(false);
+
+  /** Rebuild the layer rows AND redraw every thumbnail from its layer at that rebuild: for
+   *  anything here that may have changed pixels. `bumpRows` alone — the panel's own bumps, and the
+   *  tree's (`LayerManager.onChange`) — reuses the kept thumbnails (`lib/thumb-stamp.ts`). */
+  function bumpLayerVersion() {
+    touchAllThumbs();
+    bumpRows();
+  }
 
   // --- Batched composite: coalesce multiple composite calls per frame ---
   let compositeScheduled = false;
@@ -250,6 +263,17 @@
   let strokeBackup: StrokeBackup | null = null;
   // Fast canvas backup for smooth brush (GPU-accelerated drawImage vs slow putImageData)
   let preStrokeCanvas: HTMLCanvasElement | null = null;
+  /** The copy is let go this long after a full-redraw stroke ends (2026-11-13): a layer-sized
+   *  canvas outside the layer-memory figure, it was kept for the session. Not at the stroke's end:
+   *  the next stroke of a run would allocate it again at its press (not measured; the idle wait
+   *  costs nothing while drawing). */
+  const PRE_STROKE_IDLE_MS = 5000;
+  let preStrokeIdle: ReturnType<typeof setTimeout> | undefined;
+  function releasePreStroke() {
+    clearTimeout(preStrokeIdle);
+    if (preStrokeCanvas) preStrokeCanvas.width = 0; // WebKit holds its pixels until collected
+    preStrokeCanvas = null;
+  }
   // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
   // Null once the stroke ends, so a frame still pending at pen-up can't redraw the unfinished stroke.
   let smoothPendingPoints: InputPoint[] | null = null;
@@ -280,21 +304,34 @@
     points: InputPoint[];
     curve: PressureCurve;
     stroke: StrokeSetup | null;
+    /** `curvedFrom`'s points through `curve`, so far (`curvedPoints`). */
+    curved: InputPoint[];
+    curvedFrom: InputPoint[] | null;
   };
   let gesture: Gesture | null = null;
 
+  /** Null when the copy didn't get its memory (an iPad refuses a canvas over its limit without
+   *  an error, `canvasBacked`): the stroke must not start — each frame restores the stroke's box
+   *  from the copy, and an empty one erased the art under it. Checked when the canvas is made. */
   function saveLayerToCanvas(layer: {
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
-  }): HTMLCanvasElement {
+  }): HTMLCanvasElement | null {
+    clearTimeout(preStrokeIdle);
     if (
       !preStrokeCanvas ||
       preStrokeCanvas.width !== layer.canvas.width ||
       preStrokeCanvas.height !== layer.canvas.height
     ) {
-      preStrokeCanvas = document.createElement("canvas");
-      preStrokeCanvas.width = layer.canvas.width;
-      preStrokeCanvas.height = layer.canvas.height;
+      releasePreStroke();
+      const made = document.createElement("canvas");
+      made.width = layer.canvas.width;
+      made.height = layer.canvas.height;
+      if (!canvasBacked(made)) {
+        made.width = 0;
+        return null;
+      }
+      preStrokeCanvas = made;
     }
     const ctx = preStrokeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, preStrokeCanvas.width, preStrokeCanvas.height);
@@ -460,7 +497,9 @@
   function setLayerResolution(hi: boolean) {
     if (!layers || hi === app.hiResLayers) return;
     app.hiResLayers = hi;
-    if (wantedDpr() === layers.pixelRatio) return; // a 1× screen: same resolution, keep undo
+    // A 1× screen: same resolution, keep undo — the setting is still saved (it wasn't: the toggle
+    // came back as it was after a reload).
+    if (wantedDpr() === layers.pixelRatio) return debouncedSave();
     endGesture(); // a press still down finishes at the old resolution (see newDocument)
     if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
     if (outlineActive()) cancelOutline();
@@ -982,6 +1021,10 @@
   // another. Elsewhere (Safari, iPad) Save downloads a copy, as it always did. The link is for the
   // session only — after a reload the first Save asks again.
   let docFile: FileSystemFileHandle | null = null;
+  /** Counts the documents that took the place of another (New, Open, a restore). A save waits on a
+   *  file dialog or a permission prompt before it encodes: with another document there by then,
+   *  it wrote the new one over the old one's file, and Save as linked it to that file. */
+  let docGeneration = 0;
 
   function doSavePsd() {
     if (!layers) return;
@@ -1000,6 +1043,7 @@
   async function doSaveAs() {
     if (!layers) return;
     if (!fileAccessAvailable()) return doSavePsd();
+    const doc = docGeneration;
     let handle: FileSystemFileHandle | null;
     try {
       handle = await pickSaveFile(`${sanitizeFilename(app.projectName)}.psd`);
@@ -1007,16 +1051,21 @@
       flashStatus(`Couldn't save — ${e instanceof Error ? e.message : String(e)}`, 10000);
       return;
     }
-    if (!handle || !(await writeDocTo(handle))) return;
+    if (!handle || !(await writeDocTo(handle, doc))) return;
+    if (doc !== docGeneration) return; // replaced during the write: that file isn't this document's
     docFile = handle;
     app.projectName = nameFromFile(handle.name);
   }
 
-  /** Write the project over `handle`; whether it was written (a dismissed prompt says nothing). */
-  async function writeDocTo(handle: FileSystemFileHandle): Promise<boolean> {
+  /** Write the project over `handle`; whether it was written (a dismissed prompt says nothing).
+   *  `doc` is the document the save was asked for: replaced meanwhile, nothing is written. */
+  async function writeDocTo(handle: FileSystemFileHandle, doc = docGeneration): Promise<boolean> {
     if (!layers) return false;
     try {
-      await writeFile(handle, () => withPendingResolved(() => psdBuffer(layers, false)));
+      await writeFile(handle, () => {
+        if (doc !== docGeneration) throw new Error("another document was opened meanwhile");
+        return withPendingResolved(() => psdBuffer(layers, false));
+      });
       flashStatus(`Saved ${handle.name}`);
       return true;
     } catch (e) {
@@ -1076,13 +1125,10 @@
     // document: its stroke kept drawing on a removed layer, or a drag landed on the new one.
     endGesture();
     if (outlineActive()) cancelOutline();
-    // Autosave paused over blank layers: the latest is the copy the pause protects — set it aside
-    // before New drops it; the new document then autosaves as usual. Off for the session (the
-    // startup restore failed), the latest is work that couldn't be loaded: leave it alone.
-    if (autosaveReady)
-      void setAsideIfPaused()
-        .then(() => clearAutosave())
-        .catch((e) => console.error("clearing autosave failed", e));
+    // The outgoing document's unsaved edits are autosaved and that copy set aside before New
+    // forgets the latest (so a reload doesn't bring the old document back).
+    void keepOutgoing(true).catch((e) => console.error("clearing autosave failed", e));
+    docGeneration++;
     app.docWidth = width;
     app.docHeight = height;
     layers.tree.length = 0;
@@ -1096,7 +1142,7 @@
     history.clear(); // a new document starts with nothing to undo
     layers.composite();
     bumpLayerVersion();
-    markSaved();
+    markResampled();
     fitDocumentInView();
     showNewDocDialog = false;
   }
@@ -1194,10 +1240,12 @@
       endGesture(); // a press still down finishes on the old document, not the new one
       // A dialog opened while the file was read or decoded works on the layers this replaces: it
       // is cancelled once the file has loaded, just before the swap — a file that fails to load
-      // leaves the dialog and its work alone.
+      // leaves the dialog and its work alone. Then the outgoing document's unsaved edits are
+      // autosaved and that copy set aside, while its layers are still there.
       const closeDialogs = () => {
         if (filterDialog) cancelFilter();
         if (textDialog) cancelText();
+        void keepOutgoing().catch((e) => console.error("setting the autosave aside failed", e));
       };
       try {
         size = image
@@ -1210,9 +1258,9 @@
         image?.close();
       }
       if (outlineActive()) cancelOutline();
-      void setAsideIfPaused().catch((e) => console.error("setting the autosave aside failed", e));
       app.projectName = nameFromFile(file.name);
       docFile = psd ? handle : null;
+      docGeneration++;
       const { width, height } = size;
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
@@ -1223,7 +1271,7 @@
       resizeCanvas();
       layers.composite();
       bumpLayerVersion();
-      markSaved();
+      markResampled();
       fitDocumentInView();
     };
     reader.readAsArrayBuffer(file);
@@ -1445,6 +1493,7 @@
       // Put back the references the preview may have re-drawn (fast) at their own place.
       for (const r of g.refs) layers.renderRef(r.layer);
       layers.composite();
+      touchAllThumbs(); // a rebuild mid-drag may have kept a thumbnail of the fast preview
       return;
     }
     const refs = new Map(g.refs.map((r) => [r.layer, r]));
@@ -1457,11 +1506,13 @@
         layers!.renderRef(layer);
         return { layer, refBefore: r.refBefore, redrawn: true };
       }
-      const before = layers!.snapshotOf(layer);
+      // Only what the shift carries off the canvas is read, a layer at a time: a whole snapshot
+      // of every layer, all held until the step was pushed, was ~1.9 GB for 20 layers at 4000×6000.
+      const lost = shiftLoss(layer, sx, sy);
       const refBefore = layer.ref; // a reference not decoded yet (or distorted)
       if (refBefore) layer.ref = { src: refBefore.src, corners: shiftedCorners(refBefore, dx, dy) };
       layers!.shiftPixels(layer, sx, sy);
-      return { layer, before, refBefore };
+      return { layer, lost, refBefore };
     });
     pushLayersEdit(layers, edits, sx, sy);
     layers.composite();
@@ -1502,6 +1553,8 @@
       points: rawPoints,
       curve: activePressureCurve(),
       stroke: null,
+      curved: [],
+      curvedFrom: null,
     };
     const tool = app.currentTool;
     if (tool === "eyedropper") g.kind = "eyedropper";
@@ -1560,11 +1613,23 @@
     else runGesture(g, g.points, true);
   }
 
+  /** `rawPoints` through the gesture's pressure curve. Only the points added since the last event
+   *  are mapped — the input appends to ONE array per press: mapping all of them on every event
+   *  (an object each) made a long stroke quadratic. */
+  function curvedPoints(g: Gesture, rawPoints: InputPoint[]): InputPoint[] {
+    if (g.curvedFrom !== rawPoints || g.curved.length > rawPoints.length) {
+      g.curvedFrom = rawPoints;
+      g.curved = [];
+    }
+    for (let i = g.curved.length; i < rawPoints.length; i++) {
+      const p = rawPoints[i];
+      g.curved.push({ ...p, pressure: g.curve.evaluate(p.pressure) });
+    }
+    return g.curved;
+  }
+
   function runGesture(g: Gesture, rawPoints: InputPoint[], done: boolean) {
-    const points = rawPoints.map((p) => ({
-      ...p,
-      pressure: g.curve.evaluate(p.pressure),
-    }));
+    const points = curvedPoints(g, rawPoints);
 
     // Eyedropper: reads the composite, so it ignores the active layer's lock.
     // Picks on RELEASE — drag to slide the sample point out from under the pen tip.
@@ -1828,15 +1893,20 @@
     }
 
     if (press) {
+      if (fullRedraw && !saveLayerToCanvas(layer)) {
+        g.kind = "none"; // the rest of the press is ignored
+        g.stroke = null;
+        flashStatus(
+          "Not enough memory for this brush on a document this size — Pencil, Charcoal and Airbrush need less",
+        );
+        return;
+      }
       frozenTo = 0;
       strokeBox = null;
       stampDrawnTo = 0;
       strokeArea = null;
       layers.setLiveLayer(layer.id);
       strokeBackup = new StrokeBackup(layer);
-      if (fullRedraw) {
-        saveLayerToCanvas(layer);
-      }
       resetStampState();
       resetBlendState();
     }
@@ -1848,6 +1918,7 @@
         smoothPendingPoints = null;
         redrawFrame(points, true);
         strokeBox = null;
+        preStrokeIdle = setTimeout(releasePreStroke, PRE_STROKE_IDLE_MS);
         endStrokeComposite();
         if (strokeBackup) {
           pushStrokeEdit(layers, strokeBackup);
@@ -1973,6 +2044,8 @@
     // cancelled a live transform or Outline preview behind it, which Cancel can't take back.
     if ((e.key === "Escape" || e.key === "Enter") && document.querySelector('[role="menu"]'))
       return;
+    // Esc with any other popover open (`data-popover`: brush settings, colour, tint) closes that.
+    if (e.key === "Escape" && document.querySelector("[data-popover]")) return;
     // A dropdown keeps focus after a pick; its letter keys jump between options, so only the
     // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
     if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
@@ -2469,6 +2542,7 @@
     if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
     clearOutline();
     layers?.composite();
+    touchAllThumbs(); // a rebuild during the preview may have kept a thumbnail of it
     if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline, true);
   }
 
@@ -2622,6 +2696,9 @@
     if (!selectLayerContent()) return;
     if (selection.state === "selected") enterFreeTransform();
     selection.flip(axis);
+    // An ordinary redraw, not the float's own (`compositeLive`): nothing follows a flip to let go
+    // of a drag's copies — up to three document-sized canvases stayed allocated.
+    scheduleComposite();
   }
 
   function toggleKeepProportions() {
@@ -2746,9 +2823,18 @@
   /** Restore the autosaved project, if any. Returns false when the restore failed (autosave then
    *  stays off for the session rather than overwriting the stored copy with a blank document). */
   async function restoreAutosave(): Promise<boolean> {
+    const doc = docGeneration;
     try {
       const buffer = await loadAutosave();
-      if (buffer) loadAutosaveBuffer(buffer);
+      // The app takes input while the copy is read: work begun meanwhile (a stroke, New, Open)
+      // isn't replaced by it. The stored copy becomes a checkpoint before autosave takes its slot.
+      if (buffer && (gesture || history.canUndo || history.canRedo || doc !== docGeneration)) {
+        await setLatestAside("checkpoint");
+        flashStatus(
+          "Kept what you just started — the autosaved drawing is in File ▸ Restore autosave…",
+          10000,
+        );
+      } else if (buffer) loadAutosaveBuffer(buffer);
       else markSaved();
       return true;
     } catch (e) {
@@ -2761,13 +2847,16 @@
     }
   }
 
-  /** Make an autosaved PSD the document (startup, or File ▸ Restore autosave…). */
-  function loadAutosaveBuffer(buffer: ArrayBuffer) {
-    if (!layers) return;
+  /** Make an autosaved PSD the document (startup, or File ▸ Restore autosave…). False when the
+   *  device refused some layers' memory: autosave is paused then (see `markResampled`). */
+  function loadAutosaveBuffer(buffer: ArrayBuffer): boolean {
+    if (!layers) return false;
     const dpr = docDpr();
     endGesture(); // a press still down finishes on the old document, not the new one
     const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion, refDecodeFailed);
     if (outlineActive()) cancelOutline();
+    docFile = null; // it may not match the file the document came from
+    docGeneration++;
     history.clear(); // restored document: nothing from this session to undo
     app.docWidth = width;
     app.docHeight = height;
@@ -2777,7 +2866,7 @@
     layers.composite();
     bumpLayerVersion();
     fitDocumentInView();
-    markSaved();
+    return markResampled();
   }
 
   // --- Blank layers guard ---
@@ -2789,6 +2878,7 @@
   let inkedAtSave = new Set<number>(); // layers with pixels at the last save (or restore)
   let historyAtSave = 0; // history.layerChanges then: how many layers undo steps changed since
   let autosaveHalted = false;
+  let haltCount = 0; // pauses so far: what `keepOutgoing` resumes is the pause it saw
   const AUTOSAVE_PAUSED =
     "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back, or keep the blank layers there.";
   let restoreDialog = $state<{ blanked: boolean; entries: AutosaveEntry[] } | null>(null);
@@ -2797,9 +2887,13 @@
   /** Ids of the layers that have any pixels. Each is drawn into a small probe (high-quality
    *  downscaling averages, so a thin line still leaves some alpha) rather than read whole. */
   function inkedLayerIds(): Set<number> {
-    // A lifted float leaves a hole (a whole-layer transform, an empty layer) until Apply, and no
-    // undo step exists yet: probe the document as it will be, or the guard took it for a blanking.
-    return withPendingResolved(probeInked);
+    // A live Outline preview is taken back out for the probe. A lifted float's layer isn't
+    // settled until Apply (an undo step) or Cancel (none), so it counts as it did at the last save
+    // (`carryPendingLayer`): probed with the float drawn in, a paste on an empty layer was saved as
+    // inked and its Esc looked like a blanking, and a layer's whole content floating off the page
+    // read as emptied.
+    const floating = selection?.hasFloating && layers ? (floatLayer ?? layers.active).id : null;
+    return carryPendingLayer(withPendingResolved(probeInked), inkedAtSave, floating);
   }
 
   function probeInked(): Set<number> {
@@ -2832,18 +2926,23 @@
     historyAtSave = history.layerChanges;
   }
 
-  /** After Resize or Sharp layers re-made every layer: a new baseline for the guard — unless the
-   *  device refused some of the new canvases (`unbackedLayerCount`: they came out empty, with no
-   *  error), when the baseline would let the next autosave replace the stored drawing with them.
-   *  Then autosave pauses and the restore dialog opens, as for layers blanked in the background. */
-  function markResampled() {
+  /** After every layer was made anew — Resize, Sharp layers, and a document loaded (New, Open, a
+   *  restore): a new baseline for the guard — unless the device refused some of the new canvases
+   *  (`unbackedLayerCount`: they came out empty, with no error), when the baseline would let the
+   *  next autosave replace the stored drawing with them. Then autosave pauses and the restore
+   *  dialog opens, as for layers blanked in the background. Whether every layer got its memory. */
+  function markResampled(): boolean {
     const lost = layers?.unbackedLayerCount() ?? 0;
-    if (!lost) return markSaved();
+    if (!lost) {
+      markSaved();
+      return true;
+    }
     haltForBlankLayers();
     flashStatus(
-      `The device ran out of memory for ${lost} layer${lost > 1 ? "s" : ""} at this size — ${lost > 1 ? "they are" : "it is"} empty now`,
+      `The device ran out of memory for ${lost} layer${lost > 1 ? "s" : ""} — ${lost > 1 ? "they are" : "it is"} empty now`,
       15000,
     );
+    return false;
   }
 
   function blankedSince(inked: Set<number>): boolean {
@@ -2854,6 +2953,7 @@
 
   function haltForBlankLayers() {
     autosaveHalted = true;
+    haltCount++;
     clearTimeout(autosaveTimer);
     flashStatus(AUTOSAVE_PAUSED, 0);
     void openRestoreDialog(true);
@@ -2872,14 +2972,26 @@
     };
   }
 
-  /** A new document replaces one whose autosave is paused over blank layers: set the protected
-   *  latest copy aside (it stays in File ▸ Restore autosave…) and let autosave run again. On a
-   *  failure it stays paused, as resuming could overwrite that copy. */
-  async function setAsideIfPaused() {
-    if (!autosaveHalted) return;
-    await keepLatestAutosave();
-    autosaveHalted = false;
-    clearSticky(AUTOSAVE_PAUSED);
+  /** Another document is about to take this one's place (New, Open, an older autosave restored);
+   *  call it while the layers are still the outgoing ones. Its unsaved edits are autosaved now and
+   *  that latest copy becomes a checkpoint, so it stays in File ▸ Restore autosave… (the next
+   *  document's saves take the latest slot, and New forgets it: `clear`). With the layers blank —
+   *  autosave paused, or about to be — nothing is saved: the latest is the copy the pause
+   *  protects, set aside in the kept slot, and autosave runs again once that worked (on a failure
+   *  it stays paused, as resuming could overwrite that copy). Off for the session (the startup
+   *  restore failed), the latest is work that couldn't be loaded: left alone. */
+  function keepOutgoing(clear = false): Promise<void> {
+    if (!autosaveReady || !layers) return Promise.resolve();
+    // (An open text or filter dialog previews into its layer: no probe, no save — see flushAutosave.)
+    const blank = autosaveHalted || (!textDialog && !filterDialog && blankedSince(inkedLayerIds()));
+    if (!blank) flushAutosave();
+    const pause = haltCount;
+    return setLatestAside(blank ? "kept" : "checkpoint", clear).then(() => {
+      // Only the pause seen here: the next document may have paused anew (`markResampled`).
+      if (!autosaveHalted || pause !== haltCount) return;
+      autosaveHalted = false;
+      clearSticky(AUTOSAVE_PAUSED);
+    });
   }
 
   /** Back from the background: were the layers blanked while away? */
@@ -2903,13 +3015,14 @@
     try {
       const buffer = await loadAutosave(entry.key);
       if (!buffer) throw new Error("that copy is gone");
-      // Paused over blank layers, the latest is the newest good copy: restoring an older one and
-      // resuming let the next autosave overwrite it. Set it aside first (after reading the chosen
-      // copy, which may be the kept slot this replaces); if that fails, stay paused.
-      if (autosaveHalted && entry.key !== LATEST_KEY) await keepLatestAutosave();
-      loadAutosaveBuffer(buffer);
+      // An older copy takes the document's place: the latest (with any unsaved edits; paused over
+      // blank layers, the newest good copy) is set aside first, or the next autosave overwrote it
+      // — after reading the chosen copy, which may be in the slot this replaces; if that fails,
+      // nothing is replaced. Going back to the latest itself keeps neither.
+      if (entry.key !== LATEST_KEY) await keepOutgoing();
+      const whole = loadAutosaveBuffer(buffer);
       app.projectName = entry.projectName;
-      docFile = null; // it may not match the file the document came from
+      if (!whole) return; // layers came out empty: paused, with this dialog (`markResampled`)
       autosaveHalted = false;
       clearSticky(AUTOSAVE_PAUSED);
       restoreDialog = null;
@@ -3561,6 +3674,7 @@
     if (!run || !layers) return;
     for (const p of run.parts) p.layer.ctx.putImageData(p.before, p.base.x, p.base.y);
     layers.composite();
+    touchAllThumbs(); // a rebuild during the preview may have kept a thumbnail of it
   }
 
   // --- Text references ---
@@ -3568,7 +3682,11 @@
   // lines to letter over. The dialog previews every change on the canvas; OK is one undo step
   // (adding: the new layer; editing: the placement swap, as a transform is), Cancel puts back what
   // was there.
-  let textDialog = $state<{ adding: boolean; initial: TextSpec } | null>(null);
+  // `pending`: not showing, but still the open dialog for everything that asks (the workspace is
+  // inert, shortcuts, pastes and autosave wait) — while a new text's first font loads, and while
+  // OK's last preview does. With it closed across those waits, an undo, an Open or a second edit
+  // got in between and the step was recorded over whatever they left.
+  let textDialog = $state<{ adding: boolean; initial: TextSpec; pending?: boolean } | null>(null);
   /** The layer being previewed, what to put back on Cancel (`beforeTree` when it is new). */
   let textEdit: {
     layer: Layer;
@@ -3590,7 +3708,7 @@
       const f = await addFontFile(file);
       refreshFontList();
       const face = { font: f.family, weight: f.weight, italic: f.italic };
-      const woke = await refreshTextFonts();
+      const woke = await refreshTextFonts(fontKey(face));
       flashStatus(
         `Added ${fontLabel(face)}` +
           (woke
@@ -3643,28 +3761,47 @@
   }
 
   /**
-   * Rebuild every text layer whose font was missing and now isn't (it was just added). Their
-   * sources are updated in place — duplicates share one, and undo holds the same object — and
-   * drawn from their settings again. Returns how many sources came back.
+   * Rebuild every text layer whose font was missing and now isn't (it was just added), and every
+   * one drawn in the face `added` (a file that replaced it in the library: the layer drew the new
+   * letters in the old one's box). Each gets a NEW source, shared by its duplicates as the old one
+   * was, at corners refitted to the new layout's box as an edit's are (`refitToLayout`): the old
+   * box was measured in a stand-in font or the replaced file, and the new layout was stretched
+   * into it. The old source isn't touched — a placement undo holds still draws as it did. The
+   * open dialog's Cancel placement is rebuilt too, or Cancel put the missing-font look back.
+   * Returns how many missing sources came back.
    */
-  async function refreshTextFonts(): Promise<number> {
+  async function refreshTextFonts(added?: string): Promise<number> {
     if (!layers) return 0;
-    const waiting = new Set<RefSource>();
-    for (const l of layers.flatLayers()) if (l.ref?.src.text?.fontMissing) waiting.add(l.ref.src);
+    const stale = new Set<RefSource>();
+    const check = (src: RefSource | undefined) => {
+      const text = src?.text;
+      if (text && (text.fontMissing || fontKey(text.spec) === added)) stale.add(src!);
+    };
+    for (const l of layers.flatLayers()) check(l.ref?.src);
+    check(textEdit?.before?.src);
+    const rebuilt = new Map<RefSource, RefSource>();
     let woke = 0;
-    for (const src of waiting) {
+    for (const src of stale) {
       const text = src.text!;
       if ((await fontSource(text.spec)) === "missing") continue;
-      const fresh = await buildTextSource(text.spec, src.id);
-      src.image = fresh.image;
-      src.text = fresh.text;
-      src.bytes = fresh.bytes;
-      src.width = fresh.width;
-      src.height = fresh.height;
-      woke++;
+      rebuilt.set(src, await buildTextSource(text.spec, src.id));
+      if (text.fontMissing) woke++;
     }
-    if (!woke) return 0;
-    for (const l of layers.flatLayers()) if (l.ref && waiting.has(l.ref.src)) layers.renderRef(l);
+    if (!rebuilt.size) return 0;
+    // The placements as they are NOW: a preview may have landed during the waits above.
+    const refreshed = (ref: RefPlacement | undefined): RefPlacement | undefined => {
+      const src = ref && rebuilt.get(ref.src);
+      if (!ref || !src) return undefined;
+      const { spec, layout } = src.text!;
+      return { src, corners: refitToLayout(ref.corners, ref.src.text!.layout, layout, spec.align) };
+    };
+    for (const l of layers.flatLayers()) {
+      const ref = refreshed(l.ref);
+      if (!ref) continue;
+      l.ref = ref;
+      layers.renderRef(l);
+    }
+    if (textEdit) textEdit.before = refreshed(textEdit.before) ?? textEdit.before;
     layers.composite();
     bumpLayerVersion();
     return woke;
@@ -3673,28 +3810,34 @@
   /** A new text starts with the last one's look (session only). */
   let lastTextSpec: TextSpec = { ...DEFAULT_TEXT_SPEC };
 
-  /** Set while the first font loads, so a second tap can't add a second layer. */
-  let textAdding = false;
-
   /** Add an empty text layer below the active one, centred on the page, and open the dialog. */
   async function addText() {
-    if (!layers || !selection || textDialog || textAdding) return;
+    if (!layers || !selection || textDialog) return;
     if (outlineActive()) cancelOutline();
     if (selection.hasFloating) selection.commit(); // a float belongs to the layer it came from
     const spec = { ...lastTextSpec, text: "" };
-    textAdding = true;
-    const src = await buildTextSource(spec).finally(() => (textAdding = false));
-    const { layout } = src.text!;
-    const beforeTree = layers.captureStructure();
-    const layer = layers.addLayerBelow(textLayerName(""));
-    layer.opacity = REFERENCE_OPACITY;
-    const rect = placeExternalImage(layout.width, layout.height, app.docWidth, app.docHeight);
-    layer.ref = { src, corners: cornersFromRect(rect) };
-    layers.renderRef(layer);
-    layers.composite();
-    bumpLayerVersion();
-    textEdit = { layer, before: undefined, beforeTree };
-    textDialog = { adding: true, initial: spec };
+    // The dialog counts as open while the first font loads (`pending`): a second tap can't add a
+    // second layer, and nothing else changes the document meanwhile.
+    const n = ++textSeq;
+    textDialog = { adding: true, initial: spec, pending: true };
+    try {
+      const src = await buildTextSource(spec);
+      if (n !== textSeq) return; // cancelled meanwhile (an opened file arrived)
+      const { layout } = src.text!;
+      const beforeTree = layers.captureStructure();
+      const layer = layers.addLayerBelow(textLayerName(""));
+      layer.opacity = REFERENCE_OPACITY;
+      const rect = placeExternalImage(layout.width, layout.height, app.docWidth, app.docHeight);
+      layer.ref = { src, corners: cornersFromRect(rect) };
+      layers.renderRef(layer);
+      layers.composite();
+      bumpLayerVersion();
+      textEdit = { layer, before: undefined, beforeTree };
+      textDialog = { adding: true, initial: spec };
+    } catch (e) {
+      if (n === textSeq) textDialog = null; // not left open, unseen, with the workspace inert
+      throw e;
+    }
   }
 
   /** Open the dialog on the active text layer. */
@@ -3739,12 +3882,22 @@
 
   async function confirmText(spec: TextSpec) {
     const edit = textEdit;
-    if (!edit || !textDialog) return;
+    if (!edit || !textDialog || textDialog.pending) return;
+    // The dialog goes, but counts as open (`pending`) until the step below is recorded.
+    textDialog = { ...textDialog, pending: true };
+    try {
+      await previewText(spec); // the last change may not be showing yet
+    } catch (e) {
+      // The step is recorded for what the layer shows, or the edit stayed half-open for good.
+      console.error("the text's last change could not be drawn", e);
+      flashStatus("Couldn't draw the text's last change — it stays as it was showing");
+    }
+    if (textEdit !== edit) return; // cancelled meanwhile (an opened file arrived)
     textDialog = null;
-    await previewText(spec); // the last change may not be showing yet
     textEdit = null;
-    lastTextSpec = { ...spec, text: "" };
     const { layer } = edit;
+    spec = layer.ref?.src.text?.spec ?? spec; // (what is showing, if that last draw failed)
+    lastTextSpec = { ...spec, text: "" };
     if (edit.beforeTree) {
       // One step that adds the finished layer: undo removes it, redo brings it back as it is now.
       layer.name = textLayerName(spec.text);
@@ -3844,6 +3997,7 @@
           gesture = null;
           layers.renderRef(refTransform.layer);
           layers.composite();
+          touchAllThumbs();
         }
       }
       refTransform = null;
@@ -4108,17 +4262,41 @@
     // on iPad. The eyedropper's one-pixel read is the rare getImageData; layer
     // canvases are the ones snapshotted, and they request the flag themselves.
     const ctx = canvasEl.getContext("2d")!;
-    layers = new LayerManager(canvasEl, ctx, () => bumpLayerVersion());
+    // The tree's own changes (add, delete, reorder, the eye) write no pixels of a layer that
+    // stays — Merge down marks its target itself — so the kept thumbnails are reused.
+    layers = new LayerManager(canvasEl, ctx, () => bumpRows());
     selection = new Selection(selectionOverlayEl);
 
     // Undo/redo repaint: commands change pixels or the tree, then this refreshes the view.
     history.onChange = () => app.historyVersion++;
 
-    setOnHistoryApplied(() => {
+    setOnHistoryApplied((changed) => {
       // Undo/redo can bring back or take away picked rows: start again from the active one.
       app.layerSelection = [];
-      layers.composite();
-      bumpLayerVersion();
+      if (!changed) {
+        layers.composite();
+        bumpLayerVersion();
+        // A text placement brought back from before its font was added still holds the stand-in
+        // source: rebuild it in the font now on the device, as adding the font did.
+        if (layers.flatLayers().some((l) => l.ref?.src.text?.fontMissing)) void refreshTextFonts();
+        return;
+      }
+      // A step that only put tiles back (a stroke, a fill, a filter): their part of the screen
+      // and that layer's thumbnail. A whole redraw plus every row's thumbnail read every layer
+      // whole, ~0.2–0.5 s a step on a large iPad document (2026-11-13).
+      const dpr = docDpr();
+      let box: Box | null = null;
+      for (const { rect: r } of changed) {
+        box = unionBox(box, {
+          x0: r.x / dpr,
+          y0: r.y / dpr,
+          x1: (r.x + r.w) / dpr,
+          y1: (r.y + r.h) / dpr,
+        });
+      }
+      layers.composite(box);
+      if (changed.length === 1) bumpPixelVersion(changed[0].layer.id, changed[0].rect);
+      else bumpLayerVersion(); // several thumbnails
     });
 
     // Selection callbacks
@@ -4127,7 +4305,10 @@
       const before = preSelectionSnapshot;
       preSelectionSnapshot = null;
       floatLayer = null;
-      selection.renderFloatingTo(layer.ctx);
+      // A lift lying where it was lifted goes back exactly as it was: drawn back, a lasso's copy
+      // faded the art along its outline (`liftUntouched`).
+      if (before && selection.liftUntouched) layers.restoreTo(layer, before);
+      else selection.renderFloatingTo(layer.ctx);
       // Applying an untouched lift changes nothing: no empty undo step (an import applied as it
       // landed made the next undo appear to do nothing).
       if (before) pushPixelEdit(layers, layer, before);
@@ -4241,6 +4422,10 @@
         // select and lasso, or a reference's handles dragged under Brush, it made handles trail
         // the Pencil and stop short of the lift.
         streamline: () => (gesture?.kind === "brush" ? app.streamline / 100 : 0),
+        // Sparse input is filled in every 4 px ON SCREEN when zoomed out (4 document px at 100%
+        // and above, as before): by document px a stroke on a large page seen whole got ~3× the
+        // points.
+        interpolationPx: () => interpolationSpacing(viewport.zoom),
         // The stamp tips follow the points exactly, so they always get a short string
         // (STAMP_MIN_ROPE_PX): at Stream 0 a thin Pencil line came out stepped on iPad.
         minRopePx: () => {
@@ -4538,7 +4723,9 @@
           onWidthChange={debouncedSave}
           onAddText={() => void addText()}
           onEditText={editText}
+          {endGesture}
           settlePending={() => {
+            endGesture();
             if (selection?.hasFloating) resolveFloat(true);
             if (outlineActive()) cancelOutline();
           }}
@@ -4599,7 +4786,7 @@
   />
 
   <TextDialog
-    open={!!textDialog}
+    open={!!textDialog && !textDialog.pending}
     adding={textDialog?.adding ?? false}
     initial={textDialog?.initial ?? DEFAULT_TEXT_SPEC}
     onChange={(spec) => void previewText(spec)}

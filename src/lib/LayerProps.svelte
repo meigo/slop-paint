@@ -26,6 +26,7 @@
     onSettingsChange,
     onRename,
     onEditText,
+    endGesture,
   }: {
     layers: LayerManager;
     /** Called after an edit, so the caller can recomposite / persist. */
@@ -34,6 +35,8 @@
     onRename: (node: LayerNode) => void;
     /** Open the text dialog on the selected text reference. */
     onEditText: () => void;
+    /** Finish a canvas press still open (Bake: a reference drag's release put the reference back). */
+    endGesture: () => void;
   } = $props();
 
   // The layer tree is imperative, so layerVersion is what re-derives all of this. The node's
@@ -79,6 +82,7 @@
   /** Set the tint (undefined = none) as one undo step. */
   function setTint(value: string | undefined) {
     if (target?.type !== "layer") return;
+    commitTint(); // a picker drag still open is its own step, before this one
     const before = target.tint;
     const after = normalizeTint(value);
     if (before === after) return;
@@ -90,6 +94,7 @@
 
   function onTintInput(value: string) {
     if (target?.type !== "layer") return;
+    if (tintStart && tintStart.id !== target.id) commitTint(); // another layer's drag, left open
     tintStart ??= { id: target.id, value: target.tint };
     target.tint = normalizeTint(value);
     layers.composite();
@@ -102,6 +107,14 @@
     const node = layers.findLayer(id);
     if (node) pushNodeFieldEdit(layers, id, "tint", before, node.tint);
     onSettingsChange();
+  }
+
+  /** Close the tint popover, committing the picker's drag: the colour input's own `change` / blur
+   *  may never come — a press outside removes the input first — which left the drag with no undo
+   *  step, and the next one starting from a stale tint. */
+  function closeTint() {
+    tintOpen = false;
+    commitTint();
   }
 
   const tags = $derived.by(() => {
@@ -119,6 +132,7 @@
   function bake() {
     if (!refLayer?.ref) return;
     if (layers.isLocked(refLayer)) return flashStatus("Layer is locked");
+    endGesture();
     pushRefEdit(layers, refLayer.id, refLayer.ref, undefined);
     refLayer.ref = undefined;
     flashStatus("Baked — it's a plain layer now");
@@ -171,7 +185,7 @@
 <svelte:window
   onkeydown={(e) => {
     if (tagsOpen && e.key === "Escape") tagsOpen = false;
-    if (tintOpen && e.key === "Escape") tintOpen = false;
+    if (tintOpen && e.key === "Escape") closeTint();
   }}
 />
 
@@ -230,7 +244,7 @@
       <!-- Layers only: draw the layer in one colour (line art), its pixels untouched. The popover
            spans the strip (positioned on it, not on this button): hung from the button it opened
            past the panel's left edge, under the canvas. -->
-      <div class="flex shrink-0" use:clickOutside={() => (tintOpen = false)}>
+      <div class="flex shrink-0" use:clickOutside={closeTint}>
         <button
           class="flex size-5 cursor-pointer items-center justify-center rounded text-text-secondary hover:text-text"
           title={tint
@@ -238,7 +252,7 @@
             : "Tint — draw the layer in one colour, keeping its shape (recolour line art)"}
           aria-haspopup="dialog"
           aria-expanded={tintOpen}
-          onclick={() => (tintOpen = !tintOpen)}
+          onclick={() => (tintOpen ? closeTint() : (tintOpen = true))}
         >
           {#if tint}
             <span class="size-3.5 rounded-full border border-border" style:background={tint}></span>
@@ -247,8 +261,10 @@
           {/if}
         </button>
         {#if tintOpen}
+          <!-- `data-popover`: App leaves Esc to it (it cancelled a lifted selection behind it). -->
           <div
             class="absolute top-full right-1.5 left-1.5 z-50 mt-1 flex flex-col gap-2 rounded-lg border border-border bg-surface p-2 text-xs shadow-lg"
+            data-popover
           >
             <div class="grid grid-cols-8 gap-1">
               {#each SWATCHES as { color, name } (color)}

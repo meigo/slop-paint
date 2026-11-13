@@ -1,5 +1,5 @@
 /** Fill enclosed: find the space an outline encloses (from slop-animator's fill-holes.ts). */
-import { dilateMask, distanceToMask, erodeMask } from "./mask-ops";
+import { distanceToMask } from "./mask-ops";
 
 export interface FillEnclosedResult {
   /** w*h, 1 = part of the shape: ink, or a region the ink encloses. */
@@ -26,9 +26,10 @@ export interface FillEnclosedResult {
   rawEnclosedArea: number;
 }
 
-/** Largest `gap` the fill accepts. The morphology is O(pixels × r²) and unseparated, so an
+/** Largest `gap` the fill accepts. The morphology was O(pixels × r²) and unseparated, so an
  *  unclamped value (a typed `50` in the number input) would block the main thread for minutes on a
- *  full-size lift — with the cell's pixels already cleared by the lift. */
+ *  full-size lift — with the cell's pixels already cleared by the lift. It goes by distance now
+ *  (linear, 2026-11-13), but a wider bridge than this closes shapes that are plainly open. */
 export const MAX_GAP = 8;
 
 /** Coerce anything a caller (or a number input, which writes `null` when emptied) might supply into
@@ -54,7 +55,7 @@ export function fillEnclosed(
   opts: { alphaThreshold?: number; gap?: number } = {},
 ): FillEnclosedResult {
   const threshold = opts.alphaThreshold ?? 10;
-  const gap = clampGap(opts.gap ?? 0); // clamped HERE, not at the caller: the cost is O(pixels × r²)
+  const gap = clampGap(opts.gap ?? 0); // clamped HERE, not at the caller
 
   // Pad by gap+1: ink routinely touches the canvas edges.
   // Without a guaranteed clear ring the border flood has nowhere to start and everything reads as
@@ -82,7 +83,16 @@ export function fillEnclosed(
   }
   const inkBBoxArea = maxX < 0 ? 0 : (maxX - minX + 1) * (maxY - minY + 1);
 
-  const grown = dilateMask(ink, W, H, gap);
+  // Dilate and erode by DISTANCE (2026-11-13): the same pixels as `dilateMask` / `erodeMask` (a
+  // round element of radius `gap`) in linear time. Those are O(pixels × r²): 7.8 s for a 4000×6000
+  // layer at Bridge 8. The work arrays are shared by the two transforms.
+  const buf = gap > 0 ? { grid: new Int32Array(W * H), out: new Float32Array(W * H) } : undefined;
+  let grown = ink;
+  if (buf) {
+    const toInk = distanceToMask(ink, W, H, buf);
+    grown = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) if (toInk[i] <= gap) grown[i] = 1;
+  }
   let grownArea = 0;
   for (let i = 0; i < grown.length; i++) grownArea += grown[i];
 
@@ -118,14 +128,19 @@ export function fillEnclosed(
   };
   const outside = floodOutside(grown);
 
-  let filled = new Uint8Array(W * H);
-  for (let i = 0; i < W * H; i++) filled[i] = outside[i] ? 0 : 1;
-  const eroded = erodeMask(filled, W, H, gap); // undo the dilation's bloat, on a solid mask
-  filled = new Uint8Array(eroded); // ensure consistent buffer type
+  // Undo the dilation's bloat, on a solid mask: a pixel stays when everything within `gap` of it is
+  // filled, i.e. the nearest outside pixel is further than that. (Off-grid counts as outside, and
+  // the padded border ring always is outside, at most as far away.)
+  const filled = new Uint8Array(W * H);
+  if (buf) {
+    const toOutside = distanceToMask(outside, W, H, buf);
+    for (let i = 0; i < W * H; i++) filled[i] = toOutside[i] > gap ? 1 : 0;
+  } else {
+    for (let i = 0; i < W * H; i++) filled[i] = outside[i] ? 0 : 1;
+  }
 
   // The same question asked of the UNDILATED ink. At gap 0 it is the dilated answer itself (`grown`
-  // IS `ink` there), so only a bridging fill pays for the second flood — and a flood is
-  // O(pixels), nothing beside the O(pixels × r²) morphology above.
+  // IS `ink` there), so only a bridging fill pays for the second flood.
   const rawOutside = gap > 0 ? floodOutside(ink) : null;
 
   const mask = new Uint8Array(w * h);
