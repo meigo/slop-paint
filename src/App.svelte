@@ -4276,6 +4276,9 @@
       if (!changed) {
         layers.composite();
         bumpLayerVersion();
+        // A text placement brought back from before its font was added still holds the stand-in
+        // source: rebuild it in the font now on the device, as adding the font did.
+        if (layers.flatLayers().some((l) => l.ref?.src.text?.fontMissing)) void refreshTextFonts();
         return;
       }
       // A step that only put tiles back (a stroke, a fill, a filter): their part of the screen
