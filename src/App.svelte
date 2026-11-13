@@ -1860,9 +1860,14 @@
       layer.ctx.rect(rect.x, rect.y, rect.w, rect.h);
       layer.ctx.clip();
       layer.ctx.setTransform(m);
-      selection?.applyClip(layer.ctx);
-      drawFullStroke(layer.ctx, pts, finished, unfrozenFrom());
-      layer.ctx.restore();
+      // finally: a brush throwing mid-frame (a refused scratch canvas) left this clip on the
+      // layer's own context, cutting every later edit to it until the canvas was re-sized.
+      try {
+        selection?.applyClip(layer.ctx);
+        drawFullStroke(layer.ctx, pts, finished, unfrozenFrom());
+      } finally {
+        layer.ctx.restore();
+      }
       return frame;
     }
 
@@ -1945,18 +1950,21 @@
       const drawnPx = drawn && deviceRect(drawn, lw / layers.docWidth, lw, lh);
       if (drawnPx) strokeBackup?.keep(drawnPx); // before the dabs land there
       layer.ctx.save();
-      selection?.applyClip(layer.ctx);
-      if (kind === "blend") {
-        drawBlendStrokeIncremental(layer.ctx, points, strokeSettings, sizeRange, done);
-      } else {
-        drawStampStrokeIncremental(
-          layer.ctx,
-          points,
-          { ...strokeSettings, brushType: kind },
-          sizeRange,
-        );
+      try {
+        selection?.applyClip(layer.ctx);
+        if (kind === "blend") {
+          drawBlendStrokeIncremental(layer.ctx, points, strokeSettings, sizeRange, done);
+        } else {
+          drawStampStrokeIncremental(
+            layer.ctx,
+            points,
+            { ...strokeSettings, brushType: kind },
+            sizeRange,
+          );
+        }
+      } finally {
+        layer.ctx.restore(); // as the full redraw above
       }
-      layer.ctx.restore();
       strokeArea = unionBox(strokeArea, drawn);
       scheduleComposite(drawn);
       stampDrawnTo = points.length;
@@ -4476,11 +4484,21 @@
     }
     canvasClipEl.addEventListener("wheel", handleWheel, { passive: false }); // the canvas only, so the layer list scrolls
 
-    // Canvas panning (capture phase)
+    // Canvas panning (capture phase). Only the pointer that started the pan moves or ends it, and
+    // a cancel or lost capture ends it too: a Space-pan whose Pencil iPadOS cancelled stayed on,
+    // so hover panned the view and the next stroke's moves and lift were swallowed (2026-11-14).
+    let panPointer: number | null = null;
     function handlePanDown(e: PointerEvent) {
+      if (viewport.panning) {
+        // A second pointer during a pan: swallowed, so it neither draws nor ends the pan.
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.button === 1 || (e.button === 0 && spaceHeld)) {
         e.preventDefault();
         e.stopPropagation();
+        panPointer = e.pointerId;
         viewport.startPan(e.clientX, e.clientY);
         canvasClipEl.setPointerCapture(e.pointerId);
         canvasClipEl.style.cursor = "grabbing";
@@ -4488,17 +4506,18 @@
       }
     }
     function handlePanMove(e: PointerEvent) {
-      if (viewport.panning) {
+      if (viewport.panning && e.pointerId === panPointer) {
         e.preventDefault();
         e.stopPropagation();
         viewport.updatePan(e.clientX, e.clientY);
       }
     }
     function handlePanUp(e: PointerEvent) {
-      if (viewport.panning) {
+      if (viewport.panning && e.pointerId === panPointer) {
         e.preventDefault();
         e.stopPropagation();
         viewport.endPan();
+        panPointer = null;
         const isBrushTool = isStrokeTool(app.currentTool);
         canvasClipEl.style.cursor = spaceHeld ? "grab" : isBrushTool ? "none" : "crosshair";
         if (!spaceHeld) updateBrushCursor(e.clientX, e.clientY);
@@ -4507,6 +4526,8 @@
     canvasClipEl.addEventListener("pointerdown", handlePanDown, { capture: true });
     canvasClipEl.addEventListener("pointermove", handlePanMove, { capture: true });
     canvasClipEl.addEventListener("pointerup", handlePanUp, { capture: true });
+    canvasClipEl.addEventListener("pointercancel", handlePanUp, { capture: true });
+    canvasClipEl.addEventListener("lostpointercapture", handlePanUp, { capture: true });
 
     // Brush + selection-handle hover cursor tracking
     function handleCursorMove(e: PointerEvent) {
@@ -4562,6 +4583,8 @@
       dprQuery?.removeEventListener("change", onDprChange);
       canvasClipEl.removeEventListener("pointermove", handlePanMove, { capture: true });
       canvasClipEl.removeEventListener("pointerup", handlePanUp, { capture: true });
+      canvasClipEl.removeEventListener("pointercancel", handlePanUp, { capture: true });
+      canvasClipEl.removeEventListener("lostpointercapture", handlePanUp, { capture: true });
       canvasClipEl.removeEventListener("pointermove", handleCursorMove);
       canvasClipEl.removeEventListener("pointerleave", handleCursorLeave);
     };
