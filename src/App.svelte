@@ -114,15 +114,16 @@
     psdBuffer,
   } from "./export-psd";
   import {
-    clearAutosave,
     keepLatestAutosave,
     LATEST_KEY,
     listAutosaves,
     loadAutosave,
     saveAutosave,
+    setLatestAside,
     type AutosaveEntry,
   } from "./persist/autosave";
   import {
+    carryPendingLayer,
     formatBytes,
     IPAD_MEMORY_WARN_BYTES,
     layerMemoryBytes,
@@ -460,7 +461,9 @@
   function setLayerResolution(hi: boolean) {
     if (!layers || hi === app.hiResLayers) return;
     app.hiResLayers = hi;
-    if (wantedDpr() === layers.pixelRatio) return; // a 1× screen: same resolution, keep undo
+    // A 1× screen: same resolution, keep undo — the setting is still saved (it wasn't: the toggle
+    // came back as it was after a reload).
+    if (wantedDpr() === layers.pixelRatio) return debouncedSave();
     endGesture(); // a press still down finishes at the old resolution (see newDocument)
     if (selection?.hasFloating) resolveFloat(true); // a float is at the old resolution
     if (outlineActive()) cancelOutline();
@@ -982,6 +985,10 @@
   // another. Elsewhere (Safari, iPad) Save downloads a copy, as it always did. The link is for the
   // session only — after a reload the first Save asks again.
   let docFile: FileSystemFileHandle | null = null;
+  /** Counts the documents that took the place of another (New, Open, a restore). A save waits on a
+   *  file dialog or a permission prompt before it encodes: with another document there by then,
+   *  it wrote the new one over the old one's file, and Save as linked it to that file. */
+  let docGeneration = 0;
 
   function doSavePsd() {
     if (!layers) return;
@@ -1000,6 +1007,7 @@
   async function doSaveAs() {
     if (!layers) return;
     if (!fileAccessAvailable()) return doSavePsd();
+    const doc = docGeneration;
     let handle: FileSystemFileHandle | null;
     try {
       handle = await pickSaveFile(`${sanitizeFilename(app.projectName)}.psd`);
@@ -1007,16 +1015,21 @@
       flashStatus(`Couldn't save — ${e instanceof Error ? e.message : String(e)}`, 10000);
       return;
     }
-    if (!handle || !(await writeDocTo(handle))) return;
+    if (!handle || !(await writeDocTo(handle, doc))) return;
+    if (doc !== docGeneration) return; // replaced during the write: that file isn't this document's
     docFile = handle;
     app.projectName = nameFromFile(handle.name);
   }
 
-  /** Write the project over `handle`; whether it was written (a dismissed prompt says nothing). */
-  async function writeDocTo(handle: FileSystemFileHandle): Promise<boolean> {
+  /** Write the project over `handle`; whether it was written (a dismissed prompt says nothing).
+   *  `doc` is the document the save was asked for: replaced meanwhile, nothing is written. */
+  async function writeDocTo(handle: FileSystemFileHandle, doc = docGeneration): Promise<boolean> {
     if (!layers) return false;
     try {
-      await writeFile(handle, () => withPendingResolved(() => psdBuffer(layers, false)));
+      await writeFile(handle, () => {
+        if (doc !== docGeneration) throw new Error("another document was opened meanwhile");
+        return withPendingResolved(() => psdBuffer(layers, false));
+      });
       flashStatus(`Saved ${handle.name}`);
       return true;
     } catch (e) {
@@ -1076,13 +1089,10 @@
     // document: its stroke kept drawing on a removed layer, or a drag landed on the new one.
     endGesture();
     if (outlineActive()) cancelOutline();
-    // Autosave paused over blank layers: the latest is the copy the pause protects — set it aside
-    // before New drops it; the new document then autosaves as usual. Off for the session (the
-    // startup restore failed), the latest is work that couldn't be loaded: leave it alone.
-    if (autosaveReady)
-      void setAsideIfPaused()
-        .then(() => clearAutosave())
-        .catch((e) => console.error("clearing autosave failed", e));
+    // The outgoing document's unsaved edits are autosaved and that copy set aside before New
+    // forgets the latest (so a reload doesn't bring the old document back).
+    void keepOutgoing(true).catch((e) => console.error("clearing autosave failed", e));
+    docGeneration++;
     app.docWidth = width;
     app.docHeight = height;
     layers.tree.length = 0;
@@ -1096,7 +1106,7 @@
     history.clear(); // a new document starts with nothing to undo
     layers.composite();
     bumpLayerVersion();
-    markSaved();
+    markResampled();
     fitDocumentInView();
     showNewDocDialog = false;
   }
@@ -1194,10 +1204,12 @@
       endGesture(); // a press still down finishes on the old document, not the new one
       // A dialog opened while the file was read or decoded works on the layers this replaces: it
       // is cancelled once the file has loaded, just before the swap — a file that fails to load
-      // leaves the dialog and its work alone.
+      // leaves the dialog and its work alone. Then the outgoing document's unsaved edits are
+      // autosaved and that copy set aside, while its layers are still there.
       const closeDialogs = () => {
         if (filterDialog) cancelFilter();
         if (textDialog) cancelText();
+        void keepOutgoing().catch((e) => console.error("setting the autosave aside failed", e));
       };
       try {
         size = image
@@ -1210,9 +1222,9 @@
         image?.close();
       }
       if (outlineActive()) cancelOutline();
-      void setAsideIfPaused().catch((e) => console.error("setting the autosave aside failed", e));
       app.projectName = nameFromFile(file.name);
       docFile = psd ? handle : null;
+      docGeneration++;
       const { width, height } = size;
       history.clear(); // the stack's commands point at the layers this just replaced
       // Update document size from PSD dimensions
@@ -1223,7 +1235,7 @@
       resizeCanvas();
       layers.composite();
       bumpLayerVersion();
-      markSaved();
+      markResampled();
       fitDocumentInView();
     };
     reader.readAsArrayBuffer(file);
@@ -1973,6 +1985,8 @@
     // cancelled a live transform or Outline preview behind it, which Cancel can't take back.
     if ((e.key === "Escape" || e.key === "Enter") && document.querySelector('[role="menu"]'))
       return;
+    // Esc with any other popover open (`data-popover`: brush settings, colour, tint) closes that.
+    if (e.key === "Escape" && document.querySelector("[data-popover]")) return;
     // A dropdown keeps focus after a pick; its letter keys jump between options, so only the
     // Ctrl/Cmd shortcuts get through (undo must not die because the brush type was just changed).
     if (target.tagName === "SELECT" && !e.ctrlKey && !e.metaKey) return;
@@ -2746,9 +2760,18 @@
   /** Restore the autosaved project, if any. Returns false when the restore failed (autosave then
    *  stays off for the session rather than overwriting the stored copy with a blank document). */
   async function restoreAutosave(): Promise<boolean> {
+    const doc = docGeneration;
     try {
       const buffer = await loadAutosave();
-      if (buffer) loadAutosaveBuffer(buffer);
+      // The app takes input while the copy is read: work begun meanwhile (a stroke, New, Open)
+      // isn't replaced by it. The stored copy becomes a checkpoint before autosave takes its slot.
+      if (buffer && (gesture || history.canUndo || history.canRedo || doc !== docGeneration)) {
+        await setLatestAside("checkpoint");
+        flashStatus(
+          "Kept what you just started — the autosaved drawing is in File ▸ Restore autosave…",
+          10000,
+        );
+      } else if (buffer) loadAutosaveBuffer(buffer);
       else markSaved();
       return true;
     } catch (e) {
@@ -2761,13 +2784,16 @@
     }
   }
 
-  /** Make an autosaved PSD the document (startup, or File ▸ Restore autosave…). */
-  function loadAutosaveBuffer(buffer: ArrayBuffer) {
-    if (!layers) return;
+  /** Make an autosaved PSD the document (startup, or File ▸ Restore autosave…). False when the
+   *  device refused some layers' memory: autosave is paused then (see `markResampled`). */
+  function loadAutosaveBuffer(buffer: ArrayBuffer): boolean {
+    if (!layers) return false;
     const dpr = docDpr();
     endGesture(); // a press still down finishes on the old document, not the new one
     const { width, height } = loadPsd(buffer, layers, dpr, bumpLayerVersion, refDecodeFailed);
     if (outlineActive()) cancelOutline();
+    docFile = null; // it may not match the file the document came from
+    docGeneration++;
     history.clear(); // restored document: nothing from this session to undo
     app.docWidth = width;
     app.docHeight = height;
@@ -2777,7 +2803,7 @@
     layers.composite();
     bumpLayerVersion();
     fitDocumentInView();
-    markSaved();
+    return markResampled();
   }
 
   // --- Blank layers guard ---
@@ -2789,6 +2815,7 @@
   let inkedAtSave = new Set<number>(); // layers with pixels at the last save (or restore)
   let historyAtSave = 0; // history.layerChanges then: how many layers undo steps changed since
   let autosaveHalted = false;
+  let haltCount = 0; // pauses so far: what `keepOutgoing` resumes is the pause it saw
   const AUTOSAVE_PAUSED =
     "Your layers went blank — autosave is paused so the saved copy is kept. File ▸ Restore autosave… brings it back, or keep the blank layers there.";
   let restoreDialog = $state<{ blanked: boolean; entries: AutosaveEntry[] } | null>(null);
@@ -2797,9 +2824,13 @@
   /** Ids of the layers that have any pixels. Each is drawn into a small probe (high-quality
    *  downscaling averages, so a thin line still leaves some alpha) rather than read whole. */
   function inkedLayerIds(): Set<number> {
-    // A lifted float leaves a hole (a whole-layer transform, an empty layer) until Apply, and no
-    // undo step exists yet: probe the document as it will be, or the guard took it for a blanking.
-    return withPendingResolved(probeInked);
+    // A live Outline preview is taken back out for the probe. A lifted float's layer isn't
+    // settled until Apply (an undo step) or Cancel (none), so it counts as it did at the last save
+    // (`carryPendingLayer`): probed with the float drawn in, a paste on an empty layer was saved as
+    // inked and its Esc looked like a blanking, and a layer's whole content floating off the page
+    // read as emptied.
+    const floating = selection?.hasFloating && layers ? (floatLayer ?? layers.active).id : null;
+    return carryPendingLayer(withPendingResolved(probeInked), inkedAtSave, floating);
   }
 
   function probeInked(): Set<number> {
@@ -2832,18 +2863,23 @@
     historyAtSave = history.layerChanges;
   }
 
-  /** After Resize or Sharp layers re-made every layer: a new baseline for the guard — unless the
-   *  device refused some of the new canvases (`unbackedLayerCount`: they came out empty, with no
-   *  error), when the baseline would let the next autosave replace the stored drawing with them.
-   *  Then autosave pauses and the restore dialog opens, as for layers blanked in the background. */
-  function markResampled() {
+  /** After every layer was made anew — Resize, Sharp layers, and a document loaded (New, Open, a
+   *  restore): a new baseline for the guard — unless the device refused some of the new canvases
+   *  (`unbackedLayerCount`: they came out empty, with no error), when the baseline would let the
+   *  next autosave replace the stored drawing with them. Then autosave pauses and the restore
+   *  dialog opens, as for layers blanked in the background. Whether every layer got its memory. */
+  function markResampled(): boolean {
     const lost = layers?.unbackedLayerCount() ?? 0;
-    if (!lost) return markSaved();
+    if (!lost) {
+      markSaved();
+      return true;
+    }
     haltForBlankLayers();
     flashStatus(
-      `The device ran out of memory for ${lost} layer${lost > 1 ? "s" : ""} at this size — ${lost > 1 ? "they are" : "it is"} empty now`,
+      `The device ran out of memory for ${lost} layer${lost > 1 ? "s" : ""} — ${lost > 1 ? "they are" : "it is"} empty now`,
       15000,
     );
+    return false;
   }
 
   function blankedSince(inked: Set<number>): boolean {
@@ -2854,6 +2890,7 @@
 
   function haltForBlankLayers() {
     autosaveHalted = true;
+    haltCount++;
     clearTimeout(autosaveTimer);
     flashStatus(AUTOSAVE_PAUSED, 0);
     void openRestoreDialog(true);
@@ -2872,14 +2909,26 @@
     };
   }
 
-  /** A new document replaces one whose autosave is paused over blank layers: set the protected
-   *  latest copy aside (it stays in File ▸ Restore autosave…) and let autosave run again. On a
-   *  failure it stays paused, as resuming could overwrite that copy. */
-  async function setAsideIfPaused() {
-    if (!autosaveHalted) return;
-    await keepLatestAutosave();
-    autosaveHalted = false;
-    clearSticky(AUTOSAVE_PAUSED);
+  /** Another document is about to take this one's place (New, Open, an older autosave restored);
+   *  call it while the layers are still the outgoing ones. Its unsaved edits are autosaved now and
+   *  that latest copy becomes a checkpoint, so it stays in File ▸ Restore autosave… (the next
+   *  document's saves take the latest slot, and New forgets it: `clear`). With the layers blank —
+   *  autosave paused, or about to be — nothing is saved: the latest is the copy the pause
+   *  protects, set aside in the kept slot, and autosave runs again once that worked (on a failure
+   *  it stays paused, as resuming could overwrite that copy). Off for the session (the startup
+   *  restore failed), the latest is work that couldn't be loaded: left alone. */
+  function keepOutgoing(clear = false): Promise<void> {
+    if (!autosaveReady || !layers) return Promise.resolve();
+    // (An open text or filter dialog previews into its layer: no probe, no save — see flushAutosave.)
+    const blank = autosaveHalted || (!textDialog && !filterDialog && blankedSince(inkedLayerIds()));
+    if (!blank) flushAutosave();
+    const pause = haltCount;
+    return setLatestAside(blank ? "kept" : "checkpoint", clear).then(() => {
+      // Only the pause seen here: the next document may have paused anew (`markResampled`).
+      if (!autosaveHalted || pause !== haltCount) return;
+      autosaveHalted = false;
+      clearSticky(AUTOSAVE_PAUSED);
+    });
   }
 
   /** Back from the background: were the layers blanked while away? */
@@ -2903,13 +2952,14 @@
     try {
       const buffer = await loadAutosave(entry.key);
       if (!buffer) throw new Error("that copy is gone");
-      // Paused over blank layers, the latest is the newest good copy: restoring an older one and
-      // resuming let the next autosave overwrite it. Set it aside first (after reading the chosen
-      // copy, which may be the kept slot this replaces); if that fails, stay paused.
-      if (autosaveHalted && entry.key !== LATEST_KEY) await keepLatestAutosave();
-      loadAutosaveBuffer(buffer);
+      // An older copy takes the document's place: the latest (with any unsaved edits; paused over
+      // blank layers, the newest good copy) is set aside first, or the next autosave overwrote it
+      // — after reading the chosen copy, which may be in the slot this replaces; if that fails,
+      // nothing is replaced. Going back to the latest itself keeps neither.
+      if (entry.key !== LATEST_KEY) await keepOutgoing();
+      const whole = loadAutosaveBuffer(buffer);
       app.projectName = entry.projectName;
-      docFile = null; // it may not match the file the document came from
+      if (!whole) return; // layers came out empty: paused, with this dialog (`markResampled`)
       autosaveHalted = false;
       clearSticky(AUTOSAVE_PAUSED);
       restoreDialog = null;
@@ -4538,7 +4588,9 @@
           onWidthChange={debouncedSave}
           onAddText={() => void addText()}
           onEditText={editText}
+          {endGesture}
           settlePending={() => {
+            endGesture();
             if (selection?.hasFloating) resolveFloat(true);
             if (outlineActive()) cancelOutline();
           }}

@@ -48,6 +48,7 @@
     onWidthChange,
     onAddText,
     onEditText,
+    endGesture,
     settlePending,
     beforeShut,
   }: {
@@ -58,8 +59,13 @@
     onAddText: () => void;
     /** Edit the selected text reference. */
     onEditText: () => void;
-    /** Before an action that copies or merges a layer's pixels: apply a lifted float and cancel an
-     *  Outline preview, or the copy took the float's hole / the unapplied preview. */
+    /** Before an action that removes a layer or changes what it is (Delete, Bake): finish a canvas
+     *  press still open, as its release would. A stroke went on drawing on the removed layer, with
+     *  a dead undo step; a reference drag's release undid the Bake. */
+    endGesture: () => void;
+    /** Before an action that copies or merges a layer's pixels: finish an open canvas press, apply
+     *  a lifted float and cancel an Outline preview, or the copy took half a stroke, the float's
+     *  hole / the unapplied preview. */
     settlePending: () => void;
     /** Before the node is locked or hidden: a float lifted from it (or from inside it) is applied
      *  while its layer still takes edits. */
@@ -226,6 +232,7 @@
     }
     if (layersLeftAfter(layers.tree, ids) < 1)
       return flashStatus("The document needs at least one layer");
+    endGesture();
     structuralEdit(layers, () => layers.removeSelected(ids));
     finishPicking();
     layers.composite();
@@ -241,6 +248,7 @@
       n.type === "layer" ? 1 : n.children.reduce((sum, c) => sum + members(c), 0);
     if (node && layers.flatLayers().length - members(node) < 1)
       return flashStatus("The document needs at least one layer");
+    endGesture();
     structuralEdit(layers, () => layers.removeNode(layers.activeId));
     layers.composite();
     bumpLayerVersion();
@@ -856,6 +864,12 @@
         onclick={(e) => {
           e.stopPropagation();
           group.collapsed = !group.collapsed;
+          // Rows hidden by the collapse leave the pick: they stayed picked with no check to show
+          // it, and Group / Delete took them.
+          const kept = app.layerSelection.filter(
+            (id) => id === group.id || !isWithin(layers.tree, id, group.id),
+          );
+          if (group.collapsed && kept.length !== app.layerSelection.length) setPick(kept);
           bumpLayerVersion();
         }}
       >
@@ -1013,6 +1027,7 @@
     onSettingsChange={() => bumpLayerVersion()}
     onRename={startEdit}
     {onEditText}
+    {endGesture}
   />
 
   <div class="layer-list flex-1 overflow-y-auto" bind:this={listEl}>

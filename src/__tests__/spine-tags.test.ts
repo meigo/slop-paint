@@ -21,11 +21,27 @@ describe("parseTags", () => {
     expect(parseTags("[bone][skin]Hand")).toEqual({ tags: ["bone", "skin"], baseName: "Hand" });
   });
 
-  it("stops at the first unknown tag and keeps the rest as base name", () => {
+  it("keeps an unknown bracket in the base name", () => {
     expect(parseTags("[bone][unknown]Hand")).toEqual({
       tags: ["bone"],
       baseName: "[unknown]Hand",
     });
+  });
+
+  it("finds known tags past a valued or unknown one, which stays in the base name", () => {
+    expect(parseTags("[slot:arm][ignore]head")).toEqual({
+      tags: ["ignore"],
+      baseName: "[slot:arm]head",
+    });
+    expect(parseTags("[wip][mesh][scale:0.5][ignore]x")).toEqual({
+      tags: ["mesh", "ignore"],
+      baseName: "[wip][scale:0.5]x",
+    });
+  });
+
+  it("looks only at the brackets the name starts with", () => {
+    expect(parseTags("head [ignore]")).toEqual({ tags: [], baseName: "head [ignore]" });
+    expect(parseTags("[slot] [ignore]head")).toEqual({ tags: ["slot"], baseName: " [ignore]head" });
   });
 
   it("treats malformed brackets as part of the name", () => {
@@ -38,6 +54,18 @@ describe("parseTags", () => {
 
   it("does not double-list a repeated tag", () => {
     expect(parseTags("[slot][slot]head")).toEqual({ tags: ["slot"], baseName: "head" });
+  });
+});
+
+describe("toggleTag past a valued tag", () => {
+  it("removes a tag that sits after a valued one, and puts it back once", () => {
+    expect(toggleTag("[slot:arm][ignore]head", "ignore")).toBe("[slot:arm]head");
+    expect(toggleTag("[slot:arm]head", "ignore")).toBe("[ignore][slot:arm]head");
+    expect(toggleTag("[ignore][slot:arm]head", "ignore")).toBe("[slot:arm]head");
+  });
+
+  it("removes every occurrence", () => {
+    expect(toggleTag("[ignore][slot:arm][ignore]head", "ignore")).toBe("[slot:arm]head");
   });
 });
 

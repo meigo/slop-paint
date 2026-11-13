@@ -82,7 +82,9 @@
               </div>
               <button
                 class={btn}
-                title="Replace the document with this copy (the current one isn't kept — use File ▸ Save first if you want it)"
+                title={entry.key === "autosave"
+                  ? "Go back to the last autosave (changes since aren't kept — use File ▸ Save first if you want them)"
+                  : "Replace the document with this copy (the current one is autosaved first and stays in this list)"}
                 onclick={() => onRestore(entry)}>Restore</button
               >
             </li>
