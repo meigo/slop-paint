@@ -32,10 +32,26 @@ export interface InputOptions {
   /** The shortest string, in screen px, whatever Stream says (`STAMP_MIN_ROPE_PX` for the stamp
    *  brushes); 0 by default. */
   minRopePx?: () => number;
+  /** How far apart (canvas px) two points may be before points are filled in between
+   *  (`interpolationSpacing` of the zoom); `INTERPOLATION_THRESHOLD` by default. */
+  interpolationPx?: () => number;
 }
 
 /** Max distance (canvas px) between consecutive points before we interpolate */
 const INTERPOLATION_THRESHOLD = 4;
+/** …and the most it grows to when zoomed out (a quarter zoom and below). */
+const INTERPOLATION_MAX = 16;
+
+/** The interpolation distance in canvas px at `zoom`: 4 px ON SCREEN when zoomed out, so a stroke
+ *  on a large page seen whole doesn't get several times the points for the same hand movement
+ *  (every full-redraw brush pays per point, every frame) — but never past `INTERPOLATION_MAX`,
+ *  and exactly `INTERPOLATION_THRESHOLD` at 100% and above, where strokes are as they were. Ink's
+ *  curve and Calligraphy's smoothing work per point, so below 100% sparse input rounds a corner
+ *  over the same distance on screen as at 100%, not the same distance on the page. */
+export function interpolationSpacing(zoom: number): number {
+  if (!(zoom > 0) || zoom >= 1) return INTERPOLATION_THRESHOLD;
+  return Math.min(INTERPOLATION_THRESHOLD / zoom, INTERPOLATION_MAX);
+}
 
 export function setupInput(
   canvas: HTMLElement,
@@ -229,8 +245,9 @@ export function setupInput(
       const dx = pt.x - prev.x;
       const dy = pt.y - prev.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > INTERPOLATION_THRESHOLD) {
-        const steps = Math.ceil(dist / INTERPOLATION_THRESHOLD);
+      const spacing = options?.interpolationPx?.() ?? INTERPOLATION_THRESHOLD;
+      if (dist > spacing) {
+        const steps = Math.ceil(dist / spacing);
         for (let i = 1; i < steps; i++) {
           const t = i / steps;
           currentPoints.push({

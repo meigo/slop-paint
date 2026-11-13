@@ -5,7 +5,7 @@
   import NewDocDialog from "./lib/NewDocDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ResizeDocDialog from "./lib/ResizeDocDialog.svelte";
-  import { setupInput, type InputPoint } from "./input";
+  import { interpolationSpacing, setupInput, type InputPoint } from "./input";
   import { clampPress, drawStroke, widthRange, type BrushSettings } from "./brush";
   import { deviceRect, pointsBox, strokePad, unionBox, type Box, type PxRect } from "./dirty-rect";
   import { pathSmoothRadius, REST_PX, STAMP_MIN_ROPE_PX, STILL_PX } from "./stroke-smoothing";
@@ -21,6 +21,7 @@
   import {
     LayerManager,
     adjacentRow,
+    canvasBacked,
     isWithin,
     layersToMove,
     topSelection,
@@ -139,9 +140,11 @@
     pushRegionsEdit,
     pushStrokeEdit,
     setOnHistoryApplied,
+    shiftLoss,
     StrokeBackup,
     structuralEdit,
   } from "./undo";
+  import { touchAllThumbs } from "./lib/thumb-stamp";
   import {
     canShareFile,
     isAppleTouch,
@@ -165,7 +168,7 @@
     pressureCurves,
     activePressureCurve,
     isStrokeTool,
-    bumpLayerVersion,
+    bumpLayerVersion as bumpRows,
     bumpPixelVersion,
     bumpSelectionVersion,
     flashStatus,
@@ -207,6 +210,14 @@
   let showNewDocDialog = $state(false);
   let showSettingsDialog = $state(false);
   let showResizeDialog = $state(false);
+
+  /** Rebuild the layer rows AND redraw every thumbnail from its layer at that rebuild: for
+   *  anything here that may have changed pixels. `bumpRows` alone — the panel's own bumps, and the
+   *  tree's (`LayerManager.onChange`) — reuses the kept thumbnails (`lib/thumb-stamp.ts`). */
+  function bumpLayerVersion() {
+    touchAllThumbs();
+    bumpRows();
+  }
 
   // --- Batched composite: coalesce multiple composite calls per frame ---
   let compositeScheduled = false;
@@ -252,6 +263,17 @@
   let strokeBackup: StrokeBackup | null = null;
   // Fast canvas backup for smooth brush (GPU-accelerated drawImage vs slow putImageData)
   let preStrokeCanvas: HTMLCanvasElement | null = null;
+  /** The copy is let go this long after a full-redraw stroke ends (2026-11-13): a layer-sized
+   *  canvas outside the layer-memory figure, it was kept for the session. Not at the stroke's end:
+   *  the next stroke of a run would allocate it again at its press (not measured; the idle wait
+   *  costs nothing while drawing). */
+  const PRE_STROKE_IDLE_MS = 5000;
+  let preStrokeIdle: ReturnType<typeof setTimeout> | undefined;
+  function releasePreStroke() {
+    clearTimeout(preStrokeIdle);
+    if (preStrokeCanvas) preStrokeCanvas.width = 0; // WebKit holds its pixels until collected
+    preStrokeCanvas = null;
+  }
   // Batched smooth brush rendering — only redraw once per frame, from the LATEST points.
   // Null once the stroke ends, so a frame still pending at pen-up can't redraw the unfinished stroke.
   let smoothPendingPoints: InputPoint[] | null = null;
@@ -282,21 +304,34 @@
     points: InputPoint[];
     curve: PressureCurve;
     stroke: StrokeSetup | null;
+    /** `curvedFrom`'s points through `curve`, so far (`curvedPoints`). */
+    curved: InputPoint[];
+    curvedFrom: InputPoint[] | null;
   };
   let gesture: Gesture | null = null;
 
+  /** Null when the copy didn't get its memory (an iPad refuses a canvas over its limit without
+   *  an error, `canvasBacked`): the stroke must not start — each frame restores the stroke's box
+   *  from the copy, and an empty one erased the art under it. Checked when the canvas is made. */
   function saveLayerToCanvas(layer: {
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
-  }): HTMLCanvasElement {
+  }): HTMLCanvasElement | null {
+    clearTimeout(preStrokeIdle);
     if (
       !preStrokeCanvas ||
       preStrokeCanvas.width !== layer.canvas.width ||
       preStrokeCanvas.height !== layer.canvas.height
     ) {
-      preStrokeCanvas = document.createElement("canvas");
-      preStrokeCanvas.width = layer.canvas.width;
-      preStrokeCanvas.height = layer.canvas.height;
+      releasePreStroke();
+      const made = document.createElement("canvas");
+      made.width = layer.canvas.width;
+      made.height = layer.canvas.height;
+      if (!canvasBacked(made)) {
+        made.width = 0;
+        return null;
+      }
+      preStrokeCanvas = made;
     }
     const ctx = preStrokeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, preStrokeCanvas.width, preStrokeCanvas.height);
@@ -1458,6 +1493,7 @@
       // Put back the references the preview may have re-drawn (fast) at their own place.
       for (const r of g.refs) layers.renderRef(r.layer);
       layers.composite();
+      touchAllThumbs(); // a rebuild mid-drag may have kept a thumbnail of the fast preview
       return;
     }
     const refs = new Map(g.refs.map((r) => [r.layer, r]));
@@ -1470,11 +1506,13 @@
         layers!.renderRef(layer);
         return { layer, refBefore: r.refBefore, redrawn: true };
       }
-      const before = layers!.snapshotOf(layer);
+      // Only what the shift carries off the canvas is read, a layer at a time: a whole snapshot
+      // of every layer, all held until the step was pushed, was ~1.9 GB for 20 layers at 4000×6000.
+      const lost = shiftLoss(layer, sx, sy);
       const refBefore = layer.ref; // a reference not decoded yet (or distorted)
       if (refBefore) layer.ref = { src: refBefore.src, corners: shiftedCorners(refBefore, dx, dy) };
       layers!.shiftPixels(layer, sx, sy);
-      return { layer, before, refBefore };
+      return { layer, lost, refBefore };
     });
     pushLayersEdit(layers, edits, sx, sy);
     layers.composite();
@@ -1515,6 +1553,8 @@
       points: rawPoints,
       curve: activePressureCurve(),
       stroke: null,
+      curved: [],
+      curvedFrom: null,
     };
     const tool = app.currentTool;
     if (tool === "eyedropper") g.kind = "eyedropper";
@@ -1573,11 +1613,23 @@
     else runGesture(g, g.points, true);
   }
 
+  /** `rawPoints` through the gesture's pressure curve. Only the points added since the last event
+   *  are mapped — the input appends to ONE array per press: mapping all of them on every event
+   *  (an object each) made a long stroke quadratic. */
+  function curvedPoints(g: Gesture, rawPoints: InputPoint[]): InputPoint[] {
+    if (g.curvedFrom !== rawPoints || g.curved.length > rawPoints.length) {
+      g.curvedFrom = rawPoints;
+      g.curved = [];
+    }
+    for (let i = g.curved.length; i < rawPoints.length; i++) {
+      const p = rawPoints[i];
+      g.curved.push({ ...p, pressure: g.curve.evaluate(p.pressure) });
+    }
+    return g.curved;
+  }
+
   function runGesture(g: Gesture, rawPoints: InputPoint[], done: boolean) {
-    const points = rawPoints.map((p) => ({
-      ...p,
-      pressure: g.curve.evaluate(p.pressure),
-    }));
+    const points = curvedPoints(g, rawPoints);
 
     // Eyedropper: reads the composite, so it ignores the active layer's lock.
     // Picks on RELEASE — drag to slide the sample point out from under the pen tip.
@@ -1841,15 +1893,20 @@
     }
 
     if (press) {
+      if (fullRedraw && !saveLayerToCanvas(layer)) {
+        g.kind = "none"; // the rest of the press is ignored
+        g.stroke = null;
+        flashStatus(
+          "Not enough memory for this brush on a document this size — Pencil, Charcoal and Airbrush need less",
+        );
+        return;
+      }
       frozenTo = 0;
       strokeBox = null;
       stampDrawnTo = 0;
       strokeArea = null;
       layers.setLiveLayer(layer.id);
       strokeBackup = new StrokeBackup(layer);
-      if (fullRedraw) {
-        saveLayerToCanvas(layer);
-      }
       resetStampState();
       resetBlendState();
     }
@@ -1861,6 +1918,7 @@
         smoothPendingPoints = null;
         redrawFrame(points, true);
         strokeBox = null;
+        preStrokeIdle = setTimeout(releasePreStroke, PRE_STROKE_IDLE_MS);
         endStrokeComposite();
         if (strokeBackup) {
           pushStrokeEdit(layers, strokeBackup);
@@ -2484,6 +2542,7 @@
     if (outlineLayer && outlineBefore) outlineLayer.ctx.putImageData(outlineBefore, 0, 0);
     clearOutline();
     layers?.composite();
+    touchAllThumbs(); // a rebuild during the preview may have kept a thumbnail of it
     if (handBack && app.currentTool === "outline") setTool(toolBeforeOutline, true);
   }
 
@@ -2637,6 +2696,9 @@
     if (!selectLayerContent()) return;
     if (selection.state === "selected") enterFreeTransform();
     selection.flip(axis);
+    // An ordinary redraw, not the float's own (`compositeLive`): nothing follows a flip to let go
+    // of a drag's copies — up to three document-sized canvases stayed allocated.
+    scheduleComposite();
   }
 
   function toggleKeepProportions() {
@@ -3612,6 +3674,7 @@
     if (!run || !layers) return;
     for (const p of run.parts) p.layer.ctx.putImageData(p.before, p.base.x, p.base.y);
     layers.composite();
+    touchAllThumbs(); // a rebuild during the preview may have kept a thumbnail of it
   }
 
   // --- Text references ---
@@ -3934,6 +3997,7 @@
           gesture = null;
           layers.renderRef(refTransform.layer);
           layers.composite();
+          touchAllThumbs();
         }
       }
       refTransform = null;
@@ -4198,17 +4262,38 @@
     // on iPad. The eyedropper's one-pixel read is the rare getImageData; layer
     // canvases are the ones snapshotted, and they request the flag themselves.
     const ctx = canvasEl.getContext("2d")!;
-    layers = new LayerManager(canvasEl, ctx, () => bumpLayerVersion());
+    // The tree's own changes (add, delete, reorder, the eye) write no pixels of a layer that
+    // stays — Merge down marks its target itself — so the kept thumbnails are reused.
+    layers = new LayerManager(canvasEl, ctx, () => bumpRows());
     selection = new Selection(selectionOverlayEl);
 
     // Undo/redo repaint: commands change pixels or the tree, then this refreshes the view.
     history.onChange = () => app.historyVersion++;
 
-    setOnHistoryApplied(() => {
+    setOnHistoryApplied((changed) => {
       // Undo/redo can bring back or take away picked rows: start again from the active one.
       app.layerSelection = [];
-      layers.composite();
-      bumpLayerVersion();
+      if (!changed) {
+        layers.composite();
+        bumpLayerVersion();
+        return;
+      }
+      // A step that only put tiles back (a stroke, a fill, a filter): their part of the screen
+      // and that layer's thumbnail. A whole redraw plus every row's thumbnail read every layer
+      // whole, ~0.2–0.5 s a step on a large iPad document (2026-11-13).
+      const dpr = docDpr();
+      let box: Box | null = null;
+      for (const { rect: r } of changed) {
+        box = unionBox(box, {
+          x0: r.x / dpr,
+          y0: r.y / dpr,
+          x1: (r.x + r.w) / dpr,
+          y1: (r.y + r.h) / dpr,
+        });
+      }
+      layers.composite(box);
+      if (changed.length === 1) bumpPixelVersion(changed[0].layer.id, changed[0].rect);
+      else bumpLayerVersion(); // several thumbnails
     });
 
     // Selection callbacks
@@ -4331,6 +4416,10 @@
         // select and lasso, or a reference's handles dragged under Brush, it made handles trail
         // the Pencil and stop short of the lift.
         streamline: () => (gesture?.kind === "brush" ? app.streamline / 100 : 0),
+        // Sparse input is filled in every 4 px ON SCREEN when zoomed out (4 document px at 100%
+        // and above, as before): by document px a stroke on a large page seen whole got ~3× the
+        // points.
+        interpolationPx: () => interpolationSpacing(viewport.zoom),
         // The stamp tips follow the points exactly, so they always get a short string
         // (STAMP_MIN_ROPE_PX): at Stream 0 a thin Pencil line came out stepped on iPad.
         minRopePx: () => {

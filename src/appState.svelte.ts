@@ -9,6 +9,7 @@ import type { FillOptions } from "./fill";
 import { PressureCurve } from "./pressure-curve";
 import { DEFAULT_PANEL_WIDTH } from "./panel-layout";
 import { isAppleTouch } from "./share";
+import { touchThumb } from "./lib/thumb-stamp";
 
 export type Tool =
   "brush" | "eraser" | "blend" | "fill" | "select" | "lasso" | "move" | "eyedropper" | "outline";
@@ -171,6 +172,7 @@ export const lastPixelArea = () => pixelArea;
  *  stroke), so the layer's thumbnail redraws only there. */
 export function bumpPixelVersion(layerId: number, area: PxRect | null = null) {
   pixelArea = area;
+  touchThumb(layerId);
   app.pixelLayerId = layerId;
   app.pixelVersion++;
 }

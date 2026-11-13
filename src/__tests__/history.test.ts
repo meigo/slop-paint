@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { History, offCanvasRects, type Command } from "../history";
+import { History, offCanvasRects, rectsBounds, type Command } from "../history";
 
 function counterCmd(state: { n: number }, delta: number): Command {
   return {
@@ -154,6 +154,19 @@ describe("History.layerChanges", () => {
     expect(h.layerChanges).toBe(10);
     h.clear();
     expect(h.layerChanges).toBe(10); // only grows: the guard takes differences
+  });
+});
+
+describe("rectsBounds", () => {
+  it("is the smallest rect holding them all", () => {
+    expect(rectsBounds([{ x: 64, y: 0, w: 64, h: 64 }])).toEqual({ x: 64, y: 0, w: 64, h: 64 });
+    expect(
+      rectsBounds([
+        { x: 64, y: 128, w: 64, h: 64 },
+        { x: 0, y: 0, w: 10, h: 3 },
+        { x: 192, y: 64, w: 8, h: 64 },
+      ]),
+    ).toEqual({ x: 0, y: 0, w: 200, h: 192 });
   });
 });
 
