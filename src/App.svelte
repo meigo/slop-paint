@@ -62,6 +62,7 @@
     FILTER_DEFAULTS,
     FILTER_TITLES,
     applyFilter,
+    FILL_FILTERS,
     filterMaxReach,
     filterReach,
     filterRect,
@@ -3475,8 +3476,9 @@
     for (const layer of targets.layers) {
       const cw = layer.canvas.width,
         ch = layer.canvas.height;
-      // The ink's bounds from strips, then only the region is read.
-      const ink = inkBounds(layer);
+      // The ink's bounds from strips, then only the region is read. A fill (Grain) covers the whole
+      // layer, ink or not; the marquee still cuts it (`filterRect`).
+      const ink = FILL_FILTERS.has(kind) ? { x: 0, y: 0, w: cw, h: ch } : inkBounds(layer);
       if (!ink) continue;
       inked++;
       const base = filterRect(ink, marquee, cw, ch, maxReach);

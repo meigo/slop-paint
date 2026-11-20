@@ -2,7 +2,8 @@
 // gives it. App previews them into the layers and keeps the result as one undo step; nothing here
 // is live. Gaussian blur, Drop shadow, Glow and Halftone's dots reach into transparent pixels, up
 // to `filterReach` px, so App works on the ink's bounds grown by that; every other filter keeps a
-// fully transparent pixel transparent.
+// fully transparent pixel transparent — except Grain, a FILL (`FILL_FILTERS`): it covers the whole
+// layer, or the marquee, ink or not.
 
 export type Paper = "transparent" | "white";
 
@@ -65,7 +66,19 @@ export type GlowSpec = {
   size: number;
   spread: number;
 };
+/** A FILL of grain round mid-grey (neutral under Overlay), not a change to the paint: `amount` %
+ *  (0–100; 100 = a standard deviation of `GRAIN_SD_MAX` levels), `size` DOCUMENT px
+ *  (1–GRAIN_SIZE_MAX: how big a grain is), `colour` (each channel its own noise, else grey), `seed`
+ *  (which pattern). */
+export type GrainSpec = {
+  kind: "grain";
+  amount: number;
+  size: number;
+  colour: boolean;
+  seed: number;
+};
 export type FilterSpec =
+  | GrainSpec
   | LevelsSpec
   | HueSatSpec
   | PosterizeSpec
@@ -96,7 +109,12 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
   sharpen: { kind: "sharpen", amount: 100, radius: 1 },
   shadow: { kind: "shadow", colour: "#000000", opacity: 60, blur: 4, distance: 8, angle: 120 },
   glow: { kind: "glow", colour: "#ffffff", opacity: 75, size: 8, spread: 0 },
+  grain: { kind: "grain", amount: 30, size: 1, colour: false, seed: 1 },
 };
+
+/** Filters that FILL their area instead of changing the paint in it: App gives them the whole
+ *  layer (or the marquee's box), not the ink's bounds, so they work on an empty layer too. */
+export const FILL_FILTERS: ReadonlySet<FilterKind> = new Set<FilterKind>(["grain"]);
 
 /** Gaussian blur's largest radius (σ), in document px. */
 export const BLUR_MAX = 64;
@@ -107,6 +125,9 @@ export const SHARPEN_MAX = 10;
 /** Drop shadow's and Glow's largest blur (σ), and the shadow's largest distance, in document px. */
 export const SHADOW_BLUR_MAX = 64;
 export const SHADOW_DISTANCE_MAX = 200;
+/** Grain's largest size, in document px, and its deviation at Amount 100, in levels (0–255). */
+export const GRAIN_SIZE_MAX = 8;
+export const GRAIN_SD_MAX = 64;
 
 export const FILTER_TITLES: Record<FilterKind, string> = {
   levels: "Levels",
@@ -119,6 +140,7 @@ export const FILTER_TITLES: Record<FilterKind, string> = {
   sharpen: "Sharpen",
   shadow: "Drop shadow",
   glow: "Glow",
+  grain: "Grain",
 };
 
 /** Entries in Hue/Saturation's colour table (a power of two). */
@@ -659,6 +681,97 @@ let dotBufs = new Float32Array(0);
 export function releaseFilterBuffers() {
   blurBufs = [];
   dotBufs = new Float32Array(0);
+  grainCache = null;
+}
+
+// --- Grain ---
+// Gaussian white noise per DEVICE pixel, hashed from the pixel's place on the layer (so a marquee's
+// part matches the whole and the preview never flickers), blurred to the grain's size and scaled
+// back to unit deviation. Kept as a field of deviations, so an Amount drag only rescales it.
+
+/** σ (device px) of the blur that sizes the grain: none when a grain is one device px. */
+export function grainSigma(size: number, dpr = 1): number {
+  return Math.max(0, (size * dpr - 1) / 2);
+}
+
+/** By how much a blur by `plan` scales white noise's deviation: Σw² of its 1-D kernel (the 2-D
+ *  blur is that kernel along each axis, so the variance shrinks by (Σw²)²). */
+export function noiseGain(plan: BlurPlan): number {
+  if (plan.kind === "none") return 1;
+  let k = plan.kind === "kernel" ? Array.from(plan.weights) : [1];
+  if (plan.kind === "boxes") {
+    for (const r of plan.radii) {
+      if (r < 1) continue; // as blurChannel: a box of radius 0 is no blur
+      const n = 2 * r + 1;
+      const next = new Array<number>(k.length + n - 1).fill(0);
+      for (let i = 0; i < k.length; i++) for (let j = 0; j < n; j++) next[i + j] += k[i] / n;
+      k = next;
+    }
+  }
+  return k.reduce((s, w) => s + w * w, 0);
+}
+
+/** A 32-bit hash of a pixel and a salt (murmur3's finaliser, applied per coordinate). */
+function pixelHash(x: number, y: number, salt: number): number {
+  let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(salt, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h = (h ^ (h >>> 16)) + Math.imul(y, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** A standard normal value for a pixel (Box–Muller from two hashes). */
+export function grainNoise(x: number, y: number, salt: number): number {
+  const u1 = (pixelHash(x, y, salt * 2) + 1) / 4294967297; // (0, 1): log never sees 0
+  const u2 = pixelHash(x, y, salt * 2 + 1) / 4294967296;
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/** Deviations are stored ×GRAIN_Q in an Int16Array (±16σ, 2 bytes a channel, not 4). */
+const GRAIN_Q = 2048;
+let grainCache: { key: string; field: Int16Array } | null = null;
+
+/** The grain's unit-deviation field for a region (`w`×`h` at `ox`, `oy` on the layer), one value a
+ *  pixel, or three (interleaved) in colour. The last one is kept: only Amount changes it rarely. */
+function grainField(
+  w: number,
+  h: number,
+  ox: number,
+  oy: number,
+  spec: GrainSpec,
+  dpr: number,
+): Int16Array {
+  const key = `${w},${h},${ox},${oy},${dpr},${spec.size},${spec.colour},${spec.seed}`;
+  if (grainCache?.key === key) return grainCache.field;
+  grainCache = null; // let the old one go before the new one is made
+  const planes = spec.colour ? 3 : 1;
+  const plan = blurPlan(grainSigma(spec.size, dpr));
+  // Generated with the blur's reach round it, so the edge-repeating blur never reaches the region.
+  const R = plan.reach;
+  const pw = w + 2 * R,
+    ph = h + 2 * R;
+  const [A, , tmp] = blurBuffers(pw * ph);
+  const scale = GRAIN_Q / noiseGain(plan);
+  const field = new Int16Array(w * h * planes);
+  for (let c = 0; c < planes; c++) {
+    const salt = spec.seed * 3 + c;
+    for (let y = 0, i = 0; y < ph; y++) {
+      const gy = oy - R + y;
+      for (let x = 0; x < pw; x++, i++) A[i] = grainNoise(ox - R + x, gy, salt);
+    }
+    blurChannel(A, pw, ph, plan, tmp);
+    for (let y = 0; y < h; y++) {
+      const row = (y + R) * pw + R;
+      for (let x = 0, j = y * w * planes + c; x < w; x++, j += planes) {
+        const v = Math.round(A[row + x] * scale);
+        field[j] = v > 32767 ? 32767 : v < -32767 ? -32767 : v;
+      }
+    }
+  }
+  grainCache = { key, field };
+  return field;
 }
 
 /** Luma histogram of the painted pixels, each counted by its alpha (a faint edge counts little). */
@@ -1279,6 +1392,30 @@ export function applyFilter(
 ): void {
   const n = w * h * 4;
   switch (spec.kind) {
+    case "grain": {
+      // A fill: every pixel becomes mid-grey plus the grain, opaque — under alpha lock at the
+      // pixel's own alpha, so only the paint takes it (as the bucket's fill there).
+      const planes = spec.colour ? 3 : 1;
+      const f = grainField(w, h, ox, oy, spec, dpr);
+      const k = ((spec.amount / 100) * GRAIN_SD_MAX) / GRAIN_Q;
+      const g = planes > 1 ? 1 : 0,
+        b = planes > 1 ? 2 : 0;
+      for (let p = 0, j = 0; p < n; p += 4, j += planes) {
+        const a = alphaLock ? src[p + 3] : 255;
+        if (!a) {
+          out[p] = src[p];
+          out[p + 1] = src[p + 1];
+          out[p + 2] = src[p + 2];
+          out[p + 3] = 0;
+          continue;
+        }
+        out[p] = 128 + f[j] * k;
+        out[p + 1] = 128 + f[j + g] * k;
+        out[p + 2] = 128 + f[j + b] * k;
+        out[p + 3] = a;
+      }
+      return;
+    }
     case "levels": {
       const lut = levelsLut(spec);
       for (let p = 0; p < n; p += 4) {

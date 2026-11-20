@@ -294,7 +294,7 @@
   const menuItem =
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
-  // Adjustments (tone and colour), then a divider, then effects.
+  // Adjustments (tone and colour), then a divider, then effects, then fills.
   // Each runs on the active layer, or on the picked rows or every layer of the active group (as
   // Move): the titles say "the layer" for short.
   const filters: { kind: FilterKind; title: string }[][] = [
@@ -316,6 +316,13 @@
       { kind: "halftone", title: "Turn the layer's tones into dots or lines — screentone" },
       { kind: "shadow", title: "A soft shadow of the layer's shape behind it" },
       { kind: "glow", title: "A glow round the layer's shape, behind it" },
+    ],
+    [
+      {
+        kind: "grain",
+        title:
+          "Fill the layer (or the selection) with grain round mid-grey — set the layer to Overlay to grain what's below",
+      },
     ],
   ];
   const dimmable =
