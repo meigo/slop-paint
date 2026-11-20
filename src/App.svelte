@@ -1,5 +1,6 @@
 <script lang="ts">
   import Toolbar from "./lib/Toolbar.svelte";
+  import { stepSize } from "./brush-size";
   import LayerPanel from "./lib/LayerPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import NewDocDialog from "./lib/NewDocDialog.svelte";
@@ -2212,11 +2213,11 @@
     }
 
     if (e.key === "[") {
-      app.brushSettings.size = Math.max(1, app.brushSettings.size - 2);
+      app.brushSettings.size = stepSize(app.brushSettings.size, -1);
       debouncedSave();
     }
     if (e.key === "]") {
-      app.brushSettings.size = Math.min(80, app.brushSettings.size + 2);
+      app.brushSettings.size = stepSize(app.brushSettings.size, 1);
       debouncedSave();
     }
 

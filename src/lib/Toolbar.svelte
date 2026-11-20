@@ -31,7 +31,8 @@
     Scan,
     SendToBack,
   } from "@lucide/svelte";
-  import { app, isStrokeTool, pressureCurves, type Tool } from "../appState.svelte.js";
+  import { app, flashStatus, isStrokeTool, pressureCurves, type Tool } from "../appState.svelte.js";
+  import { SIZE_SLIDER_STEPS, parseSize, sizeToSlider, sliderToSize } from "../brush-size";
   import { slotFor, type SlotName } from "../tool-settings";
   import type { BrushType } from "../brush-textures";
   import { createCurveEditor } from "../pressure-curve";
@@ -217,11 +218,13 @@
   function commitSize() {
     // Escape already closed it: Chrome still fires blur as the field is removed.
     if (!editingSize) return;
-    // A comma decimal ("2,5", as typed in comma regions) is a point: parseFloat stopped at it.
-    const v = parseFloat(sizeInputValue.replace(",", "."));
-    if (!isNaN(v) && v >= 1 && v <= 80) {
-      app.brushSettings.size = Math.round(v * 2) / 2; // snap to 0.5
+    // A comma decimal ("2,5", as typed in comma regions) is a point (`parseSize`).
+    const v = parseSize(sizeInputValue);
+    if (typeof v === "number") {
+      app.brushSettings.size = v;
       onSettingsChange();
+    } else {
+      flashStatus(v); // it was refused without a word
     }
     editingSize = false;
   }
@@ -750,13 +753,17 @@
       Size
       <input
         type="range"
-        min="1"
-        max="80"
-        step="0.5"
+        min="0"
+        max={SIZE_SLIDER_STEPS}
+        step="1"
         class="w-16 max-[960px]:w-12"
-        style={sliderFill(app.brushSettings.size, 1, 80)}
-        bind:value={app.brushSettings.size}
-        oninput={onSettingsChange}
+        title="Brush size (even in ratio: the small sizes keep their room)"
+        style={sliderFill(sizeToSlider(app.brushSettings.size), 0, SIZE_SLIDER_STEPS)}
+        value={sizeToSlider(app.brushSettings.size)}
+        oninput={(e) => {
+          app.brushSettings.size = sliderToSize(Number(e.currentTarget.value));
+          onSettingsChange();
+        }}
       />
       {#if editingSize}
         <!-- svelte-ignore a11y_autofocus -->
