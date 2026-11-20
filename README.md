@@ -33,7 +33,10 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   with the pen's small pressure changes: it can grow while you press, never shrink back
 - Pressure curves — the brush, the eraser and Blend each have their own, edited as a bezier curve
 - **Press** on the brush bar: size is the medium width, light pressure thins the stroke and full
-  pressure widens it, by up to that many times (as in slop-animator)
+  pressure widens it, by up to that many times (as in slop-animator). At 1× pressure doesn't change
+  the size at all
+- **Size** goes from 1 to 500 px — the slider gives the small sizes most of its travel, the box
+  next to it takes a typed size, and `[` / `]` step by about a tenth of the size
 - **Stream** steadies the line like a lazy brush: it trails the pen on a string, so small wobbles
   never reach it, and the same on any device and at any zoom. Pause at a corner and the line turns
   there; lift and it finishes in a smooth curve to the pen
@@ -226,7 +229,7 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 | ----------------------------- | ------------------------------------------------------------------ |
 | B / E / J / S / L / V / G / I | Brush / eraser / blend / select / lasso / move / fill / eyedropper |
 | X (hold)                      | Temporary eraser                                                   |
-| [ / ]                         | Smaller / larger brush                                             |
+| [ / ]                         | Smaller / larger brush (by about a tenth of the size)              |
 | Ctrl+Z / Ctrl+Shift+Z         | Undo / redo                                                        |
 | Ctrl+C / Ctrl+X / Ctrl+V      | Copy / cut / paste                                                 |
 | Delete or Backspace           | Clear the selection                                                |

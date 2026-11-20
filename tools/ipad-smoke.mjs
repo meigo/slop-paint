@@ -451,7 +451,7 @@ async function main(page) {
     await setRange("Grain", 0);
     await gear.tap();
     const size0 = await page.evaluate(() => document.querySelector('input[type="range"]').value);
-    await setRange(null, 40);
+    await tool("Brush size 40").tap(); // a preset: the slider's values aren't px (even in ratio)
     const lum = async (p) => {
       const { avg } = await pixels({ x: p.x - 0.5, y: p.y - 0.5, w: 1, h: 1 });
       return [1, 3, 5].reduce((s, i) => s + parseInt(avg.slice(i, i + 2), 16), 0);
