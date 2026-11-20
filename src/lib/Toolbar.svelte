@@ -323,6 +323,11 @@
         title:
           "Fill the layer (or the selection) with grain round mid-grey — set the layer to Overlay to grain what's below",
       },
+      {
+        kind: "clouds",
+        title:
+          "Fill the layer (or the selection) with soft clouds round mid-grey — set the layer to Overlay for uneven light",
+      },
     ],
   ];
   const dimmable =

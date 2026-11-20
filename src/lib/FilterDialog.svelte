@@ -9,6 +9,8 @@
     BLUR_MAX,
     FILTER_TITLES,
     GRAIN_SIZE_MAX,
+    CLOUDS_SCALE_MAX,
+    CLOUDS_SCALE_MIN,
     HALFTONE_CELL_MAX,
     SHADOW_BLUR_MAX,
     SHADOW_DISTANCE_MAX,
@@ -78,6 +80,10 @@
   // Midtones as Photoshop's gamma (0.1–10), on a slider that is even either side of 1.
   const gammaToSlider = (g: number) => Math.round(Math.log10(g) * 100);
   const sliderToGamma = (s: number) => Math.round(Math.pow(10, s / 100) * 100) / 100;
+
+  // Clouds' scale on a slider even in ratio: ten steps per doubling, from CLOUDS_SCALE_MIN.
+  const scaleToSlider = (v: number) => Math.round(10 * Math.log2(v / CLOUDS_SCALE_MIN));
+  const sliderToScale = (v: number) => Math.round(CLOUDS_SCALE_MIN * 2 ** (v / 10));
 
   // Blur radius on a slider that is even in ratio (0.2 … BLUR_MAX): a small blur needs tenths, a
   // big one doesn't.
@@ -191,6 +197,33 @@
       >
     {/each}
     <span class="ml-auto text-text-muted tabular-nums">{value}</span>
+  </div>
+{/snippet}
+
+{#snippet fillColour(on: boolean, what: string)}
+  <div class={row}>
+    <span class="w-20 shrink-0">Colour</span>
+    <div class="flex gap-1">
+      <button
+        class={seg(!on)}
+        title={`Grey ${what}: changes only how light things are`}
+        aria-pressed={!on}
+        onclick={() => update({ colour: false })}>Mono</button
+      >
+      <button
+        class={seg(on)}
+        title={`Each channel its own ${what}: patches of colour`}
+        aria-pressed={on}
+        onclick={() => update({ colour: true })}>Colour</button
+      >
+    </div>
+    <button
+      class="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover"
+      title={`A new ${what} pattern`}
+      aria-label={`A new ${what} pattern`}
+      onclick={() => update({ seed: Math.floor(Math.random() * 1e6) + 1 })}
+      ><Dices size={16} /></button
+    >
   </div>
 {/snippet}
 
@@ -471,33 +504,44 @@
         `${s.size} px`,
         (v) => update({ size: v / 2 }),
       )}
-      <div class={row}>
-        <span class="w-20 shrink-0">Colour</span>
-        <div class="flex gap-1">
-          <button
-            class={seg(!s.colour)}
-            title="Grey grain: changes only how light things are"
-            aria-pressed={!s.colour}
-            onclick={() => update({ colour: false })}>Mono</button
-          >
-          <button
-            class={seg(s.colour)}
-            title="Each channel its own grain: specks of colour"
-            aria-pressed={s.colour}
-            onclick={() => update({ colour: true })}>Colour</button
-          >
-        </div>
-        <button
-          class="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover"
-          title="A new grain pattern"
-          aria-label="A new grain pattern"
-          onclick={() => update({ seed: Math.floor(Math.random() * 1e6) + 1 })}
-          ><Dices size={16} /></button
-        >
-      </div>
+      {@render fillColour(s.colour, "grain")}
       <p class="text-[11px] text-text-muted">
         Fills the whole layer, or the selection, with grain round mid-grey. Set the layer to Overlay
         and the grey disappears: only the grain shows on the layers below.
+      </p>
+    {:else if spec.kind === "clouds"}
+      {@const s = spec}
+      {@render slider(
+        "Amount",
+        "How strong the clouds are",
+        s.amount,
+        1,
+        100,
+        `${s.amount}%`,
+        (v) => update({ amount: v }),
+      )}
+      {@render slider(
+        "Scale",
+        "How big the largest clouds are, in document pixels",
+        scaleToSlider(s.scale),
+        0,
+        scaleToSlider(CLOUDS_SCALE_MAX),
+        `${s.scale} px`,
+        (v) => update({ scale: sliderToScale(v) }),
+      )}
+      {@render slider(
+        "Detail",
+        "How much the finer clouds show: low is soft and smooth, high is rough and busy",
+        s.detail,
+        0,
+        100,
+        `${s.detail}%`,
+        (v) => update({ detail: v }),
+      )}
+      {@render fillColour(s.colour, "clouds")}
+      <p class="text-[11px] text-text-muted">
+        Fills the whole layer, or the selection, with soft clouds round mid-grey. Set the layer to
+        Overlay for uneven light and shade on the layers below.
       </p>
     {:else if spec.kind === "threshold"}
       {@const s = spec}

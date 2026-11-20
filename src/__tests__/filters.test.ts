@@ -27,6 +27,8 @@ import {
   lumaHistogram,
   grainNoise,
   grainSigma,
+  cloudsOctaves,
+  cloudsPersistence,
   noiseGain,
   GRAIN_SD_MAX,
   type FilterSpec,
@@ -875,5 +877,95 @@ describe("grain (a fill)", () => {
     );
     // Large σ (three boxes): ≈ 1 / (2σ√π), the continuous Gaussian's.
     expect(noiseGain(blurPlan(10))).toBeCloseTo(1 / (2 * 10 * Math.sqrt(Math.PI)), 2);
+  });
+});
+
+describe("clouds (a fill)", () => {
+  const clouds = (over: Partial<Extract<FilterSpec, { kind: "clouds" }>> = {}) =>
+    ({ ...FILTER_DEFAULTS.clouds, ...over }) as FilterSpec;
+  const sd = (d: Uint8ClampedArray, ch: number) => {
+    const m = mean(d, ch);
+    let s = 0;
+    for (let p = ch; p < d.length; p += 4) s += (d[p] - m) ** 2;
+    return Math.sqrt(s / (d.length / 4));
+  };
+  const empty = (w: number, h: number) => solid(w, h, [0, 0, 0, 0]);
+
+  it("fills with opaque clouds round mid-grey, Amount as Grain's", () => {
+    const out = run(empty(256, 256), 256, 256, clouds({ amount: 30, scale: 16 }));
+    for (let p = 3; p < out.length; p += 4) expect(out[p]).toBe(255);
+    expect(Math.abs(mean(out, 0) - 128)).toBeLessThan(3);
+    // σ = 0.3 × GRAIN_SD_MAX, at any Detail
+    for (const detail of [0, 50, 100]) {
+      const o = run(empty(256, 256), 256, 256, clouds({ amount: 30, scale: 16, detail }));
+      expect(sd(o, 0)).toBeGreaterThan(0.3 * GRAIN_SD_MAX * 0.85);
+      expect(sd(o, 0)).toBeLessThan(0.3 * GRAIN_SD_MAX * 1.15);
+    }
+  });
+
+  it("is smooth: neighbours differ far less than the spread (not pixel noise)", () => {
+    const out = run(empty(128, 128), 128, 128, clouds({ amount: 50, scale: 64, detail: 0 }));
+    let d = 0;
+    for (let y = 0; y < 128; y++)
+      for (let x = 1; x < 128; x++)
+        d += Math.abs(out[(y * 128 + x) * 4] - out[(y * 128 + x - 1) * 4]);
+    expect(d / (128 * 127)).toBeLessThan(sd(out, 0) / 4);
+  });
+
+  it("a part of the layer gets the same clouds as the whole", () => {
+    const spec = clouds({ scale: 24, colour: true });
+    const whole = new Uint8ClampedArray(64 * 64 * 4);
+    applyFilter(empty(64, 64), whole, 64, 64, 0, 0, spec);
+    const part = new Uint8ClampedArray(12 * 9 * 4);
+    applyFilter(empty(12, 9), part, 12, 9, 30, 41, spec);
+    for (let y = 0; y < 9; y++)
+      for (let x = 0; x < 12; x++)
+        for (let c = 0; c < 3; c++)
+          expect(part[(y * 12 + x) * 4 + c]).toBe(whole[((y + 41) * 64 + x + 30) * 4 + c]);
+  });
+
+  // Placed by document position: a 2× layer shows the same clouds as a 1× one, sampled finer.
+  it("looks the same at 1× and 2× layers", () => {
+    const spec = clouds({ scale: 32, detail: 0 });
+    const one = new Uint8ClampedArray(32 * 32 * 4);
+    applyFilter(empty(32, 32), one, 32, 32, 0, 0, spec, 1);
+    const two = new Uint8ClampedArray(64 * 64 * 4);
+    applyFilter(empty(64, 64), two, 64, 64, 0, 0, spec, 2);
+    let diff = 0;
+    for (let y = 0; y < 32; y++)
+      for (let x = 0; x < 32; x++) {
+        const a = one[(y * 32 + x) * 4];
+        // the mean of the four 2× pixels over this 1× pixel
+        let b = 0;
+        for (const [dx, dy] of [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [1, 1],
+        ])
+          b += two[((2 * y + dy) * 64 + 2 * x + dx) * 4] / 4;
+        diff += Math.abs(a - b);
+      }
+    expect(diff / 1024).toBeLessThan(2);
+  });
+
+  it("Mono is grey; a new seed is new clouds; alpha lock covers only the paint", () => {
+    const mono = run(empty(16, 16), 16, 16, clouds({ scale: 8 }));
+    for (let p = 0; p < mono.length; p += 4) expect(mono[p + 2]).toBe(mono[p]);
+    const other = run(empty(16, 16), 16, 16, clouds({ scale: 8, seed: 9 }));
+    expect(Array.from(other)).not.toEqual(Array.from(mono));
+    const src = new Uint8ClampedArray([1, 2, 3, 0, 9, 9, 9, 77]);
+    const out = new Uint8ClampedArray(8);
+    applyFilter(src, out, 2, 1, 0, 0, clouds(), 1, true);
+    expect([out[3], out[7]]).toEqual([0, 77]);
+  });
+
+  it("octaves run from the scale down to ~2 device px; Detail sets each octave's strength", () => {
+    expect(cloudsOctaves(8, 1)).toBe(3); // 8, 4, 2
+    expect(cloudsOctaves(8, 2)).toBe(4);
+    expect(cloudsOctaves(1024, 2)).toBe(11);
+    expect(cloudsOctaves(1024, 8)).toBe(12); // capped
+    expect(cloudsPersistence(0)).toBeCloseTo(0.3);
+    expect(cloudsPersistence(100)).toBeCloseTo(0.8);
   });
 });
