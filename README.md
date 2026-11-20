@@ -89,6 +89,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   Put it on an empty top layer and set that layer to **Overlay**: the grey vanishes and only the
   grain shows on the layers below (Overlay leaves pure white and pure black as they are, so it shows
   on the colours in between). With alpha lock it covers only the paint already there
+- **Clouds…** is a fill like Grain: soft, cloudy light and dark round mid-grey — Amount, Scale (the
+  largest clouds, 8–1024 px), Detail (low is soft and smooth, high is rough), Mono or Colour, and the
+  dice. On an Overlay layer it gives uneven light and shade, or a weathered look, to what's below
 - Each previews on the canvas as you change it; OK is one undo step, Cancel or Esc puts the layers
   back. They work on the same layers as **Move**: the rows picked with **Select** in the layer
   panel, else the active layer — or every layer in the active group. Locked, hidden and reference

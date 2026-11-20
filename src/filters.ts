@@ -77,8 +77,20 @@ export type GrainSpec = {
   colour: boolean;
   seed: number;
 };
+/** A FILL of soft clouds (fractal Perlin noise) round mid-grey, as Grain: `amount` % (as Grain's),
+ *  `scale` DOCUMENT px (CLOUDS_SCALE_MIN–MAX: the largest clouds' size), `detail` % (0–100: how
+ *  strong each finer octave is against the one above), `colour`, `seed`. */
+export type CloudsSpec = {
+  kind: "clouds";
+  amount: number;
+  scale: number;
+  detail: number;
+  colour: boolean;
+  seed: number;
+};
 export type FilterSpec =
   | GrainSpec
+  | CloudsSpec
   | LevelsSpec
   | HueSatSpec
   | PosterizeSpec
@@ -110,11 +122,12 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
   shadow: { kind: "shadow", colour: "#000000", opacity: 60, blur: 4, distance: 8, angle: 120 },
   glow: { kind: "glow", colour: "#ffffff", opacity: 75, size: 8, spread: 0 },
   grain: { kind: "grain", amount: 30, size: 1, colour: false, seed: 1 },
+  clouds: { kind: "clouds", amount: 50, scale: 128, detail: 50, colour: false, seed: 1 },
 };
 
 /** Filters that FILL their area instead of changing the paint in it: App gives them the whole
  *  layer (or the marquee's box), not the ink's bounds, so they work on an empty layer too. */
-export const FILL_FILTERS: ReadonlySet<FilterKind> = new Set<FilterKind>(["grain"]);
+export const FILL_FILTERS: ReadonlySet<FilterKind> = new Set<FilterKind>(["grain", "clouds"]);
 
 /** Gaussian blur's largest radius (σ), in document px. */
 export const BLUR_MAX = 64;
@@ -128,6 +141,9 @@ export const SHADOW_DISTANCE_MAX = 200;
 /** Grain's largest size, in document px, and its deviation at Amount 100, in levels (0–255). */
 export const GRAIN_SIZE_MAX = 8;
 export const GRAIN_SD_MAX = 64;
+/** Clouds' scale range, in document px. */
+export const CLOUDS_SCALE_MIN = 8;
+export const CLOUDS_SCALE_MAX = 1024;
 
 export const FILTER_TITLES: Record<FilterKind, string> = {
   levels: "Levels",
@@ -141,6 +157,7 @@ export const FILTER_TITLES: Record<FilterKind, string> = {
   shadow: "Drop shadow",
   glow: "Glow",
   grain: "Grain",
+  clouds: "Clouds",
 };
 
 /** Entries in Hue/Saturation's colour table (a power of two). */
@@ -681,7 +698,7 @@ let dotBufs = new Float32Array(0);
 export function releaseFilterBuffers() {
   blurBufs = [];
   dotBufs = new Float32Array(0);
-  grainCache = null;
+  fillCache = null;
 }
 
 // --- Grain ---
@@ -731,7 +748,8 @@ export function grainNoise(x: number, y: number, salt: number): number {
 
 /** Deviations are stored ×GRAIN_Q in an Int16Array (±16σ, 2 bytes a channel, not 4). */
 const GRAIN_Q = 2048;
-let grainCache: { key: string; field: Int16Array } | null = null;
+/** The last fill field made (Grain's or Clouds'), keyed by everything but Amount. */
+let fillCache: { key: string; field: Int16Array } | null = null;
 
 /** The grain's unit-deviation field for a region (`w`×`h` at `ox`, `oy` on the layer), one value a
  *  pixel, or three (interleaved) in colour. The last one is kept: only Amount changes it rarely. */
@@ -743,9 +761,9 @@ function grainField(
   spec: GrainSpec,
   dpr: number,
 ): Int16Array {
-  const key = `${w},${h},${ox},${oy},${dpr},${spec.size},${spec.colour},${spec.seed}`;
-  if (grainCache?.key === key) return grainCache.field;
-  grainCache = null; // let the old one go before the new one is made
+  const key = `grain,${w},${h},${ox},${oy},${dpr},${spec.size},${spec.colour},${spec.seed}`;
+  if (fillCache?.key === key) return fillCache.field;
+  fillCache = null; // let the old one go before the new one is made
   const planes = spec.colour ? 3 : 1;
   const plan = blurPlan(grainSigma(spec.size, dpr));
   // Generated with the blur's reach round it, so the edge-repeating blur never reaches the region.
@@ -770,7 +788,116 @@ function grainField(
       }
     }
   }
-  grainCache = { key, field };
+  fillCache = { key, field };
+  return field;
+}
+
+// --- Clouds ---
+// Fractal Perlin noise: octaves from `scale` down to ~2 device px, each half the size of the one
+// above and `cloudsPersistence` times as strong, placed by DOCUMENT position (the same clouds at 1×
+// and 2× layers; a marquee's part matches the whole), summed and scaled to unit deviation.
+
+/** Perlin noise's standard deviation (unit gradients, quintic fade), measured (0.2156–0.2183 over
+ *  scales 8–128 and Detail 0–100): the sum is divided by it, so Amount means what Grain's does. */
+export const PERLIN_SD = 0.216;
+
+/** How strong each octave is against the one above, from Detail (0–100). */
+export const cloudsPersistence = (detail: number) => 0.3 + (0.5 * detail) / 100;
+
+/** How many octaves: from `scale` document px down to cells of at least 2 device px (≤ 12). */
+export function cloudsOctaves(scale: number, dpr = 1): number {
+  return Math.max(1, Math.min(12, Math.floor(Math.log2((scale * dpr) / 2)) + 1));
+}
+
+const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+
+/** Clouds' unit-deviation field for a region, as `grainField`. */
+function cloudsField(
+  w: number,
+  h: number,
+  ox: number,
+  oy: number,
+  spec: CloudsSpec,
+  dpr: number,
+): Int16Array {
+  const key = `clouds,${w},${h},${ox},${oy},${dpr},${spec.scale},${spec.detail},${spec.colour},${spec.seed}`;
+  if (fillCache?.key === key) return fillCache.field;
+  fillCache = null;
+  const planes = spec.colour ? 3 : 1;
+  const m = w * h;
+  const [A] = blurBuffers(m);
+  const p = cloudsPersistence(spec.detail);
+  const octaves = cloudsOctaves(spec.scale, dpr);
+  let ampSq = 0;
+  for (let k = 0; k < octaves; k++) ampSq += p ** (2 * k);
+  const norm = GRAIN_Q / (PERLIN_SD * Math.sqrt(ampSq));
+  // Each column's and row's lattice cell, place in it and faded place, per octave.
+  const ix = new Int32Array(w),
+    fx = new Float32Array(w),
+    sx = new Float32Array(w);
+  const iy = new Int32Array(h),
+    fy = new Float32Array(h),
+    sy = new Float32Array(h);
+  const field = new Int16Array(m * planes);
+  for (let c = 0; c < planes; c++) {
+    A.fill(0, 0, m);
+    for (let k = 0; k < octaves; k++) {
+      const cell = (spec.scale * dpr) / 2 ** k; // device px per lattice cell
+      const amp = p ** k;
+      const off = 0.5 + k * 0.618; // Perlin noise is 0 on its lattice: keep the octaves' apart
+      for (let x = 0; x < w; x++) {
+        const u = (ox + x + 0.5) / cell + off;
+        ix[x] = Math.floor(u);
+        fx[x] = u - ix[x];
+        sx[x] = fade(fx[x]);
+      }
+      for (let y = 0; y < h; y++) {
+        const v = (oy + y + 0.5) / cell + off;
+        iy[y] = Math.floor(v);
+        fy[y] = v - iy[y];
+        sy[y] = fade(fy[y]);
+      }
+      // Unit gradients on the lattice points the region touches, hashed from their place.
+      const i0 = ix[0],
+        j0 = iy[0];
+      const ni = ix[w - 1] - i0 + 2,
+        nj = iy[h - 1] - j0 + 2;
+      const gx = new Float32Array(ni * nj),
+        gy = new Float32Array(ni * nj);
+      const salt = ((spec.seed * 32 + k) * 3 + c) | 0;
+      for (let b = 0, g = 0; b < nj; b++)
+        for (let a = 0; a < ni; a++, g++) {
+          const t = (pixelHash(i0 + a, j0 + b, salt) / 4294967296) * 2 * Math.PI;
+          gx[g] = Math.cos(t);
+          gy[g] = Math.sin(t);
+        }
+      for (let y = 0, i = 0; y < h; y++) {
+        const ty = fy[y],
+          ty1 = ty - 1,
+          ey = sy[y],
+          row = (iy[y] - j0) * ni;
+        for (let x = 0; x < w; x++, i++) {
+          const g00 = row + ix[x] - i0,
+            g01 = g00 + ni;
+          const tx = fx[x],
+            tx1 = tx - 1;
+          const n00 = gx[g00] * tx + gy[g00] * ty;
+          const n10 = gx[g00 + 1] * tx1 + gy[g00 + 1] * ty;
+          const n01 = gx[g01] * tx + gy[g01] * ty1;
+          const n11 = gx[g01 + 1] * tx1 + gy[g01 + 1] * ty1;
+          const ex = sx[x];
+          const a0 = n00 + ex * (n10 - n00),
+            a1 = n01 + ex * (n11 - n01);
+          A[i] += amp * (a0 + ey * (a1 - a0));
+        }
+      }
+    }
+    for (let i = 0, j = c; i < m; i++, j += planes) {
+      const v = Math.round(A[i] * norm);
+      field[j] = v > 32767 ? 32767 : v < -32767 ? -32767 : v;
+    }
+  }
+  fillCache = { key, field };
   return field;
 }
 
@@ -1392,11 +1519,15 @@ export function applyFilter(
 ): void {
   const n = w * h * 4;
   switch (spec.kind) {
-    case "grain": {
-      // A fill: every pixel becomes mid-grey plus the grain, opaque — under alpha lock at the
+    case "grain":
+    case "clouds": {
+      // A fill: every pixel becomes mid-grey plus the field, opaque — under alpha lock at the
       // pixel's own alpha, so only the paint takes it (as the bucket's fill there).
       const planes = spec.colour ? 3 : 1;
-      const f = grainField(w, h, ox, oy, spec, dpr);
+      const f =
+        spec.kind === "grain"
+          ? grainField(w, h, ox, oy, spec, dpr)
+          : cloudsField(w, h, ox, oy, spec, dpr);
       const k = ((spec.amount / 100) * GRAIN_SD_MAX) / GRAIN_Q;
       const g = planes > 1 ? 1 : 0,
         b = planes > 1 ? 2 : 0;
