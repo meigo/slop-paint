@@ -4,9 +4,11 @@
   // Cancel puts back what was there. As the text dialog: no dim, no cancel on an outside tap, and
   // no full-screen layer (App makes the rest `inert`).
   import { untrack } from "svelte";
+  import { Dices } from "@lucide/svelte";
   import {
     BLUR_MAX,
     FILTER_TITLES,
+    GRAIN_SIZE_MAX,
     HALFTONE_CELL_MAX,
     SHADOW_BLUR_MAX,
     SHADOW_DISTANCE_MAX,
@@ -454,6 +456,48 @@
       )}
       <p class="text-[11px] text-text-muted">
         Drawn behind the paint, so it shows round the shape — not on a filled Background.
+      </p>
+    {:else if spec.kind === "grain"}
+      {@const s = spec}
+      {@render slider("Amount", "How strong the grain is", s.amount, 1, 100, `${s.amount}%`, (v) =>
+        update({ amount: v }),
+      )}
+      {@render slider(
+        "Size",
+        "How big a grain is, in document pixels",
+        s.size * 2,
+        2,
+        GRAIN_SIZE_MAX * 2,
+        `${s.size} px`,
+        (v) => update({ size: v / 2 }),
+      )}
+      <div class={row}>
+        <span class="w-20 shrink-0">Colour</span>
+        <div class="flex gap-1">
+          <button
+            class={seg(!s.colour)}
+            title="Grey grain: changes only how light things are"
+            aria-pressed={!s.colour}
+            onclick={() => update({ colour: false })}>Mono</button
+          >
+          <button
+            class={seg(s.colour)}
+            title="Each channel its own grain: specks of colour"
+            aria-pressed={s.colour}
+            onclick={() => update({ colour: true })}>Colour</button
+          >
+        </div>
+        <button
+          class="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover"
+          title="A new grain pattern"
+          aria-label="A new grain pattern"
+          onclick={() => update({ seed: Math.floor(Math.random() * 1e6) + 1 })}
+          ><Dices size={16} /></button
+        >
+      </div>
+      <p class="text-[11px] text-text-muted">
+        Fills the whole layer, or the selection, with grain round mid-grey. Set the layer to Overlay
+        and the grey disappears: only the grain shows on the layers below.
       </p>
     {:else if spec.kind === "threshold"}
       {@const s = spec}

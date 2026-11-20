@@ -25,6 +25,10 @@ import {
   hueSatPixel,
   levelsLut,
   lumaHistogram,
+  grainNoise,
+  grainSigma,
+  noiseGain,
+  GRAIN_SD_MAX,
   type FilterSpec,
 } from "../filters";
 
@@ -767,5 +771,109 @@ describe("filterRect / filterMaxReach (the region App snapshots)", () => {
       for (const k of ["levels", "hueSat", "colourToAlpha"] as const)
         expect(filterReach(FILTER_DEFAULTS[k], dpr)).toBe(max(k));
     }
+  });
+});
+
+describe("grain (a fill)", () => {
+  const grain = (over: Partial<Extract<FilterSpec, { kind: "grain" }>> = {}) =>
+    ({ ...FILTER_DEFAULTS.grain, ...over }) as FilterSpec;
+  const sd = (d: Uint8ClampedArray, ch: number) => {
+    const m = mean(d, ch);
+    let s = 0;
+    for (let p = ch; p < d.length; p += 4) s += (d[p] - m) ** 2;
+    return Math.sqrt(s / (d.length / 4));
+  };
+
+  it("fills transparent pixels with opaque grain round mid-grey", () => {
+    const out = run(solid(64, 64, [0, 0, 0, 0]), 64, 64, grain({ amount: 50 }));
+    for (let p = 3; p < out.length; p += 4) expect(out[p]).toBe(255);
+    expect(mean(out, 0)).toBeGreaterThan(126);
+    expect(mean(out, 0)).toBeLessThan(130);
+    expect(sd(out, 0)).toBeGreaterThan(0.5 * GRAIN_SD_MAX * 0.9);
+    expect(sd(out, 0)).toBeLessThan(0.5 * GRAIN_SD_MAX * 1.1);
+  });
+
+  it("replaces painted pixels too", () => {
+    const out = run(solid(8, 8, [255, 0, 0, 255]), 8, 8, grain({ amount: 1 }));
+    for (let p = 0; p < out.length; p += 4) expect(Math.abs(out[p] - 128)).toBeLessThan(10);
+  });
+
+  it("keeps the same deviation at any size (the blur's loss is made up)", () => {
+    for (const size of [1, 2, 4, 8]) {
+      const out = run(solid(160, 160, [0, 0, 0, 0]), 160, 160, grain({ size, amount: 50 }));
+      expect(sd(out, 0)).toBeGreaterThan(0.5 * GRAIN_SD_MAX * 0.8);
+      expect(sd(out, 0)).toBeLessThan(0.5 * GRAIN_SD_MAX * 1.2);
+    }
+  });
+
+  it("is grey in Mono and differs per channel in Colour", () => {
+    const src = solid(16, 16, [0, 0, 0, 0]);
+    const mono = run(src, 16, 16, grain());
+    for (let p = 0; p < mono.length; p += 4) {
+      expect(mono[p + 1]).toBe(mono[p]);
+      expect(mono[p + 2]).toBe(mono[p]);
+    }
+    const col = run(src, 16, 16, grain({ colour: true }));
+    let differ = 0;
+    for (let p = 0; p < col.length; p += 4) if (col[p] !== col[p + 1]) differ++;
+    expect(differ).toBeGreaterThan(100);
+  });
+
+  it("under alpha lock covers only the paint, at its own alpha", () => {
+    const src = new Uint8ClampedArray([10, 20, 30, 0, 200, 0, 0, 90]);
+    const out = new Uint8ClampedArray(8);
+    applyFilter(src, out, 2, 1, 0, 0, grain(), 1, true);
+    expect(out[3]).toBe(0);
+    expect(out[7]).toBe(90);
+  });
+
+  // The pattern is tied to the layer's pixels, so a marquee's part matches the whole layer's.
+  it("a part of the layer gets the same grain as the whole", () => {
+    for (const size of [1, 3]) {
+      const spec = grain({ size });
+      const whole = new Uint8ClampedArray(40 * 40 * 4);
+      applyFilter(solid(40, 40, [0, 0, 0, 0]), whole, 40, 40, 0, 0, spec);
+      const part = new Uint8ClampedArray(10 * 8 * 4);
+      applyFilter(solid(10, 8, [0, 0, 0, 0]), part, 10, 8, 15, 20, spec);
+      for (let y = 0; y < 8; y++)
+        for (let x = 0; x < 10; x++)
+          expect(part[(y * 10 + x) * 4]).toBe(whole[((y + 20) * 40 + x + 15) * 4]);
+    }
+  });
+
+  it("a new seed is a new pattern", () => {
+    const src = solid(16, 16, [0, 0, 0, 0]);
+    const a = run(src, 16, 16, grain({ seed: 1 }));
+    const b = run(src, 16, 16, grain({ seed: 2 }));
+    expect(Array.from(a)).not.toEqual(Array.from(b));
+    expect(Array.from(run(src, 16, 16, grain({ seed: 1 })))).toEqual(Array.from(a));
+  });
+
+  it("grainNoise is standard normal", () => {
+    let s = 0,
+      s2 = 0;
+    const N = 200 * 200;
+    for (let y = 0; y < 200; y++)
+      for (let x = 0; x < 200; x++) {
+        const v = grainNoise(x - 100, y - 100, 7);
+        s += v;
+        s2 += v * v;
+      }
+    expect(Math.abs(s / N)).toBeLessThan(0.03);
+    expect(Math.sqrt(s2 / N - (s / N) ** 2)).toBeCloseTo(1, 1);
+  });
+
+  it("noiseGain is Σw² of the blur's kernel; no blur at one device px a grain", () => {
+    expect(grainSigma(1, 1)).toBe(0);
+    expect(grainSigma(1, 2)).toBe(0.5);
+    expect(noiseGain(blurPlan(0))).toBe(1);
+    const plan = blurPlan(2);
+    if (plan.kind !== "kernel") throw new Error("expected a kernel");
+    expect(noiseGain(plan)).toBeCloseTo(
+      Array.from(plan.weights).reduce((s, w) => s + w * w, 0),
+      6,
+    );
+    // Large σ (three boxes): ≈ 1 / (2σ√π), the continuous Gaussian's.
+    expect(noiseGain(blurPlan(10))).toBeCloseTo(1 / (2 * 10 * Math.sqrt(Math.PI)), 2);
   });
 });

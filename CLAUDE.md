@@ -228,6 +228,7 @@ user says so. Keep README.md current with every user-visible change.
 - Several layers: `filterTargets` = Move's targets minus locked, hidden, reference (and alpha-locked for Colour to alpha), counted in the dialog. Shared state (palette, histogram) via `filterShared`. No layer held whole: each `FilterPart` keeps its `base`; one shared output buffer; undo = `pushRegionsEdit`, one step. Buffers released (`releaseFilterBuffers`)
 - App (`openFilter` … `cancelFilter`): refuses as `paintBlock`; ends a gesture, applies a float, cancels Outline. Previews into the layers once a frame (`scheduleFilterPreview`); marquee clipped as Outline's. OK = one step (none + message when nothing changed); Cancel/Esc restore. Modal like the text dialog (no dim, workspace `inert`); autosave and the blank probe wait. Last settings per filter kept for the session
 - Not measured on iPad; if too slow there, preview a reduced/visible part and run the whole on OK
+- **Grain** (Filter ▸ Grain…, its own menu group) is a FILL (`FILL_FILTERS`): App gives it the whole layer as its "ink", so it works on an empty layer and a marquee cuts it as any filter. Mid-grey 128 + Gaussian noise per DEVICE pixel hashed from its LAYER position (`grainNoise`; a marquee's part matches the whole), blurred to Size (`grainSigma`) with padding by the blur's reach, rescaled to unit deviation (`noiseGain`). The field is cached (`grainCache`, Int16), so an Amount drag only rescales; released by `releaseFilterBuffers`. Opaque, or under alpha lock the paint's own alpha
 
 ## Move Tool
 
