@@ -2,9 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   allSlots,
   parseSlot,
+  parseTypes,
   readSlot,
+  seedTypes,
   slotFor,
   swapSlots,
+  switchType,
+  typesForSave,
   type LiveStroke,
   type StrokeSlot,
 } from "../tool-settings";
@@ -131,5 +135,86 @@ describe("parseSlot", () => {
 
   it("keeps valid fields from a partial slot", () => {
     expect(parseSlot({ size: 30 }, brush)).toEqual({ ...brush, size: 30 });
+  });
+});
+
+const linear = { cp1: { x: 0.25, y: 0.25 }, cp2: { x: 0.75, y: 0.75 } };
+const soft = { cp1: { x: 0.1, y: 0.6 }, cp2: { x: 0.4, y: 0.9 } };
+
+describe("switchType", () => {
+  it("parks the outgoing type's values and curve and loads the incoming type's", () => {
+    const store = seedTypes(brush, linear);
+    const live = liveFrom({ ...brush, brushType: "ink" });
+    const curve = { cp1: { ...linear.cp1 }, cp2: { ...linear.cp2 } };
+    // Tune Ink, then switch to Watercolour: Watercolour still has the seeded values.
+    live.brushSettings.size = 12;
+    live.streamline = 80;
+    curve.cp1 = { ...soft.cp1 };
+    switchType(live, curve, store, "watercolor");
+    expect(readSlot(live)).toEqual({ ...brush, brushType: "watercolor" });
+    expect(curve).toEqual(linear);
+    expect(store.ink.size).toBe(12);
+    expect(store.ink.streamline).toBe(80);
+    expect(store.ink.curve.cp1).toEqual(soft.cp1);
+    // Back to Ink: its tuning returns.
+    switchType(live, curve, store, "ink");
+    expect(live.brushType).toBe("ink");
+    expect(live.brushSettings.size).toBe(12);
+    expect(live.streamline).toBe(80);
+    expect(curve.cp1).toEqual(soft.cp1);
+  });
+
+  it("does not share curve points with the store", () => {
+    const store = seedTypes(brush, linear);
+    const live = liveFrom({ ...brush, brushType: "ink" });
+    const curve = { cp1: { ...linear.cp1 }, cp2: { ...linear.cp2 } };
+    switchType(live, curve, store, "pencil");
+    curve.cp1.x = 0.9;
+    expect(store.pencil.curve.cp1.x).toBe(0.25);
+  });
+
+  it("does nothing for the same type", () => {
+    const store = seedTypes(brush, linear);
+    const live = liveFrom(brush);
+    live.brushSettings.size = 99;
+    switchType(live, { ...linear }, store, "smooth");
+    expect(live.brushSettings.size).toBe(99);
+    expect(store.smooth.size).toBe(brush.size);
+  });
+});
+
+describe("typesForSave", () => {
+  it("folds the brush's current values in under its type", () => {
+    const store = seedTypes(brush, linear);
+    const out = typesForSave(store, { ...brush, brushType: "dry", size: 30 }, soft);
+    expect(out.dry.size).toBe(30);
+    expect(out.dry.curve).toEqual(soft);
+    expect(out.smooth.size).toBe(brush.size);
+    expect(store.dry.size).toBe(brush.size);
+  });
+});
+
+describe("parseTypes", () => {
+  const fallback = seedTypes(brush, linear);
+
+  it("keeps the fallback for missing or broken data", () => {
+    expect(parseTypes(undefined, fallback)).toEqual(fallback);
+    expect(parseTypes("x", fallback)).toEqual(fallback);
+    expect(parseTypes({ ink: 3, blend: { size: 9 } }, fallback)).toEqual(fallback);
+  });
+
+  it("reads valid fields and clamps curve points into the square", () => {
+    const out = parseTypes(
+      {
+        ink: { size: 9, opacity: "a", curve: { cp1: { x: 2, y: -1 }, cp2: { x: NaN, y: 0 } } },
+      },
+      fallback,
+    );
+    expect(out.ink).toEqual({
+      ...fallback.ink,
+      size: 9,
+      curve: { cp1: { x: 1, y: 0 }, cp2: linear.cp2 },
+    });
+    expect(out.smooth).toEqual(fallback.smooth);
   });
 });

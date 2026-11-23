@@ -33,8 +33,7 @@
   } from "@lucide/svelte";
   import { app, flashStatus, isStrokeTool, pressureCurves, type Tool } from "../appState.svelte.js";
   import { SIZE_SLIDER_STEPS, parseSize, sizeToSlider, sliderToSize } from "../brush-size";
-  import { slotFor, type SlotName } from "../tool-settings";
-  import type { BrushType } from "../brush-textures";
+  import { slotFor, type PaintType, type SlotName } from "../tool-settings";
   import { createCurveEditor } from "../pressure-curve";
   import { clickOutside } from "./click-outside";
   import ToolbarMenu from "./ToolbarMenu.svelte";
@@ -101,6 +100,7 @@
     resetView,
     reset100,
     onSettingsChange,
+    setBrushType,
   }: {
     setTool: (tool: Tool) => void;
     undo: () => void;
@@ -166,6 +166,7 @@
     resetView: () => void;
     reset100: () => void;
     onSettingsChange: () => void;
+    setBrushType: (type: PaintType) => void;
   } = $props();
 
   let sizeDisplay = $derived(String(app.brushSettings.size));
@@ -256,13 +257,13 @@
       blend: createCurveEditor(pressureCurves.blend, onSettingsChange),
     };
     const editor = curveEditors[slotFor(activeTool)];
+    void app.brushType; // a brush type brings its own curve: redraw
     curvePopupEl.replaceChildren(editor);
     editor.redraw();
   });
 
   function onBrushTypeChange(e: Event) {
-    app.brushType = (e.target as HTMLSelectElement).value as BrushType;
-    onSettingsChange();
+    setBrushType((e.target as HTMLSelectElement).value as PaintType);
   }
 
   function onNibFlatnessInput(e: Event) {

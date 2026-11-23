@@ -43,6 +43,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - **Smooth** (Smooth brush) rounds out wobble in the stroke's path with no lag; **Sharp corners
   where you pause** is an option, off by default for the rounded look
 - Brush and eraser keep their own size, opacity, smoothing, stream, Press and brush type
+- Each brush type (Smooth, Ink, Watercolour, Pencil, …) remembers its own size, opacity, smoothing,
+  stream, Press and pressure curve, so switching Ink ↔ Watercolour brings back each one's tuning.
+  Colour, Draw behind and Alpha lock stay shared; the eraser keeps one set whatever its type
 - **Draw behind** — paint goes under what is already on the layer (flats under line art), a toggle
   on the brush toolbar
 - Size presets, opacity, colour swatch with a palette and picker; set-once options (stream, and

@@ -181,11 +181,18 @@
   import {
     allSlots,
     parseSlot,
+    parseTypes,
     readSlot,
+    seedTypes,
+    slotFor,
     swapSlots,
+    switchType,
+    typesForSave,
     writeSlot,
+    type PaintType,
     type SlotName,
     type StrokeSlot,
+    type TypeStore,
   } from "./tool-settings";
 
   // --- Canvas refs ---
@@ -565,6 +572,20 @@
     // Its type is never read (a Blend tool stroke is always Blend); "blend" keeps the menus honest.
     blend: { ...readSlot(app), brushType: "blend", size: 20, smoothing: 0 },
   };
+  /** Each brush type's own size, opacity, smoothing, Stream, Press and curve (`switchType`). The
+   *  current type's entry is stale while it is in use: its values live in `app` / the slot. */
+  let brushTypes: TypeStore = seedTypes(readSlot(app), pressureCurves.brush);
+
+  /** The type menu. For the brush it brings in that type's own settings; the eraser has one set. */
+  function setBrushType(type: PaintType) {
+    if (slotFor(app.currentTool) !== "brush") {
+      app.brushType = type;
+    } else {
+      switchType(app, pressureCurves.brush, brushTypes, type);
+      pressureCurves.brush.buildLUT();
+    }
+    debouncedSave();
+  }
 
   // --- Settings persistence ---
   const STORAGE_KEY = "drawingAppSettings";
@@ -611,6 +632,8 @@
     charcoalTexture?: string;
     blendSmear?: number;
     blendTip?: string;
+    /** Each brush type's own settings (2026-11-23); absent before: every type gets the brush's. */
+    brushTypes?: TypeStore;
     /** Eraser's own stroke settings; the top-level size/opacity/... fields are the brush's. */
     eraser?: StrokeSlot;
     /** Blend's own (a tool since 2026-10-24) and its curve; absent before, see `loadSettings`. */
@@ -639,6 +662,7 @@
       fillOpacity: app.fillOpacity,
       sizeRange: slots.brush.sizeRange,
       streamline: slots.brush.streamline,
+      brushTypes: typesForSave(brushTypes, slots.brush, pressureCurves.brush),
       eraser: slots.eraser,
       blend: slots.blend,
       blendCurveCp1: { ...pressureCurves.blend.cp1 },
@@ -758,6 +782,7 @@
         pressureCurves.blend.buildLUT();
       }
       strokeSlots.brush = readSlot(app);
+      brushTypes = parseTypes(data.brushTypes, seedTypes(strokeSlots.brush, pressureCurves.brush));
       strokeSlots.eraser = parseSlot(data.eraser, strokeSlots.eraser);
       strokeSlots.blend = {
         ...(data.blend
@@ -4702,6 +4727,7 @@
           {resetView}
           reset100={resetTo100Percent}
           onSettingsChange={debouncedSave}
+          {setBrushType}
         />
       {/if}
     </div>
