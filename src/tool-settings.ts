@@ -19,7 +19,7 @@ export interface LiveStroke {
   brushType: BrushKind;
   sizeRange: number;
   streamline: number;
-  brushSettings: { size: number; opacity: number; smoothing: number };
+  brushSettings: { size: number; opacity: number; smoothing: number; color: string };
 }
 
 /** The eraser and Blend have their own slots; every other tool draws with (or shows) the brush's. */
@@ -94,12 +94,13 @@ export interface CurvePair {
 }
 
 /** What each BRUSH type keeps of its own (2026-11-23): Ink and Watercolour want different sizes,
- *  Stream and curves, and retuning them on every switch was a chore. Colour, Draw behind and
- *  Alpha lock stay shared; the eraser and Blend keep one set each. */
-export type TypeSettings = Omit<StrokeSlot, "brushType"> & { curve: CurvePair };
+ *  Stream, curves and colours, and retuning them on every switch was a chore. Draw behind and
+ *  Alpha lock stay shared; the eraser and Blend keep one set each. The colour is the brush's
+ *  `brushSettings.color`, which the eraser shares (so it is not part of `StrokeSlot`). */
+export type TypeSettings = Omit<StrokeSlot, "brushType"> & { curve: CurvePair; color: string };
 export type TypeStore = Record<PaintType, TypeSettings>;
 
-export function typeSettingsOf(slot: StrokeSlot, curve: CurvePair): TypeSettings {
+export function typeSettingsOf(slot: StrokeSlot, curve: CurvePair, color: string): TypeSettings {
   return {
     size: slot.size,
     opacity: slot.opacity,
@@ -107,25 +108,34 @@ export function typeSettingsOf(slot: StrokeSlot, curve: CurvePair): TypeSettings
     streamline: slot.streamline,
     sizeRange: slot.sizeRange,
     curve: { cp1: { ...curve.cp1 }, cp2: { ...curve.cp2 } },
+    color,
   };
 }
 
 /** Every type starting from the same values (the brush's, before types had their own). */
-export function seedTypes(slot: StrokeSlot, curve: CurvePair): TypeStore {
+export function seedTypes(slot: StrokeSlot, curve: CurvePair, color: string): TypeStore {
   const out = {} as TypeStore;
-  for (const t of PAINT_TYPES) out[t] = typeSettingsOf(slot, curve);
+  for (const t of PAINT_TYPES) out[t] = typeSettingsOf(slot, curve, color);
   return out;
 }
 
 /**
- * The brush's type changes: park the live values (and curve) under the outgoing type and load the
- * incoming type's. Only for the brush's slot; the eraser's type change keeps its values. The
- * caller rebuilds the curve's LUT.
+ * The brush's type changes: park the live values and curve under the outgoing type and load the
+ * incoming type's — the colour too when `withColour` (Settings ▸ "Each brush type keeps its own
+ * colour", off by default: one colour across brushes is what most painting wants). Only for the
+ * brush's slot; the eraser's type change keeps its values. The caller rebuilds the curve's LUT.
  */
-export function switchType(live: LiveStroke, curve: CurvePair, store: TypeStore, to: PaintType) {
+export function switchType(
+  live: LiveStroke,
+  curve: CurvePair,
+  store: TypeStore,
+  to: PaintType,
+  withColour: boolean,
+) {
   const from = live.brushType;
   if (from === to) return;
-  if (from !== "blend") store[from] = typeSettingsOf(readSlot(live), curve);
+  if (from !== "blend")
+    store[from] = typeSettingsOf(readSlot(live), curve, live.brushSettings.color);
   const next = store[to];
   writeSlot(live, {
     brushType: to,
@@ -137,12 +147,24 @@ export function switchType(live: LiveStroke, curve: CurvePair, store: TypeStore,
   });
   curve.cp1 = { ...next.curve.cp1 };
   curve.cp2 = { ...next.curve.cp2 };
+  if (withColour) live.brushSettings.color = next.color;
+}
+
+/** Per-type colours switched on: every type starts from the current colour, so nothing jumps.
+ *  (While off, the stored colours aren't kept up to date, so they are reset here.) */
+export function resetTypeColours(store: TypeStore, color: string) {
+  for (const t of PAINT_TYPES) store[t].color = color;
 }
 
 /** The store for saving, with the brush's own current values folded in under its type. */
-export function typesForSave(store: TypeStore, brush: StrokeSlot, curve: CurvePair): TypeStore {
+export function typesForSave(
+  store: TypeStore,
+  brush: StrokeSlot,
+  curve: CurvePair,
+  color: string,
+): TypeStore {
   if (brush.brushType === "blend") return store;
-  return { ...store, [brush.brushType]: typeSettingsOf(brush, curve) };
+  return { ...store, [brush.brushType]: typeSettingsOf(brush, curve, color) };
 }
 
 function parsePoint(raw: unknown, fallback: CurvePoint): CurvePoint {
@@ -164,10 +186,13 @@ export function parseTypes(raw: unknown, fallback: TypeStore): TypeStore {
     const base = fallback[t];
     const slot = parseSlot(v, { ...base, brushType: t });
     const c = (v as Record<string, unknown>).curve as Record<string, unknown> | undefined;
-    out[t] = typeSettingsOf(slot, {
-      cp1: parsePoint(c?.cp1, base.curve.cp1),
-      cp2: parsePoint(c?.cp2, base.curve.cp2),
-    });
+    const color = (v as Record<string, unknown>).color;
+    out[t] = typeSettingsOf(
+      slot,
+      { cp1: parsePoint(c?.cp1, base.curve.cp1), cp2: parsePoint(c?.cp2, base.curve.cp2) },
+      // Saved before types had colours: the fallback (the brush's saved colour).
+      typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color) ? color : base.color,
+    );
   }
   return out;
 }

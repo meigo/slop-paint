@@ -183,6 +183,7 @@
     parseSlot,
     parseTypes,
     readSlot,
+    resetTypeColours,
     seedTypes,
     slotFor,
     swapSlots,
@@ -572,18 +573,29 @@
     // Its type is never read (a Blend tool stroke is always Blend); "blend" keeps the menus honest.
     blend: { ...readSlot(app), brushType: "blend", size: 20, smoothing: 0 },
   };
-  /** Each brush type's own size, opacity, smoothing, Stream, Press and curve (`switchType`). The
-   *  current type's entry is stale while it is in use: its values live in `app` / the slot. */
-  let brushTypes: TypeStore = seedTypes(readSlot(app), pressureCurves.brush);
+  /** Each brush type's own size, opacity, smoothing, Stream, Press, curve and colour (`switchType`).
+   *  The current type's entry is stale while it is in use: its values live in `app` / the slot. */
+  let brushTypes: TypeStore = seedTypes(
+    readSlot(app),
+    pressureCurves.brush,
+    app.brushSettings.color,
+  );
 
   /** The type menu. For the brush it brings in that type's own settings; the eraser has one set. */
   function setBrushType(type: PaintType) {
     if (slotFor(app.currentTool) !== "brush") {
       app.brushType = type;
     } else {
-      switchType(app, pressureCurves.brush, brushTypes, type);
+      switchType(app, pressureCurves.brush, brushTypes, type, app.colourPerType);
       pressureCurves.brush.buildLUT();
     }
+    debouncedSave();
+  }
+
+  /** Settings ▸ Each brush type keeps its own colour. */
+  function setColourPerType(on: boolean) {
+    if (on) resetTypeColours(brushTypes, app.brushSettings.color);
+    app.colourPerType = on;
     debouncedSave();
   }
 
@@ -611,6 +623,7 @@
     fillSoftEdge?: number;
     keepProportions?: boolean;
     spineTools?: boolean;
+    colourPerType?: boolean;
     hiResLayers?: boolean;
     fillEnclosedGap?: number;
     fillColor?: string;
@@ -662,7 +675,12 @@
       fillOpacity: app.fillOpacity,
       sizeRange: slots.brush.sizeRange,
       streamline: slots.brush.streamline,
-      brushTypes: typesForSave(brushTypes, slots.brush, pressureCurves.brush),
+      brushTypes: typesForSave(
+        brushTypes,
+        slots.brush,
+        pressureCurves.brush,
+        app.brushSettings.color,
+      ),
       eraser: slots.eraser,
       blend: slots.blend,
       blendCurveCp1: { ...pressureCurves.blend.cp1 },
@@ -678,6 +696,7 @@
       fillSoftEdge: app.fillSettings.softEdge,
       keepProportions: app.keepProportions,
       spineTools: app.spineTools,
+      colourPerType: app.colourPerType,
       hiResLayers: app.hiResLayers,
       fillEnclosedGap: app.fillEnclosedGap,
       layerPanelWidth: app.layerPanelWidth,
@@ -734,6 +753,7 @@
         app.fillSettings.softEdge = Math.max(0, Math.min(MAX_SOFT_EDGE, data.fillSoftEdge));
       if (typeof data.keepProportions === "boolean") app.keepProportions = data.keepProportions;
       if (typeof data.spineTools === "boolean") app.spineTools = data.spineTools;
+      if (typeof data.colourPerType === "boolean") app.colourPerType = data.colourPerType;
       if (typeof data.hiResLayers === "boolean") app.hiResLayers = data.hiResLayers;
       if (data.fillEnclosedGap != null) app.fillEnclosedGap = clampGap(data.fillEnclosedGap);
       if (data.layerPanelWidth != null) {
@@ -782,7 +802,10 @@
         pressureCurves.blend.buildLUT();
       }
       strokeSlots.brush = readSlot(app);
-      brushTypes = parseTypes(data.brushTypes, seedTypes(strokeSlots.brush, pressureCurves.brush));
+      brushTypes = parseTypes(
+        data.brushTypes,
+        seedTypes(strokeSlots.brush, pressureCurves.brush, app.brushSettings.color),
+      );
       strokeSlots.eraser = parseSlot(data.eraser, strokeSlots.eraser);
       strokeSlots.blend = {
         ...(data.blend
@@ -4821,6 +4844,7 @@
     open={showSettingsDialog}
     onChange={debouncedSave}
     onLayerResolution={setLayerResolution}
+    onColourPerType={setColourPerType}
     fonts={fontList.map((f) => ({ key: fontKey(f), label: fontLabel(f) }))}
     onAddFont={(file) => void addFont(file)}
     onRemoveFont={(key) => void removeFont(key)}

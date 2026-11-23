@@ -3,7 +3,9 @@ import {
   allSlots,
   parseSlot,
   parseTypes,
+  PAINT_TYPES,
   readSlot,
+  resetTypeColours,
   seedTypes,
   slotFor,
   swapSlots,
@@ -44,7 +46,7 @@ function liveFrom(s: StrokeSlot): LiveStroke {
     brushType: s.brushType,
     sizeRange: s.sizeRange,
     streamline: s.streamline,
-    brushSettings: { size: s.size, opacity: s.opacity, smoothing: s.smoothing },
+    brushSettings: { size: s.size, opacity: s.opacity, smoothing: s.smoothing, color: "#000000" },
   };
 }
 
@@ -143,51 +145,83 @@ const soft = { cp1: { x: 0.1, y: 0.6 }, cp2: { x: 0.4, y: 0.9 } };
 
 describe("switchType", () => {
   it("parks the outgoing type's values and curve and loads the incoming type's", () => {
-    const store = seedTypes(brush, linear);
+    const store = seedTypes(brush, linear, "#000000");
     const live = liveFrom({ ...brush, brushType: "ink" });
     const curve = { cp1: { ...linear.cp1 }, cp2: { ...linear.cp2 } };
     // Tune Ink, then switch to Watercolour: Watercolour still has the seeded values.
     live.brushSettings.size = 12;
     live.streamline = 80;
     curve.cp1 = { ...soft.cp1 };
-    switchType(live, curve, store, "watercolor");
+    switchType(live, curve, store, "watercolor", true);
     expect(readSlot(live)).toEqual({ ...brush, brushType: "watercolor" });
     expect(curve).toEqual(linear);
     expect(store.ink.size).toBe(12);
     expect(store.ink.streamline).toBe(80);
     expect(store.ink.curve.cp1).toEqual(soft.cp1);
     // Back to Ink: its tuning returns.
-    switchType(live, curve, store, "ink");
+    switchType(live, curve, store, "ink", true);
     expect(live.brushType).toBe("ink");
     expect(live.brushSettings.size).toBe(12);
     expect(live.streamline).toBe(80);
     expect(curve.cp1).toEqual(soft.cp1);
   });
 
-  it("does not share curve points with the store", () => {
-    const store = seedTypes(brush, linear);
+  it("parks and brings back each type's colour", () => {
+    const store = seedTypes(brush, linear, "#000000");
     const live = liveFrom({ ...brush, brushType: "ink" });
     const curve = { cp1: { ...linear.cp1 }, cp2: { ...linear.cp2 } };
-    switchType(live, curve, store, "pencil");
+    live.brushSettings.color = "#3366ff";
+    switchType(live, curve, store, "watercolor", true);
+    expect(live.brushSettings.color).toBe("#000000");
+    live.brushSettings.color = "#aa0000";
+    switchType(live, curve, store, "ink", true);
+    expect(live.brushSettings.color).toBe("#3366ff");
+    expect(store.watercolor.color).toBe("#aa0000");
+  });
+
+  it("leaves the colour alone without withColour", () => {
+    const store = seedTypes(brush, linear, "#000000");
+    const live = liveFrom({ ...brush, brushType: "ink" });
+    live.brushSettings.color = "#3366ff";
+    switchType(live, { cp1: { ...linear.cp1 }, cp2: { ...linear.cp2 } }, store, "dry", false);
+    expect(live.brushSettings.color).toBe("#3366ff");
+  });
+
+  it("does not share curve points with the store", () => {
+    const store = seedTypes(brush, linear, "#000000");
+    const live = liveFrom({ ...brush, brushType: "ink" });
+    const curve = { cp1: { ...linear.cp1 }, cp2: { ...linear.cp2 } };
+    switchType(live, curve, store, "pencil", true);
     curve.cp1.x = 0.9;
     expect(store.pencil.curve.cp1.x).toBe(0.25);
   });
 
   it("does nothing for the same type", () => {
-    const store = seedTypes(brush, linear);
+    const store = seedTypes(brush, linear, "#000000");
     const live = liveFrom(brush);
     live.brushSettings.size = 99;
-    switchType(live, { ...linear }, store, "smooth");
+    switchType(live, { ...linear }, store, "smooth", true);
     expect(live.brushSettings.size).toBe(99);
     expect(store.smooth.size).toBe(brush.size);
   });
 });
 
+describe("resetTypeColours", () => {
+  it("gives every type the colour", () => {
+    const store = seedTypes(brush, linear, "#000000");
+    store.ink.color = "#ff0000";
+    resetTypeColours(store, "#00ff00");
+    for (const t of PAINT_TYPES) expect(store[t].color).toBe("#00ff00");
+  });
+});
+
 describe("typesForSave", () => {
   it("folds the brush's current values in under its type", () => {
-    const store = seedTypes(brush, linear);
-    const out = typesForSave(store, { ...brush, brushType: "dry", size: 30 }, soft);
+    const store = seedTypes(brush, linear, "#000000");
+    const out = typesForSave(store, { ...brush, brushType: "dry", size: 30 }, soft, "#ff0000");
     expect(out.dry.size).toBe(30);
+    expect(out.dry.color).toBe("#ff0000");
+    expect(out.smooth.color).toBe("#000000");
     expect(out.dry.curve).toEqual(soft);
     expect(out.smooth.size).toBe(brush.size);
     expect(store.dry.size).toBe(brush.size);
@@ -195,7 +229,7 @@ describe("typesForSave", () => {
 });
 
 describe("parseTypes", () => {
-  const fallback = seedTypes(brush, linear);
+  const fallback = seedTypes(brush, linear, "#000000");
 
   it("keeps the fallback for missing or broken data", () => {
     expect(parseTypes(undefined, fallback)).toEqual(fallback);
@@ -216,5 +250,15 @@ describe("parseTypes", () => {
       curve: { cp1: { x: 1, y: 0 }, cp2: linear.cp2 },
     });
     expect(out.smooth).toEqual(fallback.smooth);
+  });
+
+  it("reads a hex colour and keeps the fallback for anything else", () => {
+    const out = parseTypes(
+      { ink: { color: "#12AbCd" }, dry: { color: "red" }, pencil: { color: 5 } },
+      fallback,
+    );
+    expect(out.ink.color).toBe("#12AbCd");
+    expect(out.dry.color).toBe("#000000");
+    expect(out.pencil.color).toBe("#000000");
   });
 });

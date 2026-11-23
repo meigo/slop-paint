@@ -47,6 +47,8 @@ interface AppStateShape {
   keepProportions: boolean;
   /** Settings: show the Spine tag UI (layer strip chips/menu, "for Spine" export wording). */
   spineTools: boolean;
+  /** Settings: each brush type keeps its own colour (`switchType`'s `withColour`). Off by default. */
+  colourPerType: boolean;
   /** Settings: keep layers at the screen's pixel density (2× on Retina/iPad, 4× the memory) rather
    *  than at document pixels. Saves and exports are document pixels either way. */
   hiResLayers: boolean;
@@ -125,6 +127,7 @@ export const app: AppStateShape = $state({
   docHeight: 1080,
   keepProportions: true,
   spineTools: true,
+  colourPerType: false,
   // Off on iPad: 40 layers at 2× (1.2 GB) got blanked in the background.
   hiResLayers:
     typeof navigator === "undefined" ||

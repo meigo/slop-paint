@@ -45,7 +45,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
 - Brush and eraser keep their own size, opacity, smoothing, stream, Press and brush type
 - Each brush type (Smooth, Ink, Watercolour, Pencil, …) remembers its own size, opacity, smoothing,
   stream, Press and pressure curve, so switching Ink ↔ Watercolour brings back each one's tuning.
-  Colour, Draw behind and Alpha lock stay shared; the eraser keeps one set whatever its type
+  Colour, Draw behind and Alpha lock stay shared; the eraser keeps one set whatever its type.
+  **Edit ▸ Settings ▸ Each brush type keeps its own colour** (off by default) makes colour
+  per type too; turning it on starts every type at the current colour
 - **Draw behind** — paint goes under what is already on the layer (flats under line art), a toggle
   on the brush toolbar
 - Size presets, opacity, colour swatch with a palette and picker; set-once options (stream, and
