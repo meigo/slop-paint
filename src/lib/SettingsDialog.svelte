@@ -9,6 +9,7 @@
     open = false,
     onChange,
     onLayerResolution,
+    onColourPerType,
     onClose,
     fonts,
     onAddFont,
@@ -19,6 +20,8 @@
     onChange: () => void;
     /** Sharp layers toggled: the caller resamples the document. */
     onLayerResolution: (hi: boolean) => void;
+    /** Per-type brush colours toggled: the caller resets the stored colours when it goes on. */
+    onColourPerType: (on: boolean) => void;
     onClose: () => void;
     /** The fonts added on this device (the text dialog's +), as listed there. */
     fonts: { key: string; label: string }[];
@@ -71,6 +74,23 @@
           <span class="text-text">Spine tools</span><br />
           Tag chips and the tag menu in the layer strip, and Spine wording on the PSD export. Off only
           hides them: tags already on layers stay, and are still exported.
+        </span>
+      </label>
+
+      <label
+        class="flex cursor-pointer items-start gap-2 text-xs text-text-secondary"
+        title="Switching brush type also brings back the colour last used with that type"
+      >
+        <input
+          type="checkbox"
+          class="mt-0.5 accent-accent"
+          checked={app.colourPerType}
+          onchange={(e) => onColourPerType(e.currentTarget.checked)}
+        />
+        <span>
+          <span class="text-text">Each brush type keeps its own colour</span><br />
+          Switching Ink ↔ Watercolour brings back each one's colour, as size and Stream already do. Off:
+          one colour for every brush. Turning it on starts every type at the current colour.
         </span>
       </label>
 
