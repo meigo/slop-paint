@@ -153,6 +153,7 @@ user says so. Keep README.md current with every user-visible change.
 ## Brush / Eraser Settings
 
 - Brush, eraser and Blend each keep size, opacity, smoothing, streamline, Press, type and pressure curve
+- Each BRUSH type also keeps its own copy of those (`brushTypes`, `switchType` in `tool-settings.ts`); the type menu goes through App's `setBrushType` — never set `app.brushType` directly for the brush. The eraser keeps one set
 - Size 1–`SIZE_MAX` (500; `brush-size.ts`, pure, tested): the slider is even in ratio (`sizeToSlider` / `sliderToSize`), `[` / `]` step ~10% (`stepSize`), a typed size outside the range is refused with a message (`parseSize`). The presets still end at 80 (the row's width)
 - Press 1–8, default 3; mouse ignores it
 - Stream: a rope of up to 40 SCREEN px applied to client coords in `input.ts`; catch-up via `catchUpPath` on pause (`PAUSE_MS`, `STILL_PX`), late frames and lift. Rope points take the pressure (`trailPressureAt`) and TIME (`trailTimeAt`) the pen had there. At Stream 0 no catch-up — except stamp brushes, which always get `STAMP_MIN_ROPE_PX`. A resting pen still adds points (Ink's Pool needs them); `smoothPath` collapses identical runs
