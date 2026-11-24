@@ -23,16 +23,19 @@
     brush: "Brush",
     eraser: "Eraser",
     blend: "Blend",
-    select: "Rect select",
-    lasso: "Lasso",
     move: "Move",
     fill: "Fill",
     eyedropper: "Eyedropper",
     outline: "Outline",
   };
+  const shapeLabels = { rect: "Rect select", ellipse: "Ellipse select", lasso: "Lasso" };
   // On a reference the handles are what the tool does, whichever tool it is.
   const toolLabel = $derived(
-    state === "reference" ? "Reference" : (toolLabels[app.currentTool] ?? app.currentTool),
+    state === "reference"
+      ? "Reference"
+      : app.currentTool === "select"
+        ? shapeLabels[app.selectShape]
+        : (toolLabels[app.currentTool] ?? app.currentTool),
   );
 
   const kbd =

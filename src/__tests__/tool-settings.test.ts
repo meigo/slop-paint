@@ -54,7 +54,7 @@ describe("slotFor", () => {
   it("gives the eraser and Blend their own slots and everything else the brush slot", () => {
     expect(slotFor("eraser")).toBe("eraser");
     expect(slotFor("blend")).toBe("blend");
-    for (const t of ["brush", "fill", "select", "lasso", "eyedropper"]) {
+    for (const t of ["brush", "fill", "select", "eyedropper"]) {
       expect(slotFor(t)).toBe("brush");
     }
   });

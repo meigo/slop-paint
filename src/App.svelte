@@ -175,6 +175,7 @@
     bumpSelectionVersion,
     flashStatus,
     clearSticky,
+    type SelectShape,
     type Tool,
     type BrushKind,
   } from "./appState.svelte.js";
@@ -622,6 +623,7 @@
     fillExpand?: number;
     fillSoftEdge?: number;
     keepProportions?: boolean;
+    selectShape?: SelectShape;
     spineTools?: boolean;
     colourPerType?: boolean;
     hiResLayers?: boolean;
@@ -695,6 +697,7 @@
       fillExpand: app.fillSettings.expand,
       fillSoftEdge: app.fillSettings.softEdge,
       keepProportions: app.keepProportions,
+      selectShape: app.selectShape,
       spineTools: app.spineTools,
       colourPerType: app.colourPerType,
       hiResLayers: app.hiResLayers,
@@ -736,6 +739,17 @@
       const data: SavedSettings = JSON.parse(raw);
 
       if (data.tool) app.currentTool = data.tool as Tool;
+      if (
+        data.selectShape === "rect" ||
+        data.selectShape === "ellipse" ||
+        data.selectShape === "lasso"
+      )
+        app.selectShape = data.selectShape;
+      // Lasso was a tool of its own until 2026-11-24: it opens as Select with the Lasso shape.
+      if ((data.tool as string) === "lasso") {
+        app.currentTool = "select";
+        app.selectShape = "lasso";
+      }
       if (data.brushType) app.brushType = data.brushType as BrushKind;
       if (data.size != null) app.brushSettings.size = data.size;
       if (data.opacity != null) app.brushSettings.opacity = data.opacity;
@@ -952,9 +966,9 @@
   }
 
   /**
-   * W / M: the Distort / Mesh buttons of the Select/Lasso row, through the same checks — so with
+   * W / M: the Distort / Mesh buttons of the Select row, through the same checks — so with
    * no marquee they take the whole layer, and a group row, a locked or hidden layer say why. A float
-   * lives on Select/Lasso only (its Apply/Cancel are in their row; a tool switch applies it), so
+   * lives on Select only (its Apply/Cancel are in their row; a tool switch applies it), so
    * from another tool they act only on a marquee, switching to Select first as Paste does. They
    * used to lift a float under the Brush, Fill or Outline, whose strokes then drew into the hole
    * (undo lost the art), and lifted from Background with a group row selected (2026-10-17 review).
@@ -962,7 +976,7 @@
   function warpFromKey(n: number) {
     if (!selection || !layers) return;
     const tool = app.currentTool;
-    if (tool !== "select" && tool !== "lasso") {
+    if (tool !== "select") {
       if (refTransform) return enterWarp(n, n); // says a reference doesn't warp
       if (selection.state !== "selected") return;
       const why = paintBlock(layers.active) || (layers.active.ref ? REF_PAINT_REFUSED : "");
@@ -1611,7 +1625,7 @@
     else if (tool === "move") g.kind = "move";
     // A reference with its handles showing: any tool's drag moves/scales it (as slop-animator).
     else if (refTransform) g.kind = "ref";
-    else if (tool === "select" || tool === "lasso") g.kind = "select";
+    else if (tool === "select") g.kind = "select";
     else if (isStrokeTool(tool) || tool === "fill") {
       const layer = layers.active;
       // A reference is drawn from its original, so paint on it would be wiped by its next move:
@@ -1757,9 +1771,9 @@
           if (selection.hasFloating) selection.commit();
           else if (selection.active) selection.cancel();
           selectionMode = "create";
-          // From the tool, not a stored mode: a reference's handles (pasteFloat) set it to rect,
-          // and a reload restored the Lasso tool without it — lasso drags made rectangles.
-          selection.mode = app.currentTool === "lasso" ? "lasso" : "rect";
+          // From the tool's shape, not a stored mode: a reference's handles (pasteFloat) set it to
+          // rect, and a reload restored the Lasso tool without it — lasso drags made rectangles.
+          selection.mode = app.selectShape;
           selection.startCreate(p.x, p.y);
         }
       } else if (!done) {
@@ -2246,7 +2260,10 @@
     if (letter === "e") setTool("eraser");
     if (letter === "j") setTool("blend");
     if (letter === "s") setTool("select");
-    if (letter === "l") setTool("lasso");
+    if (letter === "l") {
+      setTool("select");
+      app.selectShape = "lasso";
+    }
     if (letter === "v") setTool("move");
     if (letter === "g") setTool("fill");
     if (letter === "i") setTool("eyedropper");

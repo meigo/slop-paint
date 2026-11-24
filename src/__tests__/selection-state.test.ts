@@ -207,6 +207,32 @@ describe("lifting a lasso", () => {
   });
 });
 
+describe("an ellipse marquee", () => {
+  function ellipse(x0: number, y0: number, x1: number, y1: number, shift = false) {
+    sel.mode = "ellipse";
+    sel.shiftHeld = shift;
+    sel.startCreate(x0, y0);
+    sel.updateCreate(x1, y1);
+    sel.endCreate();
+    sel.shiftHeld = false;
+  }
+
+  it("selects the ellipse inside the dragged box, not its corners", () => {
+    ellipse(10, 10, 110, 60);
+    expect(sel.rect).toEqual({ x: 10, y: 10, w: 100, h: 50 });
+    expect(sel.hitTest(60, 35)).toBe("move"); // centre
+    expect(sel.hitTest(13, 13)).toBe(null); // in the box's corner, outside the ellipse
+    const c = fakeCanvas();
+    sel.applyClip(c.ctx);
+    expect(c.rec.clips[0].length).toBeGreaterThan(16);
+  });
+
+  it("is a circle with Shift", () => {
+    ellipse(100, 100, 40, 70, true);
+    expect(sel.rect).toEqual({ x: 40, y: 40, w: 60, h: 60 });
+  });
+});
+
 describe("a lasso marquee keeps its shape", () => {
   it("when the mode changes after it is drawn (Lasso → Select)", () => {
     lasso([

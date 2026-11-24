@@ -2,13 +2,14 @@
  * Selection & Transform system.
  *
  * Two-stage flow:
- *   1. Select: drag rect or lasso path → marching ants on the actual shape (no lift, no handles).
+ *   1. Select: drag rect, ellipse or lasso path → marching ants on the actual shape (no lift, no handles).
  *   2. Transform: drag inside the selection → pixels are lifted into a floating canvas;
  *      bounding-box handles appear (corners=non-uniform scale, sides=skew, rotate handle, drag inside=move).
  *
  * Transform is a 6-parameter affine matrix applied around the rect's local coordinates.
  * Press Enter to commit, Escape to cancel.
  */
+import { dragBox, ellipsePoints } from "./ellipse-marquee";
 import { gridUntouched } from "./mesh-size";
 
 export interface SelectionRect {
@@ -28,7 +29,8 @@ export interface Mat {
   f: number;
 }
 
-export type SelectionMode = "rect" | "lasso";
+/** A marquee's shape while it is drawn. An ellipse is kept as a lasso polygon once drawn. */
+export type SelectionMode = "rect" | "ellipse" | "lasso";
 export type SelectionState = "idle" | "selected" | "transforming" | "warping";
 
 type Handle = "tl" | "tr" | "bl" | "br" | "t" | "b" | "l" | "r" | "rotate" | "move" | "grid" | null;
@@ -316,12 +318,12 @@ export class Selection {
         if (p.y > maxY) maxY = p.y;
       }
       this.rect = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    } else if (this.mode === "ellipse") {
+      // Shift makes a circle.
+      this.rect = dragBox(this.createStart, { x, y }, this.shiftHeld, this.pageSize);
+      this.lassoPoints = ellipsePoints(this.rect);
     } else {
-      const sx = Math.min(this.createStart.x, x);
-      const sy = Math.min(this.createStart.y, y);
-      const w = Math.abs(x - this.createStart.x);
-      const h = Math.abs(y - this.createStart.y);
-      this.rect = { x: sx, y: sy, w, h };
+      this.rect = dragBox(this.createStart, { x, y }, false, null);
     }
     this.drawOverlay();
   }
@@ -339,7 +341,7 @@ export class Selection {
       this.clear();
       return;
     }
-    if (this.mode === "lasso" && this.lassoPoints.length > 2) {
+    if (this.mode !== "rect" && this.lassoPoints.length > 2) {
       const path = new Path2D();
       path.moveTo(this.lassoPoints[0].x, this.lassoPoints[0].y);
       for (let i = 1; i < this.lassoPoints.length; i++) {
@@ -1009,14 +1011,14 @@ export class Selection {
     if (this.state === "selected" || this.isCreating) {
       if (
         this.lassoPath ||
-        (this.isCreating && this.mode === "lasso" && this.lassoPoints.length > 1)
+        (this.isCreating && this.mode !== "rect" && this.lassoPoints.length > 1)
       ) {
         ctx.beginPath();
         ctx.moveTo(this.lassoPoints[0].x, this.lassoPoints[0].y);
         for (let i = 1; i < this.lassoPoints.length; i++) {
           ctx.lineTo(this.lassoPoints[i].x, this.lassoPoints[i].y);
         }
-        if (this.lassoPath) ctx.closePath();
+        if (this.lassoPath || this.mode === "ellipse") ctx.closePath();
         this.strokeMarchingAnts(ctx);
       } else {
         ctx.beginPath();

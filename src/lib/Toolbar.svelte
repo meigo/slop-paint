@@ -30,8 +30,16 @@
     SquareX,
     Scan,
     SendToBack,
+    CircleDashed,
   } from "@lucide/svelte";
-  import { app, flashStatus, isStrokeTool, pressureCurves, type Tool } from "../appState.svelte.js";
+  import {
+    app,
+    flashStatus,
+    isStrokeTool,
+    pressureCurves,
+    type SelectShape,
+    type Tool,
+  } from "../appState.svelte.js";
   import { SIZE_SLIDER_STEPS, parseSize, sizeToSlider, sliderToSize } from "../brush-size";
   import { slotFor, type PaintType, type SlotName } from "../tool-settings";
   import { createCurveEditor } from "../pressure-curve";
@@ -279,8 +287,7 @@
       icon: Droplet,
       title: "Blend (J) — blur, smudge or smear the paint on the layer",
     },
-    { tool: "select", icon: BoxSelect, title: "Rect Select (S)" },
-    { tool: "lasso", icon: Lasso, title: "Lasso Select (L)" },
+    { tool: "select", icon: BoxSelect, title: "Select (S) — rectangle, ellipse or lasso (L)" },
     {
       tool: "move",
       icon: Move,
@@ -290,6 +297,21 @@
     { tool: "eyedropper", icon: Pipette, title: "Eyedropper (I) — drag to aim, release to pick" },
     { tool: "outline", icon: SquareMinus, title: "Outline — hollow the layer's shapes to a line" },
   ];
+
+  /** Select's shapes (2026-11-24: Lasso was a tool of its own). The Select tool button shows the
+   *  current one. */
+  const selectShapes: { shape: SelectShape; icon: typeof Paintbrush; title: string }[] = [
+    { shape: "rect", icon: BoxSelect, title: "Rectangle select" },
+    { shape: "ellipse", icon: CircleDashed, title: "Ellipse select — Shift for a circle" },
+    { shape: "lasso", icon: Lasso, title: "Lasso select (L)" },
+  ];
+  const shapeIcon = $derived(
+    selectShapes.find((s) => s.shape === app.selectShape)?.icon ?? BoxSelect,
+  );
+  function setSelectShape(shape: SelectShape) {
+    app.selectShape = shape;
+    onSettingsChange();
+  }
 
   const actionBtnClass =
     "size-7 rounded-md border border-border flex items-center justify-center bg-surface text-text-secondary hover:bg-surface-hover transition-colors";
@@ -391,7 +413,8 @@
   style:grid-area="row1"
 >
   <div class="flex shrink-0 items-center gap-1">
-    {#each tools as { tool, icon: Icon, title }}
+    {#each tools as { tool, icon, title }}
+      {@const Icon = tool === "select" ? shapeIcon : icon}
       <button
         class="flex h-9 w-9 items-center justify-center rounded-md border transition-colors {activeTool ===
         tool
@@ -1445,10 +1468,22 @@
         >Tap the canvas to outline the active layer</span
       >
     {/if}
-  {:else if activeTool === "select" || activeTool === "lasso"}
+  {:else if activeTool === "select"}
     <!-- Every selection action lives here (this app has no floating bar over the selection): a float
-         can only exist on Select/Lasso — switching tools applies it — so this row is always showing
+         can only exist on Select — switching tools applies it — so this row is always showing
          when there is one. Left-aligned, so a button never moves when another is dimmed. -->
+    <!-- The shape a NEW marquee takes; one already drawn keeps its own. -->
+    <div class="flex items-center gap-1">
+      {#each selectShapes as { shape, icon: Icon, title }}
+        <button
+          class="{iconBtn} {app.selectShape === shape ? 'ui-on' : iconIdle}"
+          aria-pressed={app.selectShape === shape}
+          onclick={() => setSelectShape(shape)}
+          {title}><Icon size={16} /></button
+        >
+      {/each}
+    </div>
+    <div class="h-6 w-px bg-border"></div>
     <div class="flex items-center gap-1">
       <button
         class="{iconBtn} {iconIdle} {dimmable}"
@@ -1614,7 +1649,7 @@
   <!-- A marquee outlives the Select tool and silently limits where brush, eraser and fill paint:
        say so, one tap from clearing it. Amber = "why this won't behave as you expect". Below 960px
        (iPad portrait) it is the icon alone: its word wrapped the brush row, moving the canvas. -->
-  {#if hasSelection && activeTool !== "select" && activeTool !== "lasso"}
+  {#if hasSelection && activeTool !== "select"}
     <div class="flex items-center">
       <button
         class="flex h-7 items-center gap-1 rounded-md border border-warn/50 bg-surface-raised px-2 text-xs whitespace-nowrap text-warn transition-colors hover:bg-surface-hover max-[960px]:px-1.5"
