@@ -5,6 +5,8 @@
 // fully transparent pixel transparent — except Grain, a FILL (`FILL_FILTERS`): it covers the whole
 // layer, or the marquee, ink or not.
 
+import { spherize, type Lens } from "./spherize";
+
 export type Paper = "transparent" | "white";
 
 export type LevelsSpec = {
@@ -88,7 +90,11 @@ export type CloudsSpec = {
   colour: boolean;
   seed: number;
 };
+/** A lens over an ellipse (`spherize.ts`): `amount` −100 (pinch) … 100 (bulge). The ellipse is
+ *  App's (`FilterShared.lens`): the selection's, or the document's without one. */
+export type SpherizeSpec = { kind: "spherize"; amount: number };
 export type FilterSpec =
+  | SpherizeSpec
   | GrainSpec
   | CloudsSpec
   | LevelsSpec
@@ -123,11 +129,18 @@ export const FILTER_DEFAULTS: { [K in FilterKind]: Extract<FilterSpec, { kind: K
   glow: { kind: "glow", colour: "#ffffff", opacity: 75, size: 8, spread: 0 },
   grain: { kind: "grain", amount: 30, size: 1, colour: false, seed: 1 },
   clouds: { kind: "clouds", amount: 50, scale: 128, detail: 50, colour: false, seed: 1 },
+  spherize: { kind: "spherize", amount: 50 },
 };
 
 /** Filters that FILL their area instead of changing the paint in it: App gives them the whole
  *  layer (or the marquee's box), not the ink's bounds, so they work on an empty layer too. */
 export const FILL_FILTERS: ReadonlySet<FilterKind> = new Set<FilterKind>(["grain", "clouds"]);
+/** Filters that work on their whole area, ink or not: the fills, and Spherize (it draws paint
+ *  into the empty parts of its ellipse). */
+export const AREA_FILTERS: ReadonlySet<FilterKind> = new Set<FilterKind>([
+  ...FILL_FILTERS,
+  "spherize",
+]);
 
 /** Gaussian blur's largest radius (σ), in document px. */
 export const BLUR_MAX = 64;
@@ -158,6 +171,7 @@ export const FILTER_TITLES: Record<FilterKind, string> = {
   glow: "Glow",
   grain: "Grain",
   clouds: "Clouds",
+  spherize: "Spherize",
 };
 
 /** Entries in Hue/Saturation's colour table (a power of two). */
@@ -1488,7 +1502,12 @@ function posterizeEdges(
 
 /** What a filter works out from ALL the layers it runs on, so they come out alike (Posterize: one
  *  palette and one set of alpha steps — picked per layer, two layers' reds became two reds). */
-export type FilterShared = { palette?: Uint8ClampedArray; alphaLut?: Uint8ClampedArray };
+export type FilterShared = {
+  palette?: Uint8ClampedArray;
+  alphaLut?: Uint8ClampedArray;
+  /** Spherize's ellipse, layer px: set by App, the same for every layer. */
+  lens?: Lens;
+};
 
 /** `FilterShared` for `spec` over the regions `pixels` (each the RGBA of one layer's region). */
 export function filterShared(spec: FilterSpec, pixels: Uint8ClampedArray[]): FilterShared {
@@ -1519,6 +1538,12 @@ export function applyFilter(
 ): void {
   const n = w * h * 4;
   switch (spec.kind) {
+    case "spherize": {
+      // Without a lens (App always gives one) nothing moves.
+      if (shared?.lens) spherize(src, out, w, h, ox, oy, shared.lens, spec.amount, alphaLock);
+      else out.set(src.subarray(0, n));
+      return;
+    }
     case "grain":
     case "clouds": {
       // A fill: every pixel becomes mid-grey plus the field, opaque — under alpha lock at the

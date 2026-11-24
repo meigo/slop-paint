@@ -86,6 +86,9 @@ Built with **Svelte 5 (runes) + TypeScript + Vite + Tailwind 4** on Canvas2D, te
   fades into smaller dots — each dot round and in one colour, and the screen lines up across
   layers),
   **Gaussian blur…** (radius 0.2–64 px; it spreads into transparent parts too)
+- **Spherize…** bulges the paint out like a fisheye lens (Amount above 0) or pinches it in (below
+  0), inside the ellipse that fits the selection — draw one with **Select ▸ Ellipse** — or the
+  whole page with nothing selected. Outside the ellipse nothing moves
 - **Colour to alpha…** makes a colour transparent — white by default, so a scanned or photographed
   sketch's paper goes and its grey lines become see-through black, soft edges kept (alpha-locked
   layers are left out). **Sharpen…** (unsharp mask: Amount, Radius; colour only, no dark halo at

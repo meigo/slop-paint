@@ -63,7 +63,7 @@
     FILTER_DEFAULTS,
     FILTER_TITLES,
     applyFilter,
-    FILL_FILTERS,
+    AREA_FILTERS,
     filterMaxReach,
     filterReach,
     filterRect,
@@ -74,6 +74,7 @@
     type FilterKind,
     type FilterSpec,
   } from "./filters";
+  import type { Lens } from "./spherize";
   import { refFocusChange } from "./ref-tool";
   import {
     enclosedFillRegion,
@@ -3468,6 +3469,7 @@
     parts: FilterPart[];
     marquee: PxRect | null; // the marquee's box, device px
     clip: Path2D | null; // the marquee's shape (doc units), taken at open like `marquee`
+    lens: Lens; // Spherize's ellipse (layer px): inside the marquee's box, else the document
     shown: string; // the spec the layers show now (JSON), so OK needn't run the same one again
     out: Uint8ClampedArray<ArrayBuffer>; // the filter's output, shared by the parts (grown as needed)
     scratch: HTMLCanvasElement | null; // for a marquee's clipped write (putImageData ignores clips)
@@ -3542,9 +3544,9 @@
     for (const layer of targets.layers) {
       const cw = layer.canvas.width,
         ch = layer.canvas.height;
-      // The ink's bounds from strips, then only the region is read. A fill (Grain) covers the whole
-      // layer, ink or not; the marquee still cuts it (`filterRect`).
-      const ink = FILL_FILTERS.has(kind) ? { x: 0, y: 0, w: cw, h: ch } : inkBounds(layer);
+      // The ink's bounds from strips, then only the region is read. A fill (Grain) and Spherize
+      // cover the whole layer, ink or not; the marquee still cuts it (`filterRect`).
+      const ink = AREA_FILTERS.has(kind) ? { x: 0, y: 0, w: cw, h: ch } : inkBounds(layer);
       if (!ink) continue;
       inked++;
       const base = filterRect(ink, marquee, cw, ch, maxReach);
@@ -3568,10 +3570,18 @@
           : `Nothing to apply ${title} to — ${what} empty`,
       );
     }
+    // The ellipse inside the marquee's box (a lasso's too), else inside the page.
+    const box = marquee ? selection!.rect! : { x: 0, y: 0, w: app.docWidth, h: app.docHeight };
     filterRun = {
       parts,
       marquee,
       clip: marquee ? selection!.clipPath() : null,
+      lens: {
+        cx: (box.x + box.w / 2) * dpr,
+        cy: (box.y + box.h / 2) * dpr,
+        rx: (box.w / 2) * dpr,
+        ry: (box.h / 2) * dpr,
+      },
       shown: "",
       out: new Uint8ClampedArray(0),
       scratch: null,
@@ -3659,10 +3669,13 @@
     }
     run.shown = JSON.stringify(spec);
     const live = run.parts.filter((p) => p.rect && p.src);
-    const shared = filterShared(
-      spec,
-      live.map((p) => p.src!.data),
-    );
+    const shared = {
+      ...filterShared(
+        spec,
+        live.map((p) => p.src!.data),
+      ),
+      lens: run.lens,
+    };
     for (const part of live) {
       const r = part.rect!,
         src = part.src!;
