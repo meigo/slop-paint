@@ -543,6 +543,21 @@
         Fills the whole layer, or the selection, with soft clouds round mid-grey. Set the layer to
         Overlay for uneven light and shade on the layers below.
       </p>
+    {:else if spec.kind === "spherize"}
+      {@const s = spec}
+      {@render slider(
+        "Amount",
+        "Above 0 bulges the middle out (a fisheye), below 0 pinches it in",
+        s.amount,
+        -100,
+        100,
+        `${s.amount}%`,
+        (v) => update({ amount: v }),
+      )}
+      <p class="text-[11px] text-text-muted">
+        Works inside an ellipse: the one that fits the selection, or the whole page without one.
+        Outside it nothing moves.
+      </p>
     {:else if spec.kind === "threshold"}
       {@const s = spec}
       {@render slider(

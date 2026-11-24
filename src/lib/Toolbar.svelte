@@ -320,7 +320,7 @@
   const menuItem =
     "w-full text-left px-3 py-1.5 text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover flex items-center justify-between gap-6";
   const kbd = "text-[11px] text-text-muted";
-  // Adjustments (tone and colour), then a divider, then effects, then fills.
+  // Adjustments (tone and colour), then a divider, then blur/sharpen, the lens, effects, fills.
   // Each runs on the active layer, or on the picked rows or every layer of the active group (as
   // Move): the titles say "the layer" for short.
   const filters: { kind: FilterKind; title: string }[][] = [
@@ -337,6 +337,13 @@
     [
       { kind: "blur", title: "Soften the layer (a Gaussian blur)" },
       { kind: "sharpen", title: "Crisp up the layer's edges (unsharp mask)" },
+    ],
+    [
+      {
+        kind: "spherize",
+        title:
+          "Bulge or pinch the layer as through a lens, inside the ellipse that fits the selection (or the page)",
+      },
     ],
     [
       { kind: "halftone", title: "Turn the layer's tones into dots or lines — screentone" },

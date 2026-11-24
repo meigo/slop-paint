@@ -714,6 +714,31 @@ async function main(page) {
   });
 
   await step(async () => {
+    // Filter ▸ Spherize with no selection: the page's ellipse. A bulge pushes the square (upper
+    // right of the middle) outward, so the inside of its side nearest the middle turns to paper.
+    const edge = rect(0.702, 0.26, 0.01, 0.04);
+    const c0 = await pixels(edge);
+    await menu("Filter", /^Spherize/);
+    const amount = page.getByRole("dialog").locator('input[type="range"]');
+    await amount.evaluate((el) => {
+      el.value = "100";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.waitForTimeout(400);
+    await page.getByRole("dialog").getByRole("button", { name: "OK" }).tap();
+    await page.waitForTimeout(300);
+    const c1 = await pixels(edge);
+    await undo();
+    await page.waitForTimeout(300);
+    const c2 = await pixels(edge);
+    return [
+      c1.dark < c0.dark && c2.avg === c0.avg,
+      `Filter ▸ Spherize bulges the square away from the middle (dark px by its inner side ${c0.dark} → ${c1.dark}), Undo takes it back (${c2.dark})`,
+      "filter-spherize",
+    ];
+  });
+
+  await step(async () => {
     // Filter ▸ Drop shadow darkens the paper just below-right of the square (the default light is
     // from the upper left), not above-left; Colour to alpha on Background (white) turns the paper
     // transparent (the checkerboard shows). One Undo each.
