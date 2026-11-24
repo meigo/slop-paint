@@ -10,9 +10,9 @@ describe("refFocusChange", () => {
     expect(refFocusChange(true, "fill", null, "brush")).toEqual({ tool: "select", before: "fill" });
   });
 
-  it("selecting a reference while on Select or Lasso owes nothing back", () => {
+  it("selecting a reference while on Select or Move owes nothing back", () => {
     expect(refFocusChange(true, "select", null, "brush")).toEqual({ tool: "select", before: null });
-    expect(refFocusChange(true, "lasso", null, "brush")).toEqual({ tool: "lasso", before: null });
+    expect(refFocusChange(true, "move", null, "brush")).toEqual({ tool: "move", before: null });
   });
 
   it("one-shot tools are not handed back to", () => {

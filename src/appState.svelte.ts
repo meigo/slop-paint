@@ -12,7 +12,10 @@ import { isAppleTouch } from "./share";
 import { touchThumb } from "./lib/thumb-stamp";
 
 export type Tool =
-  "brush" | "eraser" | "blend" | "fill" | "select" | "lasso" | "move" | "eyedropper" | "outline";
+  "brush" | "eraser" | "blend" | "fill" | "select" | "move" | "eyedropper" | "outline";
+
+/** The Select tool's marquee shape (2026-11-24: Lasso was a tool of its own before). */
+export type SelectShape = "rect" | "ellipse" | "lasso";
 
 /** The tools that draw a stroke (a brush outline under the pointer, a stroke gesture, a settings
  *  slot of their own): Brush, Eraser and Blend (a tool since 2026-10-24, not a brush type). */
@@ -45,6 +48,8 @@ interface AppStateShape {
   docHeight: number;
   /** Selection transform: corner handles keep the aspect ratio. */
   keepProportions: boolean;
+  /** The shape a new marquee takes (Select's options row; L picks Lasso). */
+  selectShape: SelectShape;
   /** Settings: show the Spine tag UI (layer strip chips/menu, "for Spine" export wording). */
   spineTools: boolean;
   /** Settings: each brush type keeps its own colour (`switchType`'s `withColour`). Off by default. */
@@ -126,6 +131,7 @@ export const app: AppStateShape = $state({
   docWidth: 1920,
   docHeight: 1080,
   keepProportions: true,
+  selectShape: "rect",
   spineTools: true,
   colourPerType: false,
   // Off on iPad: 40 layers at 2× (1.2 GB) got blanked in the background.

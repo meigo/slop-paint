@@ -10,7 +10,7 @@
 const ONE_SHOT = new Set(["eyedropper", "outline"]);
 /** Tools whose options row already holds the transform controls — or, Move (2026-10-02), that
  *  move the whole layer, reference or not: nothing to switch. */
-const TRANSFORM_ROW = new Set(["select", "lasso", "move"]);
+const TRANSFORM_ROW = new Set(["select", "move"]);
 
 export interface RefToolState<T extends string> {
   tool: T;
@@ -25,7 +25,7 @@ export function refFocusChange<T extends string>(
   fallback: T,
 ): RefToolState<T> {
   if (onRef) {
-    // Already on Select/Lasso: nothing was switched, so nothing is owed back.
+    // Already on Select (any shape) or Move: nothing was switched, so nothing is owed back.
     if (TRANSFORM_ROW.has(tool)) return { tool, before: null };
     return { tool: "select" as T, before: ONE_SHOT.has(tool) ? fallback : tool };
   }

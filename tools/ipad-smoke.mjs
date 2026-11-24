@@ -325,13 +325,13 @@ async function main(page) {
   });
 
   await step(async () => {
-    const t = tool("Lasso Select");
+    const t = tool("Select (S)");
     await t.tap();
     await page.waitForTimeout(200);
     const s = await status();
     await tapTool("Brush (B)");
     return [
-      s.includes("Lasso Select (L)"),
+      s.includes("Select (S)"),
       `a tapped tool's title shows in the status bar ("${s.split("\n")[0]}")`,
       "hint",
     ];
@@ -805,7 +805,8 @@ async function main(page) {
       { n: 10 },
     );
   await step(async () => {
-    await tapTool("Rect Select");
+    await tapTool("Select (S)");
+    await tapTool("Rectangle select");
     await marquee();
     await page.waitForTimeout(250);
     const s = await status();
@@ -949,7 +950,8 @@ async function main(page) {
   });
 
   await step(async () => {
-    await tapTool("Lasso Select");
+    await tapTool("Select (S)");
+    await tapTool("Lasso select");
     await pen(
       (t) => {
         const a = t * Math.PI * 2;
@@ -973,6 +975,38 @@ async function main(page) {
   });
 
   await step(async () => {
+    await tapTool("Select (S)");
+    await tapTool("Ellipse select");
+    // The box's top edge runs along the stroke: the ellipse meets that edge only at its middle, so
+    // Delete takes the middle of the stroke and leaves both ends (a rectangle would take it all).
+    const box = rect(0.04, bandY(2), 0.6, 0.2);
+    const b = band(bandY(2));
+    const ink0 = (await pixels(b)).dark;
+    await pen(line({ x: box.x, y: box.y }, { x: box.x + box.w, y: box.y + box.h }), { n: 10 });
+    await page.waitForTimeout(250);
+    const label = await page.locator("div.h-7.border-t > span").last().innerText();
+    const s = await context();
+    await page.locator('button[title="Delete selection (Del)"]').tap();
+    await page.waitForTimeout(300);
+    const ink1 = (await pixels(b)).dark;
+    await page.locator('button[title^="Undo"]').first().tap();
+    await page.waitForTimeout(300);
+    const ink2 = (await pixels(b)).dark;
+    const deselect = page.locator('button[title="Deselect (Esc)"]');
+    if ((await deselect.count()) > 0) await deselect.tap();
+    await tapTool("Rectangle select");
+    return [
+      label === "Ellipse select" &&
+        s.includes("Selection") &&
+        ink1 > ink0 * 0.1 &&
+        ink1 < ink0 * 0.9 &&
+        ink2 === ink0,
+      `[sim] a pen drag with Ellipse select makes a selection ("${label}"); Delete takes the stroke's middle and leaves its ends (dark px ${ink0} → ${ink1}); Undo restores (${ink2})`,
+      "ellipse",
+    ];
+  });
+
+  await step(async () => {
     const b = band(bandY(1));
     const ink0 = (await pixels(b)).dark;
     await tapTool("Outline");
@@ -984,7 +1018,7 @@ async function main(page) {
     await shot(`${String(n).padStart(2, "0")}-outline-preview`);
     await apply.tap();
     await page.waitForTimeout(300);
-    const back = await pressed("Lasso Select");
+    const back = await pressed("Select (S)");
     const ink1 = (await pixels(b)).dark;
     await undo();
     await page.waitForTimeout(300);
@@ -1352,7 +1386,7 @@ async function main(page) {
     await until(async () => (await rowCount()) === r0 + 1, 4000);
     await page.waitForTimeout(300);
     const added = (await activeRow().innerText()).includes("Hello");
-    const onSelect = await pressed("Rect Select");
+    const onSelect = await pressed("Select (S)");
     const s = await status();
     await page.locator(".layer-item", { hasText: "Layer 1" }).first().tap();
     await page.waitForTimeout(300);
@@ -1427,7 +1461,7 @@ async function main(page) {
     await gesture([lift]);
     await page.waitForTimeout(250);
     const h1 = (await pixels(home)).avg;
-    await tapTool("Rect Select");
+    await tapTool("Select (S)");
     await page.waitForTimeout(200);
     const backOnSelect = await toolLabel();
     const switching =
@@ -1757,7 +1791,7 @@ try {
       "Brush (B)",
       "Eraser (E)",
       "Blend (J)",
-      "Rect Select",
+      "Select (S)",
       "Paint Bucket",
       "Eyedropper",
       "Outline",
@@ -1780,7 +1814,7 @@ try {
 
     // With a marquee kept, every other tool's row ends in the amber Deselect chip: still one line
     // (its word made the brush row wrap at 834 px; below 960 px it is the icon alone).
-    await pp.locator('button[title^="Rect Select"]').first().tap();
+    await pp.locator('button[title^="Select (S)"]').first().tap();
     await pp.waitForTimeout(200);
     await pp.locator('button[title="Select all"]').tap();
     await pp.waitForTimeout(200);
